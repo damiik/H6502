@@ -1,14 +1,15 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-} -- Dodane dla case w generateBinary
+{-# LANGUAGE LambdaCase #-}
 
 import Control.Monad.State.Strict
-import Control.Monad (when) 
+import Control.Monad (when)
 import Data.Word
-import Data.Int (Int8) -- Potrzebne dla offsetów
+import Data.Int (Int8)
 import Data.Bits
 import qualified Data.Map.Strict as Map
-import Data.Foldable (foldl') -- Bardziej ścisła wersja foldl
-import Numeric (showHex) -- Do wyświetlania
+import Data.Foldable (foldl')
+import Numeric (showHex)
+import Data.Char (ord) -- <<< Potrzebne do konwersji String na bajty
 
 -- --- Typy pomocnicze ---
 
@@ -16,26 +17,29 @@ type Address = Word16
 type Label = String
 type ProgramCounter = Word16
 
--- Odwołanie do adresu - może być literałem lub etykietą
 data AddressRef = AddrLiteral Word16 | AddrLabel Label deriving (Show, Eq)
 
--- Symboliczna reprezentacja instrukcji (przed rozwiązaniem etykiet)
+-- Symboliczna reprezentacja instrukcji i danych
 data SymbolicInstruction
-  = S_LabelDef Label           -- Tylko marker dla Pass 1 i listingu
-  | S_LDA_Imm Word8            -- LDA #$nn      (Op: $A9, Size: 2)
-  | S_STA_Abs AddressRef       -- STA $nnnn     (Op: $8D, Size: 3)
-  | S_STA_Abs_X AddressRef     -- STA $nnnn,X   (Op: $9D, Size: 3)
-  | S_JMP_Abs AddressRef       -- JMP $nnnn     (Op: $4C, Size: 3)
-  | S_BNE Label                -- BNE label     (Op: $D0, Size: 2)
-  | S_INX                      -- INX           (Op: $E8, Size: 1)
-  | S_RTS                      -- RTS           (Op: $60, Size: 1)
+  = S_LabelDef Label
+  | S_LDA_Imm Word8
+  | S_STA_Abs AddressRef
+  | S_STA_Abs_X AddressRef
+  | S_JMP_Abs AddressRef
+  | S_BNE Label
+  | S_INX
+  | S_RTS
+  -- <<< NOWE DYREKTYWY DANYCH >>>
+  | S_Bytes [Word8]   -- .byte b1, b2, ...
+  | S_Words [Word16]  -- .word w1, w2, ... (little-endian)
+  | S_String String   -- .string "..." (jako bajty ASCII)
   deriving (Show, Eq)
 
 -- --- Stan Asemblera ---
 data AsmState = AsmState
   { asmPC     :: ProgramCounter
   , asmLabels :: Map.Map Label ProgramCounter
-  , asmCode   :: [(ProgramCounter, SymbolicInstruction)] -- Budowane w odwrotnej kolejności
+  , asmCode   :: [(ProgramCounter, SymbolicInstruction)]
   } deriving (Show)
 
 initialAsmState :: ProgramCounter -> AsmState
@@ -47,29 +51,19 @@ newtype Asm a = Asm { unAsm :: State AsmState a }
 
 -- --- Funkcje pomocnicze w monadzie ---
 
--- Zgłoszenie błędu (bardzo proste - zatrzymuje obliczenia w Either)
--- Można by użyć ExceptT dla lepszej obsługi błędów
--- throwAsmError :: String -> Asm a -- W tej prostej wersji nie mamy jak zgłosić błędu w monadzie
-
--- "Emituj" symboliczną instrukcję (dodaj do listy i zaktualizuj PC)
 emit :: SymbolicInstruction -> Word16 -> Asm ()
 emit instruction size = do
   pc <- gets asmPC
-  -- Dodajemy na początek listy dla efektywności
   modify' $ \s -> s { asmCode = (pc, instruction) : asmCode s, asmPC = pc + size }
 
--- Zdefiniuj etykietę w bieżącym miejscu
-defineLabel :: Label -> Asm ()
-defineLabel lbl = do
+l_ :: Label -> Asm ()
+l_ lbl = do
   pc <- gets asmPC
   labels <- gets asmLabels
-  when (Map.member lbl labels) $ do
-    -- W tej prostej monadzie nie możemy łatwo zgłosić błędu,
-    -- można by użyć error lub bardziej zaawansowanej monady
-    error $ "Label redefined: " ++ lbl -- Zatrzymanie programu
+  when (Map.member lbl labels) $
+    error $ "Label redefined: " ++ lbl
   modify' $ \s -> s { asmLabels = Map.insert lbl pc labels }
-  -- Emitujemy też marker, żeby był w liście kodu
-  emit (S_LabelDef lbl) 0 -- Etykieta nie zajmuje miejsca w kodzie binarnym
+  emit (S_LabelDef lbl) 0
 
 -- --- Funkcje eDSL dla Instrukcji 6502 ---
 
@@ -94,36 +88,63 @@ inx = emit S_INX 1
 rts :: Asm ()
 rts = emit S_RTS 1
 
+-- <<< NOWE FUNKCJE eDSL DLA DYREKTYW DANYCH >>>
+
+-- Dyrektywa .byte b1, b2, ...
+db :: [Word8] -> Asm ()
+db bs = do
+    let size = fromIntegral $ length bs -- Rozmiar w bajtach
+    when (size > 0) $ emit (S_Bytes bs) size
+
+-- Dyrektywa .word w1, w2, ... (little-endian)
+dw :: [Word16] -> Asm ()
+dw ws = do
+    let size = fromIntegral (length ws) * 2 -- Każde słowo to 2 bajty
+    when (size > 0) $ emit (S_Words ws) size
+
+-- Dyrektywa .string "..." (ASCII)
+string :: String -> Asm ()
+string str = do
+    -- Konwertujemy String na listę Word8 (ASCII)
+    let bytes = map (fromIntegral . ord) str
+    let size = fromIntegral $ length bytes -- Każdy znak to 1 bajt
+    when (size > 0) $ emit (S_Bytes bytes) size -- Możemy reużyć S_Bytes!
+    -- Alternatywnie, moglibyśmy trzymać S_String i konwertować w Pass 2,
+    -- ale konwersja tutaj jest równie dobra i upraszcza Pass 2.
+
 -- --- Generowanie Kodu Binarnego (Pass 2 - funkcja czysta) ---
 
 generateBinary :: AsmState -> Either String [Word8]
 generateBinary finalState =
-  -- Przetwarzamy listę w poprawnej kolejności (odwracamy listę zbudowaną przez :)
-  -- Używamy foldl' i odwróconej listy dla akumulacji `Either`
   foldl' processInstruction (Right []) (reverse $ asmCode finalState)
   where
     labels = asmLabels finalState
 
     processInstruction :: Either String [Word8] -> (ProgramCounter, SymbolicInstruction) -> Either String [Word8]
-    processInstruction (Left err) _ = Left err -- Propaguj błąd
+    processInstruction (Left err) _ = Left err
     processInstruction (Right currentBytes) (pc, instruction) =
-      (currentBytes ++) <$> instructionBytes pc instruction -- Dołącz bajty nowej instrukcji
-
-    --Dołączamy nowe bajty NA POCZĄTEK akumulatora za pomocą `flip (++)` lub jawnie
-    -- processInstruction (Right accumulatedBytesReversed) (pc, instruction) = do
-    --   newBytes <- instructionBytes pc instruction
-    --   Right (newBytes ++ accumulatedBytesReversed) -- Nowe bajty na początku
-    --   -- Right $ newBytes ++ accumulatedBytesReversed -- Bardziej jawne
+      (currentBytes ++) <$> instructionBytes pc instruction
 
     instructionBytes :: ProgramCounter -> SymbolicInstruction -> Either String [Word8]
-    instructionBytes _  (S_LabelDef _) = Right [] -- Etykiety nie generują bajtów
+    instructionBytes _  (S_LabelDef _) = Right []
     instructionBytes _  (S_LDA_Imm val) = Right [0xA9, val]
     instructionBytes _  (S_STA_Abs addrRef) = resolveAddress addrRef >>= \addr -> Right [0x8D, loByte addr, hiByte addr]
     instructionBytes _  (S_STA_Abs_X addrRef) = resolveAddress addrRef >>= \addr -> Right [0x9D, loByte addr, hiByte addr]
     instructionBytes _  (S_JMP_Abs addrRef) = resolveAddress addrRef >>= \addr -> Right [0x4C, loByte addr, hiByte addr]
-    instructionBytes pc (S_BNE targetLabel) = calculateOffset pc targetLabel >>= \offset -> Right [0xD0, fromIntegral offset] -- Opcode BNE = $D0
+    instructionBytes pc (S_BNE targetLabel) = calculateOffset pc targetLabel >>= \offset -> Right [0xD0, fromIntegral offset]
     instructionBytes _  S_INX = Right [0xE8]
     instructionBytes _  S_RTS = Right [0x60]
+    -- <<< OBSŁUGA NOWYCH DYREKTYW W PASS 2 >>>
+    instructionBytes _  (S_Bytes bs) = Right bs -- Po prostu zwróć listę bajtów
+    instructionBytes _  (S_Words ws) = Right $ concatMap wordToBytesLE ws -- Konwertuj każde słowo na [lo, hi] i połącz
+    instructionBytes _  (S_String _) = error "S_String should have been converted to S_Bytes in emitString"
+                                      -- Powyższy error nie powinien wystąpić, jeśli emitString działa poprawnie.
+                                      -- Jeśli zdecydowalibyśmy się trzymać S_String do Pass 2, obsługa byłaby tutaj:
+                                      -- Right $ map (fromIntegral . ord) str
+
+    -- Funkcja pomocnicza do konwersji Word16 na [Word8] (Little Endian)
+    wordToBytesLE :: Word16 -> [Word8]
+    wordToBytesLE w = [loByte w, hiByte w]
 
     resolveAddress :: AddressRef -> Either String Word16
     resolveAddress (AddrLiteral lit) = Right lit
@@ -137,7 +158,6 @@ generateBinary finalState =
       targetAddr <- case Map.lookup targetLabel labels of
                       Just addr -> Right addr
                       Nothing -> Left $ "Pass 2 Error: Unknown label in branch '" ++ targetLabel ++ "'"
-      -- Offset jest względem adresu *następnej* instrukcji (PC + rozmiar branch)
       let offset = fromIntegral targetAddr - fromIntegral (currentPC + 2)
       if offset >= -128 && offset <= 127 then
           Right (fromIntegral offset :: Int8)
@@ -160,35 +180,49 @@ runAssembler startAddr asmAction =
       Left err -> Left err
       Right binaryCode -> Right (binaryCode, asmLabels finalState)
 
--- --- Przykład Użycia ---
+-- --- Przykład Użycia (z nowymi dyrektywami) ---
 
 mySimpleProgram :: Asm ()
 mySimpleProgram = do
-    defineLabel "start"
+    l_ "start"
     lda_imm 0x10
-    sta_abs (AddrLiteral 0x0020) -- Zapisz do pamięci $0200
+    sta_abs $ AddrLiteral 0x0200 -- Użyjmy sensownego adresu strony zerowej lub RAM
 
-    defineLabel "loop"
+    l_ "loop"
     inx
-    sta_abs_x (AddrLabel "data_area") -- Zapisz A do data_area + X
-    bne "loop"                 -- Wróć do loop jeśli flaga Z=0 (będzie pętla przez jakiś czas)
+    -- Przykład użycia adresu danych: Załóżmy, że chcemy wyzerować obszar 'values'
+    -- To nie jest najbardziej efektywny kod 6502, ale pokazuje koncepcję
+    sta_abs_x $ AddrLabel "values"
+    bne "loop"                 -- Pętla (bez warunku wyjścia, dla uproszczenia)
 
     lda_imm 0xAA
-    jmp_abs (AddrLabel "end_routine") -- Skocz do etykiety zdefiniowanej później
+    jmp_abs $ AddrLabel "end_routine"
 
-    rts                        -- Ten RTS nigdy nie zostanie osiągnięty
+    rts                        -- Niedostępny kod
 
-    defineLabel "data_area"    -- Etykieta bez kodu (adres dla danych)
-    -- Można by dodać dyrektywy jak .byte, .word itp.
+    -- <<< Przykładowe użycie dyrektyw danych >>>
+    l_ "message"
+    string $ "Hello Haskell+6502 World!" ++ ['\0'] -- String z NUL terminator
+    -- Alternatywnie, można użyć db, ale trzeba by ręcznie dodać terminator:
+    db [0x0D, 0x00] -- CR + NUL terminator 
 
-    defineLabel "end_routine"
+    l_ "values"
+    dw [ -- Kilka wartości 16-bitowych
+        0x1234, 0xABCD, 0xFFFF, 0x0000
+      ]
+
+    db [ -- Kilka bajtów
+        1, 2, 3, 4, 5
+      ]
+
+    l_ "end_routine"
     lda_imm 0x55
-    sta_abs (AddrLiteral 0x0021)
+    sta_abs $ AddrLiteral 0x0201
     rts
 
 main :: IO ()
 main = do
-    let startAddress = 0x0000
+    let startAddress = 0x0000 -- Sensowny adres startowy dla C64/NES itp.
     putStrLn $ "Assembling program starting at: $" ++ showHex startAddress ""
     case runAssembler startAddress mySimpleProgram of
       Left err -> putStrLn $ "Assembly failed: " ++ err
@@ -200,7 +234,7 @@ main = do
         putStrLn "\nGenerated ByteCode:"
         putStrLn $ formatHexBytes startAddress byteCode
 
--- Funkcja pomocnicza do ładnego wyświetlania hex
+-- Formatowanie bez zmian
 formatHexBytes :: Word16 -> [Word8] -> String
 formatHexBytes startAddr bytes = unlines $ formatLines 16 $ zip [startAddr..] bytes
   where
