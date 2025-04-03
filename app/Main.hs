@@ -1,4 +1,5 @@
 import Assembly
+import Assembly.Macros -- Keep importing macros
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
 import Data.Word (Word16, Word8)

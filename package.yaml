@@ -37,6 +37,11 @@ ghc-options:
 
 library:
   source-dirs: src
+  exposed-modules:
+  - Lib
+  - Assembly
+  - Assembly.Core   # Add the new Core module
+  - Assembly.Macros
 
 executables:
   H6502-exe:
