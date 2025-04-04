@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TupleSections #-} -- Potrzebne do tworzenia tabeli
 
 module Assembly.Core (
     -- Core Types
@@ -8,6 +9,7 @@ module Assembly.Core (
     Label,
     ProgramCounter,
     AddressRef(..),
+    AddressingMode(..), -- NOWY TYP
     Operand(..),
     pattern Imm,
     pattern AbsLit,
@@ -16,32 +18,43 @@ module Assembly.Core (
     pattern AbsXLabel,
     pattern ZPLabel,
     zpLit,
+    pattern Ind,
+    pattern IndX,
+    pattern IndY,
+    pattern ZPX,
+    pattern ZPY,
+    pattern AbsYLabel,
+    pattern AbsYLit,
     BranchMnemonic(..),
-    Mnemonic(..),
+    Mnemonic(..), -- ZAKTUALIZOWANY
     SymbolicInstruction(..),
 
     -- Core State & Monad
     AsmState(..),
     initialAsmState,
-    Asm(..), -- Export the type constructor and field name (unAsm)
+    Asm(..),
 
-    -- Core Primitives
-    getInstructionSize,
+    -- Core Primitives (niektóre zostaną zmodyfikowane)
+    getInstructionInfo, -- NOWA FUNKCJA ZAMIAST getInstructionSize/operandOpcode
+    getInstructionSize, -- ZOSTANIE ZMODYFIKOWANA/USUNIĘTA
     emitGeneric,
     emitIns,
-    emitImplied,
+    emitImplied, -- MOŻE BYĆ ZMODYFIKOWANY
+    emitAccumulator, -- NOWY
     emitBranch,
     l_,
     db,
     dw,
     string,
     makeUniqueLabel,
+    generateInstructionBytes,
 
-    -- Opcode-related functions
-    impliedOpcode,
-    branchOpcode,
-    operandOpcode,
-    getOperandAddressRef,
+    -- Opcode-related functions (teraz oparte na tabeli)
+    instructionTable, -- NOWA TABELA
+    getOperandAddressingMode, -- NOWA FUNKCJA POMOCNICZA
+    resolveAddressMaybe, -- ISTNIEJĄCA
+    getOperandAddressRef, -- ISTNIEJĄCA
+    branchOpcode, -- NOWA FUNKCJA POMOCNICZA
 
     -- Miscellaneous
     lo,
@@ -49,63 +62,72 @@ module Assembly.Core (
     hx,
     wordToBytesLE,
 
-    -- eDSL Instruction Aliases
-    lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty, cmp, cpx, cpy, txa, tya, txs, tsx,
-    bne, beq, bcs, bcc, bmi, bpl, bvs, bvc, jsr, rts,
+    -- eDSL Instruction Aliases 
+    lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty, 
+    cmp, cpx, cpy, txa, tya, txs, tsx, bne, beq, bcs, bcc, bmi, 
+    bpl, bvs, bvc, jsr, rts, ora, asl, php, clc, and, bit, rol, 
+    ror, plp, sec, rti, eor, lsr, pha, cli, pla, sei, dey, clv, 
+    iny, dex, cld, nop, sed, inc, dec
 ) where
 
+
+import Prelude hiding (and, or) -- remove conflict with opcode names
 import Control.Monad.State.Strict
 import Control.Monad (when)
 import Data.Word
 import Data.Int (Int8)
 import Data.Bits ((.&.), shiftR)
--- import Data.Bits -- Not used directly here
 import qualified Data.Map.Strict as Map
--- import Data.Foldable (foldl') -- Not used directly here
+import Data.Map.Strict (Map) -- Jawny import dla Map
+import Data.Maybe (mapMaybe, fromMaybe) -- Potrzebne dla lookupów
 import Data.Char (ord)
--- import Data.Maybe (fromMaybe) -- Not used directly here
-import Numeric (showHex) -- Not used directly here
+import Numeric (showHex)
+import Data.List (foldl') -- Potrzebne do budowania tabeli
+import Assembly.Branch (BranchMnemonic(..)) -- Importujemy BranchMnemonic z osobnego modułu
+import Assembly.Instructions6502 (instructionData, Mnemonic(..), AddressingMode(..)) -- Importujemy dane instrukcji z osobnego modułu
 
 -- --- Types ---
 type Address = Word16
 type Label = String
 type ProgramCounter = Word16
-data AddressRef = AddrLit16 Word16 | AddrLabel Label deriving (Show, Eq)
-data Operand = OpImm Word8 | OpAbs AddressRef | OpAbsX AddressRef | OpAbsY AddressRef | OpZP AddressRef | OpZPX AddressRef | OpZPY AddressRef | OpIndX AddressRef | OpIndY AddressRef | OpInd AddressRef deriving (Show, Eq)
+data AddressRef = AddrLit16 Word16 | AddrLabel Label deriving (Show, Eq, Ord) -- Dodano Ord
 
--- Pattern Synonyms with Signatures
-pattern Imm :: Word8 -> Operand
-pattern Imm v = OpImm v
 
-pattern Ind :: AddressRef -> Operand  -- Indirect addressing mode opcode ($nnnn)
-pattern Ind r = OpInd r
+-- ZAKTUALIZOWANY Operand, aby pasował do AddressingMode
+data Operand
+    = OpImm Word8          -- Immediate
+    | OpZP AddressRef      -- ZeroPage
+    | OpZPX AddressRef     -- ZeroPageX
+    | OpZPY AddressRef     -- ZeroPageY
+    | OpAbs AddressRef     -- Absolute
+    | OpAbsX AddressRef    -- AbsoluteX
+    | OpAbsY AddressRef    -- AbsoluteY
+    | OpInd AddressRef     -- Indirect (tylko JMP)
+    | OpIndX AddressRef    -- IndirectX ($NN,X)
+    | OpIndY AddressRef    -- IndirectY ($NN),Y
+    -- Brak konstruktora dla Implicit, Accumulator, Relative - są obsługiwane inaczej
+    deriving (Show, Eq)
 
-pattern AbsLit :: Word16 -> Operand  -- Absolute addressing mode opcode $nnnn 
-pattern AbsLit v = OpAbs (AddrLit16 v)
-
-pattern AbsLabel :: Label -> Operand
-pattern AbsLabel l = OpAbs (AddrLabel l)
-
-pattern AbsXLit :: Word16 -> Operand
-pattern AbsXLit v = OpAbsX (AddrLit16 v)
-
-pattern AbsXLabel :: Label -> Operand
-pattern AbsXLabel l = OpAbsX (AddrLabel l)
-
-pattern ZPLabel :: Label -> Operand
-pattern ZPLabel l = OpZP (AddrLabel l)
-
+-- Pattern Synonyms (aktualizacja i dodanie nowych)
+pattern Imm :: Word8 -> Operand; pattern Imm v = OpImm v
+pattern AbsLit :: Word16 -> Operand; pattern AbsLit v = OpAbs (AddrLit16 v)
+pattern AbsLabel :: Label -> Operand; pattern AbsLabel l = OpAbs (AddrLabel l)
+pattern AbsXLit :: Word16 -> Operand; pattern AbsXLit v = OpAbsX (AddrLit16 v)
+pattern AbsXLabel :: Label -> Operand; pattern AbsXLabel l = OpAbsX (AddrLabel l)
+pattern AbsYLit :: Word16 -> Operand; pattern AbsYLit v = OpAbsY (AddrLit16 v)
+pattern AbsYLabel :: Label -> Operand; pattern AbsYLabel l = OpAbsY (AddrLabel l)
+pattern ZPLabel :: Label -> Operand; pattern ZPLabel l = OpZP (AddrLabel l)
 zpLit :: Word8 -> Operand; zpLit v = OpZP (AddrLit16 (fromIntegral v))
+pattern ZPX :: AddressRef -> Operand; pattern ZPX r = OpZPX r
+pattern ZPY :: AddressRef -> Operand; pattern ZPY r = OpZPY r
+pattern Ind :: AddressRef -> Operand; pattern Ind r = OpInd r
+pattern IndX :: AddressRef -> Operand; pattern IndX r = OpIndX r
+pattern IndY :: AddressRef -> Operand; pattern IndY r = OpIndY r
 
-data BranchMnemonic = BNE | BEQ | BCS | BCC | BMI | BPL | BVS | BVC deriving (Show, Eq, Ord, Enum, Bounded)
-
-data Mnemonic = LDA | STA | LDX | LDY | JMP | INX | RTS | ADC | SBC | TAX | TAY | STX | STY | CMP | CPX | CPY |
-                TXA | TYA | TXS | TSX | JSR
-                deriving (Show, Eq, Ord, Enum, Bounded)
-
+-- SymbolicInstruction (bez zmian na razie)
 data SymbolicInstruction = SLabelDef Label | SIns Mnemonic (Maybe Operand) | SBranch BranchMnemonic Label | SBytes [Word8] | SWords [Word16] deriving (Show, Eq)
 
--- --- Assembler State ---
+-- --- Assembler State (bez zmian) ---
 data AsmState = AsmState
   { asmPC            :: ProgramCounter
   , asmLabels        :: Map.Map Label ProgramCounter
@@ -116,74 +138,128 @@ data AsmState = AsmState
 initialAsmState :: ProgramCounter -> AsmState
 initialAsmState startAddr = AsmState startAddr Map.empty [] 0
 
--- --- Assembler Monad ---
+-- --- Assembler Monad (bez zmian) ---
 newtype Asm a = Asm { unAsm :: State AsmState a }
   deriving (Functor, Applicative, Monad, MonadState AsmState)
 
--- --- Core Primitive Functions ---
-resolveAddressMaybe :: Maybe AddressRef -> AsmState  -> Maybe Word16
-resolveAddressMaybe Nothing _ = Just 0 -- For Imm case, value doesn't matter here
+-- --- Tabela Instrukcji ---
+
+-- Typ dla wpisu w tabeli: (Opcode, Rozmiar w bajtach)
+type OpcodeEntry = (Word8, Word8)
+
+-- Główna tabela instrukcji: Mapa z Mnemonic na mapę z AddressingMode na OpcodeEntry
+instructionTable :: Map Mnemonic (Map AddressingMode OpcodeEntry)
+instructionTable = buildInstructionTable instructionData
+
+
+
+-- Funkcja pomocnicza do konwersji (przeniesiona/utworzona tutaj)
+branchMnemonicToMnemonic :: BranchMnemonic -> Mnemonic
+branchMnemonicToMnemonic = \case
+    Assembly.Branch.B_BNE -> BNE; 
+    Assembly.Branch.B_BEQ -> BEQ; 
+    Assembly.Branch.B_BCS -> BCS; 
+    Assembly.Branch.B_BCC -> BCC;
+    Assembly.Branch.B_BMI -> BMI; 
+    Assembly.Branch.B_BPL -> BPL; 
+    Assembly.Branch.B_BVS -> BVS; 
+    Assembly.Branch.B_BVC -> BVC;
+    -- Te konstruktory po prawej stronie odnoszą się teraz do typu Mnemonic z Instructions6502
+
+-- Funkcja do pobierania opkodu (przeniesiona i zmodyfikowana z Core.hs)
+-- Używa teraz instructionTable z Core.hs
+branchOpcode :: BranchMnemonic -> Word8
+branchOpcode bm =
+    let mnemonic = branchMnemonicToMnemonic bm
+    in case Map.lookup mnemonic instructionTable >>= Map.lookup Relative of
+        Just (opcode, _size) -> opcode
+        Nothing -> error $ "Internal error: Opcode for branch " ++ show bm ++ " not found in instruction table."
+
+
+-- Funkcja budująca główną tabelę instrukcji
+buildInstructionTable :: [(Mnemonic, AddressingMode, Word8)] -> Map Mnemonic (Map AddressingMode OpcodeEntry)
+buildInstructionTable = foldl' insertInstruction Map.empty
+  where
+    insertInstruction table (mnemonic, mode, opcode) =
+      let size = getModeSize mode
+          entry = (opcode, size)
+          modeMap = Map.singleton mode entry
+      in Map.insertWith Map.union mnemonic modeMap table
+
+-- NOWA: Funkcja pomocnicza do mapowania Operandu na AddressingMode
+-- Dla Implicit/Accumulator potrzebujemy mnemonika
+getOperandAddressingMode :: Mnemonic -> Maybe Operand -> Either String AddressingMode
+getOperandAddressingMode _ (Just (OpImm _))   = Right Immediate
+getOperandAddressingMode _ (Just (OpZP _))    = Right ZeroPage
+getOperandAddressingMode _ (Just (OpZPX _))   = Right ZeroPageX
+getOperandAddressingMode _ (Just (OpZPY _))   = Right ZeroPageY
+getOperandAddressingMode _ (Just (OpAbs _))   = Right Absolute
+getOperandAddressingMode _ (Just (OpAbsX _))  = Right AbsoluteX
+getOperandAddressingMode _ (Just (OpAbsY _))  = Right AbsoluteY
+getOperandAddressingMode _ (Just (OpInd _))   = Right Indirect
+getOperandAddressingMode _ (Just (OpIndX _))  = Right IndirectX
+getOperandAddressingMode _ (Just (OpIndY _))  = Right IndirectY
+getOperandAddressingMode m Nothing = case m of
+    -- Sprawdzanie czy mnemonic obsługuje tryb Accumulator
+    ASL -> Right Accumulator
+    LSR -> Right Accumulator
+    ROL -> Right Accumulator
+    ROR -> Right Accumulator
+    -- W przeciwnym razie zakładamy Implicit (lub błąd, jeśli nie ma wpisu)
+    _   -> Right Implicit
+
+-- NOWA: Funkcja do pobierania informacji o instrukcji (opcode i rozmiar)
+getInstructionInfo :: Mnemonic -> Maybe Operand -> Either String OpcodeEntry
+getInstructionInfo m maybeOp = do
+    mode <- getOperandAddressingMode m maybeOp
+    case Map.lookup m instructionTable >>= Map.lookup mode of
+        Just entry -> Right entry
+        Nothing    -> Left $ "Unsupported addressing mode '" ++ show mode ++ "' for mnemonic '" ++ show m ++ "'"
+
+-- --- Core Primitive Functions (MODYFIKACJE) ---
+
+-- resolveAddressMaybe (bez zmian)
+resolveAddressMaybe :: Maybe AddressRef -> AsmState -> Maybe Word16
+resolveAddressMaybe Nothing _ = Just 0 -- Dla Imm, wartość nie ma znaczenia
 resolveAddressMaybe (Just (AddrLit16 l)) _ = Just l
 resolveAddressMaybe (Just (AddrLabel l)) asmState = Map.lookup l labels
     where labels = asmLabels asmState
 
+-- getInstructionSize (teraz używa getInstructionInfo)
 getInstructionSize :: Mnemonic -> Maybe Operand -> Either String Word16
-getInstructionSize m (Just op) = case (m, op) of
-    (LDA, OpImm _)  -> Right 2; (LDA, OpZP _)   -> Right 2; (LDA, OpZPX _)  -> Right 2
-    (LDA, OpAbs _)  -> Right 3; (LDA, OpAbsX _) -> Right 3; (LDA, OpAbsY _) -> Right 3
-    (LDA, OpIndX _) -> Right 2; (LDA, OpIndY _) -> Right 2
-    (STA, OpZP _)   -> Right 2; (STA, OpZPX _)  -> Right 2
-    (STA, OpAbs _)  -> Right 3; (STA, OpAbsX _) -> Right 3; (STA, OpAbsY _) -> Right 3
-    (STA, OpIndX _) -> Right 2; (STA, OpIndY _) -> Right 2
-    (LDX, OpImm _)  -> Right 2; (LDX, OpZP _)   -> Right 2; (LDX, OpZPX _)  -> Right 2
-    (LDX, OpAbs _)  -> Right 3; (LDX, OpAbsY _) -> Right 3
-    (LDY, OpImm _)  -> Right 2; (LDY, OpZP _)   -> Right 2; (LDY, OpZPX _)  -> Right 2
-    (LDY, OpAbs _)  -> Right 3; (LDY, OpAbsX _) -> Right 3
-    (STX, OpZP _)   -> Right 2; (STX, OpZPY _)  -> Right 2; (STX, OpAbs _)  -> Right 3
-    (STY, OpZP _)   -> Right 2; (STY, OpZPX _)  -> Right 2; (STY, OpAbs _)  -> Right 3
-    (CPX, OpImm _)  -> Right 2; (CPX, OpZP _)   -> Right 2; (CPX, OpAbs _)  -> Right 3
-    (CPY, OpImm _)  -> Right 2; (CPY, OpZP _)   -> Right 2; (CPY, OpAbs _)  -> Right 3
-    (CMP, OpImm _)  -> Right 2; (CMP, OpZP _)   -> Right 2; (CMP, OpZPX _)  -> Right 2
-    (CMP, OpAbs _)  -> Right 3; (CMP, OpAbsX _) -> Right 3; (CMP, OpAbsY _) -> Right 3
-    (CMP, OpIndX _) -> Right 2; (CMP, OpIndY _) -> Right 2
-    (ADC, OpImm _)  -> Right 2; (ADC, OpZP _)   -> Right 2; (ADC, OpZPX _)  -> Right 2
-    (ADC, OpAbs _)  -> Right 3; (ADC, OpAbsX _) -> Right 3; (ADC, OpAbsY _) -> Right 3
-    (ADC, OpIndX _) -> Right 2; (ADC, OpIndY _) -> Right 2
-    (SBC, OpImm _)  -> Right 2; (SBC, OpZP _)   -> Right 2; (SBC, OpZPX _)  -> Right 2
-    (SBC, OpAbs _)  -> Right 3; (SBC, OpAbsX _) -> Right 3; (SBC, OpAbsY _) -> Right 3
-    (SBC, OpIndX _) -> Right 2; (SBC, OpIndY _) -> Right 2
-    (JMP, OpAbs _)  -> Right 3
-    (JMP, OpInd _) -> Right 3
-    (JSR, OpAbs _)  -> Right 3
-    (_, _) -> Left $ "Unsupported/TODO addressing mode " ++ show op ++ " for " ++ show m
+getInstructionSize m maybeOp = fmap (fromIntegral . snd) (getInstructionInfo m maybeOp)
 
-getInstructionSize m Nothing = case m of
-    (INX) -> Right 1; (RTS) -> Right 1; (TAX) -> Right 1; (TAY) -> Right 1
-    (TXA) -> Right 1; (TYA) -> Right 1; (TXS) -> Right 1; (TSX) -> Right 1
-    _     -> Left $ "Mnemonic " ++ show m ++ " requires an operand or is not a known implied instruction."
-
-
+-- emitGeneric (bez zmian)
 emitGeneric :: SymbolicInstruction -> Either String Word16 -> Asm ()
-emitGeneric _ (Left err) = error $ "Assembly Error (emitGeneric): " ++ err
+emitGeneric _ (Left err) = error $ "Assembly Error (emitGeneric): " ++ err -- TODO: Lepsza obsługa błędów
 emitGeneric instruction (Right size) = do
   pc <- gets asmPC
   modify' $ \s -> s { asmCode = (pc, instruction) : asmCode s, asmPC = pc + size }
 
+-- emitIns (bez zmian, ale używa zaktualizowanego getInstructionSize)
 emitIns :: Mnemonic -> Operand -> Asm ()
 emitIns m op = emitGeneric (SIns m (Just op)) (getInstructionSize m (Just op))
 
+-- emitImplied (używa teraz SIns m Nothing)
 emitImplied :: Mnemonic -> Asm ()
 emitImplied m = emitGeneric (SIns m Nothing) (getInstructionSize m Nothing)
 
+-- NOWA: emitAccumulator (dla jasności, chociaż technicznie to też SIns m Nothing)
+emitAccumulator :: Mnemonic -> Asm ()
+emitAccumulator m = emitGeneric (SIns m Nothing) (getInstructionSize m Nothing)
+
+-- emitBranch (bez zmian)
 emitBranch :: BranchMnemonic -> Label -> Asm ()
 emitBranch m l = emitGeneric (SBranch m l) (Right 2)
 
+-- l_ (bez zmian)
 l_ :: Label -> Asm ()
 l_ lbl = do pc <- gets asmPC; labels <- gets asmLabels
-            when (Map.member lbl labels) $ error $ "Label redefined: " ++ lbl
+            when (Map.member lbl labels) $ error $ "Label redefined: " ++ lbl -- TODO: Lepsza obsługa błędów
             modify' $ \s -> s { asmLabels = Map.insert lbl pc labels }
             emitGeneric (SLabelDef lbl) (Right 0)
 
+-- db, dw, string, makeUniqueLabel (bez zmian)
 db :: [Word8] -> Asm (); db bs = let size = fromIntegral $ length bs in when (size > 0) $ emitGeneric (SBytes bs) (Right size)
 dw :: [Word16] -> Asm (); dw ws = let size = fromIntegral (length ws) * 2 in when (size > 0) $ emitGeneric (SWords ws) (Right size)
 string :: String -> Asm (); string str = let bytes = map (fromIntegral . ord) str; size = fromIntegral $ length bytes in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
@@ -194,7 +270,55 @@ makeUniqueLabel _ = do
     modify' $ \s -> s { asmMacroCounter = count + 1 }
     return $ "_lbl_" ++ show count
 
--- --- eDSL Instruction Aliases (using Core primitives) ---
+-- --- Opcode-related functions (USUNIĘTE/ZASTĄPIONE) ---
+-- impliedOpcode, operandOpcode zostają zastąpione przez logikę w generateBinary używającą instructionTable
+
+-- Funkcja pomocnicza dla generateBinary (może być w Assembly.hs)
+generateInstructionBytes :: Mnemonic -> Maybe Operand -> AsmState -> Either String [Word8]
+generateInstructionBytes m maybeOp asmState = do
+    (opcode, size) <- getInstructionInfo m maybeOp
+    addressRef <- Right $ getOperandAddressRef maybeOp -- Pobierz AddressRef, jeśli istnieje
+    resolvedAddrMaybe <- Right $ resolveAddressMaybe addressRef asmState
+
+    case resolvedAddrMaybe of
+        Nothing | size > 1 && maybeOp /= Nothing -> Left $ "Failed to resolve address for " ++ show m ++ " " ++ show maybeOp -- Błąd jeśli adres jest potrzebny a nie da się go rozwiązać
+        _ -> let resolvedAddr = fromMaybe 0 resolvedAddrMaybe -- Domyślnie 0 jeśli niepotrzebny (np. Imm) lub błąd
+                 operandVal = case maybeOp of Just (OpImm v) -> v; _ -> 0 -- Pobierz wartość dla Immediate
+             in Right $ case size of
+                 1 -> [opcode]
+                 2 -> case fromMaybe Implicit (either (const Nothing) Just (getOperandAddressingMode m maybeOp)) of -- Potrzebujemy trybu, aby odróżnić Imm od innych 2-bajtowych
+                          Immediate -> [opcode, operandVal]
+                          _         -> [opcode, lo resolvedAddr] -- ZP, ZPX, ZPY, IndX, IndY
+                 3 -> [opcode, lo resolvedAddr, hi resolvedAddr] -- Abs, AbsX, AbsY, Ind
+                 _ -> error "Internal error: Invalid instruction size derived" -- Nie powinno się zdarzyć
+
+-- getOperandAddressRef (aktualizacja dla nowych Op*)
+getOperandAddressRef :: Maybe Operand -> Maybe AddressRef
+getOperandAddressRef = \case
+    Just (OpZP r)   -> Just r
+    Just (OpZPX r)  -> Just r
+    Just (OpZPY r)  -> Just r
+    Just (OpAbs r)  -> Just r
+    Just (OpAbsX r) -> Just r
+    Just (OpAbsY r) -> Just r
+    Just (OpInd r)  -> Just r
+    Just (OpIndX r) -> Just r
+    Just (OpIndY r) -> Just r
+    _               -> Nothing -- Dla Imm, Implicit, Accumulator
+
+-- branchOpcode (przeniesione)
+-- branchOpcode :: BranchMnemonic -> Word8
+-- branchOpcode = \case BNE -> 0xD0; BEQ -> 0xF0; BCS -> 0xB0; BCC -> 0x90; BMI -> 0x30; BPL -> 0x10; BVS -> 0x70; BVC -> 0x50
+
+
+-- --- Miscellaneous (bez zmian) ---
+lo :: Word16 -> Word8; lo = fromIntegral . (.&. 0xFF)
+hi :: Word16 -> Word8; hi w = fromIntegral (w `shiftR` 8)
+hx :: Word16 -> String; hx a = showHex a ""
+wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [lo w, hi w]
+
+-- --- eDSL Instruction Aliases (TRZEBA DODAĆ NOWE) ---
+-- Istniejące
 lda :: Operand -> Asm (); lda = emitIns LDA
 sta :: Operand -> Asm (); sta = emitIns STA
 ldx :: Operand -> Asm (); ldx = emitIns LDX
@@ -215,113 +339,117 @@ sty :: Operand -> Asm (); sty = emitIns STY
 cmp :: Operand -> Asm (); cmp = emitIns CMP
 cpx :: Operand -> Asm (); cpx = emitIns CPX
 cpy :: Operand -> Asm (); cpy = emitIns CPY
+bne :: Label -> Asm (); bne = emitBranch B_BNE
+beq :: Label -> Asm (); beq = emitBranch B_BEQ
+bcs :: Label -> Asm (); bcs = emitBranch B_BCS
+bcc :: Label -> Asm (); bcc = emitBranch B_BCC
+bmi :: Label -> Asm (); bmi = emitBranch B_BMI
+bpl :: Label -> Asm (); bpl = emitBranch B_BPL
+bvs :: Label -> Asm (); bvs = emitBranch B_BVS
+bvc :: Label -> Asm (); bvc = emitBranch B_BVC
+jsr :: Operand -> Asm (); jsr = emitIns JSR -- Powinien akceptować tylko Absolute
+ora :: Operand -> Asm (); ora = emitIns ORA
+asl :: Maybe Operand -> Asm () -- Może być Accumulator (Nothing) lub ZP/Abs/etc. (Just op)
+asl Nothing   = emitAccumulator ASL
+asl (Just op) = emitIns ASL op
+php :: Asm (); php = emitImplied PHP
+clc :: Asm (); clc = emitImplied CLC
+and :: Operand -> Asm (); and = emitIns AND
+bit :: Operand -> Asm (); bit = emitIns BIT
+rol :: Maybe Operand -> Asm ()
+rol Nothing   = emitAccumulator ROL
+rol (Just op) = emitIns ROL op
+plp :: Asm (); plp = emitImplied PLP
+sec :: Asm (); sec = emitImplied SEC
+rti :: Asm (); rti = emitImplied RTI
+eor :: Operand -> Asm (); eor = emitIns EOR
+lsr :: Maybe Operand -> Asm ()
+lsr Nothing   = emitAccumulator LSR
+lsr (Just op) = emitIns LSR op
+pha :: Asm (); pha = emitImplied PHA
+cli :: Asm (); cli = emitImplied CLI
+pla :: Asm (); pla = emitImplied PLA
+sei :: Asm (); sei = emitImplied SEI
+dey :: Asm (); dey = emitImplied DEY
+clv :: Asm (); clv = emitImplied CLV
+iny :: Asm (); iny = emitImplied INY
+dex :: Asm (); dex = emitImplied DEX
+cld :: Asm (); cld = emitImplied CLD
+nop :: Asm (); nop = emitImplied NOP
+sed :: Asm (); sed = emitImplied SED
+inc :: Operand -> Asm (); inc = emitIns INC
+dec :: Operand -> Asm (); dec = emitIns DEC
+brk :: Asm (); brk = emitImplied BRK
+ror :: Maybe Operand -> Asm ()
+ror Nothing   = emitAccumulator ROR
+ror (Just op) = emitIns ROR op
 
-bne :: Label -> Asm (); bne = emitBranch BNE
-beq :: Label -> Asm (); beq = emitBranch BEQ
-bcs :: Label -> Asm (); bcs = emitBranch BCS
-bcc :: Label -> Asm (); bcc = emitBranch BCC
-bmi :: Label -> Asm (); bmi = emitBranch BMI
-bpl :: Label -> Asm (); bpl = emitBranch BPL
-bvs :: Label -> Asm (); bvs = emitBranch BVS
-bvc :: Label -> Asm (); bvc = emitBranch BVC
+
+-- --- eDSL Instruction Aliases ---
+lda :: Operand -> Asm (); lda = emitIns LDA
+sta :: Operand -> Asm (); sta = emitIns STA
+ldx :: Operand -> Asm (); ldx = emitIns LDX
+ldy :: Operand -> Asm (); ldy = emitIns LDY
+jmp :: Operand -> Asm (); jmp = emitIns JMP
+inx :: Asm (); inx = emitImplied INX
+rts :: Asm (); rts = emitImplied RTS
+adc :: Operand -> Asm (); adc = emitIns ADC
+sbc :: Operand -> Asm (); sbc = emitIns SBC
+tax :: Asm (); tax = emitImplied TAX
+tay :: Asm (); tay = emitImplied TAY
+txa :: Asm (); txa = emitImplied TXA
+tya :: Asm (); tya = emitImplied TYA
+txs :: Asm (); txs = emitImplied TXS
+tsx :: Asm (); tsx = emitImplied TSX
+stx :: Operand -> Asm (); stx = emitIns STX
+sty :: Operand -> Asm (); sty = emitIns STY
+cmp :: Operand -> Asm (); cmp = emitIns CMP
+cpx :: Operand -> Asm (); cpx = emitIns CPX
+cpy :: Operand -> Asm (); cpy = emitIns CPY
+bne :: Label -> Asm (); bne = emitBranch B_BNE
+beq :: Label -> Asm (); beq = emitBranch B_BEQ
+bcs :: Label -> Asm (); bcs = emitBranch B_BCS
+bcc :: Label -> Asm (); bcc = emitBranch B_BCC
+bmi :: Label -> Asm (); bmi = emitBranch B_BMI
+bpl :: Label -> Asm (); bpl = emitBranch B_BPL
+bvs :: Label -> Asm (); bvs = emitBranch B_BVS
+bvc :: Label -> Asm (); bvc = emitBranch B_BVC
 jsr :: Operand -> Asm (); jsr = emitIns JSR
-
-impliedOpcode :: Mnemonic -> Maybe [Word8]
-impliedOpcode = \case INX -> Just [0xE8]; RTS -> Just [0x60]; TAX -> Just [0xAA]; TAY -> Just [0xA8]
-                      TXA -> Just [0x8A]; TYA -> Just [0x98]; TXS -> Just [0x9A]; TSX -> Just [0xBA]; _ -> Nothing
-
-branchOpcode :: BranchMnemonic -> Word8
-branchOpcode = \case BNE -> 0xD0; BEQ -> 0xF0; BCS -> 0xB0; BCC -> 0x90; BMI -> 0x30; BPL -> 0x10; BVS -> 0x70; BVC -> 0x50
-
-operandOpcode :: Mnemonic -> Operand -> AsmState -> Maybe [Word8]
-operandOpcode m o asmState = resolveAddressMaybe (getOperandAddressRef o) asmState >>= \resolvedAddr ->
-    case (m, o) of
-        (LDA, OpImm v)  -> Just [0xA9, v]
-        (LDA, OpZP _)   -> Just [0xA5, lo resolvedAddr]
-        (LDA, OpZPX _)  -> Just [0xB5, lo resolvedAddr]
-        (LDA, OpAbs _)  -> Just [0xAD, lo resolvedAddr, hi resolvedAddr]
-        (LDA, OpAbsX _) -> Just [0xBD, lo resolvedAddr, hi resolvedAddr]
-        (LDA, OpAbsY _) -> Just [0xB9, lo resolvedAddr, hi resolvedAddr]
-        (LDA, OpIndX _) -> Just [0xA1, lo resolvedAddr]
-        (LDA, OpIndY _) -> Just [0xB1, lo resolvedAddr]
-
-        (STA, OpZP _)   -> Just [0x85, lo resolvedAddr]
-        (STA, OpZPX _)  -> Just [0x95, lo resolvedAddr]
-        (STA, OpAbs _)  -> Just [0x8D, lo resolvedAddr, hi resolvedAddr]
-        (STA, OpAbsX _) -> Just [0x9D, lo resolvedAddr, hi resolvedAddr]
-        (STA, OpAbsY _) -> Just [0x99, lo resolvedAddr, hi resolvedAddr]
-        (STA, OpIndX _) -> Just [0x81, lo resolvedAddr]
-        (STA, OpIndY _) -> Just [0x91, lo resolvedAddr]
-
-        (LDX, OpImm v)  -> Just [0xA2, v]
-        (LDX, OpZP _)   -> Just [0xA6, lo resolvedAddr]
-        (LDX, OpZPY _)  -> Just [0xB6, lo resolvedAddr] -- ZPY exists for LDX
-        (LDX, OpAbs _)  -> Just [0xAE, lo resolvedAddr, hi resolvedAddr]
-        (LDX, OpAbsY _) -> Just [0xBE, lo resolvedAddr, hi resolvedAddr] -- AbsY exists for LDX
-
-        (LDY, OpImm v)  -> Just [0xA0, v]
-        (LDY, OpZP _)   -> Just [0xA4, lo resolvedAddr]
-        (LDY, OpZPX _)  -> Just [0xB4, lo resolvedAddr] -- ZPX exists for LDY
-        (LDY, OpAbs _)  -> Just [0xAC, lo resolvedAddr, hi resolvedAddr]
-        (LDY, OpAbsX _) -> Just [0xBC, lo resolvedAddr, hi resolvedAddr] -- AbsX exists for LDY
-
-        (STX, OpZP _)   -> Just [0x86, lo resolvedAddr]
-        (STX, OpZPY _)  -> Just [0x96, lo resolvedAddr]
-        (STX, OpAbs _)  -> Just [0x8E, lo resolvedAddr, hi resolvedAddr]
-
-        (STY, OpZP _)   -> Just [0x84, lo resolvedAddr]
-        (STY, OpZPX _)  -> Just [0x94, lo resolvedAddr]
-        (STY, OpAbs _)  -> Just [0x8C, lo resolvedAddr, hi resolvedAddr]
-
-        (CMP, OpImm v)  -> Just [0xC9, v]
-        (CMP, OpZP _)   -> Just [0xC5, lo resolvedAddr]
-        (CMP, OpZPX _)  -> Just [0xD5, lo resolvedAddr]
-        (CMP, OpAbs _)  -> Just [0xCD, lo resolvedAddr, hi resolvedAddr]
-        (CMP, OpAbsX _) -> Just [0xDD, lo resolvedAddr, hi resolvedAddr]
-        (CMP, OpAbsY _) -> Just [0xD9, lo resolvedAddr, hi resolvedAddr]
-        (CMP, OpIndX _) -> Just [0xC1, lo resolvedAddr]
-        (CMP, OpIndY _) -> Just [0xD1, lo resolvedAddr]
-
-        (CPX, OpImm v)  -> Just [0xE0, v]
-        (CPX, OpZP _)   -> Just [0xE4, lo resolvedAddr]
-        (CPX, OpAbs _)  -> Just [0xEC, lo resolvedAddr, hi resolvedAddr]
-
-        (CPY, OpImm v)  -> Just [0xC0, v]
-        (CPY, OpZP _)   -> Just [0xC4, lo resolvedAddr]
-        (CPY, OpAbs _)  -> Just [0xCC, lo resolvedAddr, hi resolvedAddr]
-
-        (ADC, OpImm v)  -> Just [0x69, v]
-        (ADC, OpZP _)   -> Just [0x65, lo resolvedAddr]
-        (ADC, OpZPX _)  -> Just [0x75, lo resolvedAddr]
-        (ADC, OpAbs _)  -> Just [0x6D, lo resolvedAddr, hi resolvedAddr]
-        (ADC, OpAbsX _) -> Just [0x7D, lo resolvedAddr, hi resolvedAddr]
-        (ADC, OpAbsY _) -> Just [0x79, lo resolvedAddr, hi resolvedAddr]
-        (ADC, OpIndX _) -> Just [0x61, lo resolvedAddr]
-        (ADC, OpIndY _) -> Just [0x71, lo resolvedAddr]
-
-        (SBC, OpImm v)  -> Just [0xE9, v]
-        (SBC, OpZP _)   -> Just [0xE5, lo resolvedAddr]
-        (SBC, OpZPX _)  -> Just [0xF5, lo resolvedAddr]
-        (SBC, OpAbs _)  -> Just [0xED, lo resolvedAddr, hi resolvedAddr]
-        (SBC, OpAbsX _) -> Just [0xFD, lo resolvedAddr, hi resolvedAddr]
-        (SBC, OpAbsY _) -> Just [0xF9, lo resolvedAddr, hi resolvedAddr]
-        (SBC, OpIndX _) -> Just [0xE1, lo resolvedAddr]
-        (SBC, OpIndY _) -> Just [0xF1, lo resolvedAddr]
-
-        (JMP, OpAbs _)  -> Just [0x4C, lo resolvedAddr, hi resolvedAddr]
-        (JMP, OpInd _)  -> Just [0x6C, lo resolvedAddr, hi resolvedAddr]
-        (JSR, OpAbs _)  -> Just [0x20, lo resolvedAddr, hi resolvedAddr]
-        _ -> Nothing -- Combination not supported or requires specific handling
-
-getOperandAddressRef :: Operand -> Maybe AddressRef
-getOperandAddressRef = \case
-    OpImm _ -> Nothing -- Immediate doesn't have an address ref
-    OpAbs r -> Just r; OpAbsX r -> Just r; OpAbsY r -> Just r
-    OpZP r -> Just r; OpZPX r -> Just r; OpZPY r -> Just r
-    OpIndX r -> Just r; OpIndY r -> Just r
+ora :: Operand -> Asm (); ora = emitIns ORA
+asl :: Maybe Operand -> Asm ()
+asl Nothing   = emitAccumulator ASL
+asl (Just op) = emitIns ASL op
+php :: Asm (); php = emitImplied PHP
+clc :: Asm (); clc = emitImplied CLC
+and :: Operand -> Asm (); and = emitIns AND
+bit :: Operand -> Asm (); bit = emitIns BIT
+rol :: Maybe Operand -> Asm ()
+rol Nothing   = emitAccumulator ROL
+rol (Just op) = emitIns ROL op
+plp :: Asm (); plp = emitImplied PLP
+sec :: Asm (); sec = emitImplied SEC
+rti :: Asm (); rti = emitImplied RTI
+eor :: Operand -> Asm (); eor = emitIns EOR
+lsr :: Maybe Operand -> Asm ()
+lsr Nothing   = emitAccumulator LSR
+lsr (Just op) = emitIns LSR op
+pha :: Asm (); pha = emitImplied PHA
+cli :: Asm (); cli = emitImplied CLI
+pla :: Asm (); pla = emitImplied PLA
+sei :: Asm (); sei = emitImplied SEI
+dey :: Asm (); dey = emitImplied DEY
+clv :: Asm (); clv = emitImplied CLV
+iny :: Asm (); iny = emitImplied INY
+dex :: Asm (); dex = emitImplied DEX
+cld :: Asm (); cld = emitImplied CLD
+nop :: Asm (); nop = emitImplied NOP
+sed :: Asm (); sed = emitImplied SED
+inc :: Operand -> Asm (); inc = emitIns INC
+dec :: Operand -> Asm (); dec = emitIns DEC
+brk :: Asm (); brk = emitImplied BRK
+ror :: Maybe Operand -> Asm ()
+ror Nothing   = emitAccumulator ROR
+ror (Just op) = emitIns ROR op
 
 
-lo :: Word16 -> Word8; lo = fromIntegral . (.&. 0xFF)
-hi :: Word16 -> Word8; hi w = fromIntegral (w `shiftR` 8)
-hx :: Word16 -> String; hx a = showHex a ""
-wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [lo w, hi w]
+-- Uwaga: Trzeba dodać aliasy dla wszystkich mnemoników z `Mnemonic`

@@ -167,4 +167,18 @@ Przeanalizowałem dostarczony kod (`Core.hs`, `Assembly.hs`, `Macros.hs`, `Main.
 
 Masz bardzo solidne fundamenty pod potężne narzędzie. Projekt już teraz pokazuje duży potencjał i oferuje ciekawy sposób na programowanie retro-komputerów. Skupienie się na poprawie obsługi błędów, uzupełnieniu zestawu instrukcji, dopracowaniu makr (`caseOfMultiBytes`) i dodaniu dokumentacji oraz testów znacząco podniesie jakość i użyteczność biblioteki. Dalszy rozwój w kierunku wsparcia dla konkretnych platform, bardziej zaawansowanych makr czy optymalizacji może uczynić ten projekt naprawdę wyjątkowym w społeczności retro-programistów i entuzjastów Haskella.
 
-Świetna robota!
+---
+Podsumowanie Zmian:
+Zdefiniowano AddressingMode enum.
+Rozszerzono Mnemonic enum.
+Zaktualizowano Operand data type.
+Stworzono instructionTable mapującą (Mnemonic, AddressingMode) na (Opcode, Size).
+Napisano buildInstructionTable do tworzenia tej tabeli z surowych danych.
+Napisano getOperandAddressingMode do konwersji Operand na AddressingMode.
+Napisano getInstructionInfo do pobierania (Opcode, Size) z tabeli.
+getInstructionSize teraz używa getInstructionInfo.
+Usunięto stare operandOpcode i impliedOpcode.
+Napisano generateInstructionBytes (w Core.hs, używane przez generateBinary) do generowania bajtów na podstawie instructionTable.
+Zaktualizowano generateBinary w Assembly.hs, aby używało generateInstructionBytes.
+Dodano nowe aliasy eDSL w Core.hs dla nowych instrukcji.
+Zaktualizowano przykładowy kod w Main.hs.

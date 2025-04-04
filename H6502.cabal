@@ -30,6 +30,8 @@ library
       Assembly.Core
       Assembly.Macros
   other-modules:
+      Assembly.Branch
+      Assembly.Instructions6502
       Paths_H6502
   autogen-modules:
       Paths_H6502
