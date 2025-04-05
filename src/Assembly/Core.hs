@@ -1,7 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE TupleSections #-} -- Potrzebne do tworzenia tabeli
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 
 module Assembly.Core (
     -- Core Types
@@ -13,6 +14,7 @@ module Assembly.Core (
     Operand(..),
     pattern Imm,
     pattern AbsLit,
+    pattern AbsAddress,
     pattern AbsLabel,
     pattern AbsXLit,
     pattern AbsXLabel,
@@ -47,6 +49,7 @@ module Assembly.Core (
     dw,
     string,
     makeUniqueLabel,
+    makeLabelWithPrefix,
     generateInstructionBytes,
 
     -- Opcode-related functions (teraz oparte na tabeli)
@@ -83,8 +86,9 @@ import Data.Maybe (mapMaybe, fromMaybe) -- Potrzebne dla lookupów
 import Data.Char (ord)
 import Numeric (showHex)
 import Data.List (foldl') -- Potrzebne do budowania tabeli
+
 import Assembly.Branch (BranchMnemonic(..)) -- Importujemy BranchMnemonic z osobnego modułu
-import Assembly.Instructions6502 (instructionData, Mnemonic(..), AddressingMode(..)) -- Importujemy dane instrukcji z osobnego modułu
+import Assembly.Instructions6502 (getModeSize, instructionData, Mnemonic(..), AddressingMode(..)) -- Importujemy dane instrukcji z osobnego modułu
 
 -- --- Types ---
 type Address = Word16
@@ -111,6 +115,7 @@ data Operand
 -- Pattern Synonyms (aktualizacja i dodanie nowych)
 pattern Imm :: Word8 -> Operand; pattern Imm v = OpImm v
 pattern AbsLit :: Word16 -> Operand; pattern AbsLit v = OpAbs (AddrLit16 v)
+pattern AbsAddress :: AddressRef -> Operand; pattern AbsAddress v = OpAbs v
 pattern AbsLabel :: Label -> Operand; pattern AbsLabel l = OpAbs (AddrLabel l)
 pattern AbsXLit :: Word16 -> Operand; pattern AbsXLit v = OpAbsX (AddrLit16 v)
 pattern AbsXLabel :: Label -> Operand; pattern AbsXLabel l = OpAbsX (AddrLabel l)
@@ -264,11 +269,19 @@ db :: [Word8] -> Asm (); db bs = let size = fromIntegral $ length bs in when (si
 dw :: [Word16] -> Asm (); dw ws = let size = fromIntegral (length ws) * 2 in when (size > 0) $ emitGeneric (SWords ws) (Right size)
 string :: String -> Asm (); string str = let bytes = map (fromIntegral . ord) str; size = fromIntegral $ length bytes in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
 
-makeUniqueLabel :: () -> Asm Label
-makeUniqueLabel _ = do
+makeUniqueLabel_ :: String -> Asm Label
+makeUniqueLabel_ prefix = do
     count <- gets asmMacroCounter
     modify' $ \s -> s { asmMacroCounter = count + 1 }
-    return $ "_lbl_" ++ show count
+    return $ "_lbl_" ++ prefix ++ "_" ++ show count
+
+
+makeUniqueLabel :: () -> Asm Label
+makeUniqueLabel _ = makeUniqueLabel_ ""
+
+makeLabelWithPrefix :: String -> Asm Label
+makeLabelWithPrefix = makeUniqueLabel_ 
+
 
 -- --- Opcode-related functions (USUNIĘTE/ZASTĄPIONE) ---
 -- impliedOpcode, operandOpcode zostają zastąpione przez logikę w generateBinary używającą instructionTable
@@ -318,72 +331,6 @@ hx :: Word16 -> String; hx a = showHex a ""
 wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [lo w, hi w]
 
 -- --- eDSL Instruction Aliases (TRZEBA DODAĆ NOWE) ---
--- Istniejące
-lda :: Operand -> Asm (); lda = emitIns LDA
-sta :: Operand -> Asm (); sta = emitIns STA
-ldx :: Operand -> Asm (); ldx = emitIns LDX
-ldy :: Operand -> Asm (); ldy = emitIns LDY
-jmp :: Operand -> Asm (); jmp = emitIns JMP
-inx :: Asm (); inx = emitImplied INX
-rts :: Asm (); rts = emitImplied RTS
-adc :: Operand -> Asm (); adc = emitIns ADC
-sbc :: Operand -> Asm (); sbc = emitIns SBC
-tax :: Asm (); tax = emitImplied TAX
-tay :: Asm (); tay = emitImplied TAY
-txa :: Asm (); txa = emitImplied TXA
-tya :: Asm (); tya = emitImplied TYA
-txs :: Asm (); txs = emitImplied TXS
-tsx :: Asm (); tsx = emitImplied TSX
-stx :: Operand -> Asm (); stx = emitIns STX
-sty :: Operand -> Asm (); sty = emitIns STY
-cmp :: Operand -> Asm (); cmp = emitIns CMP
-cpx :: Operand -> Asm (); cpx = emitIns CPX
-cpy :: Operand -> Asm (); cpy = emitIns CPY
-bne :: Label -> Asm (); bne = emitBranch B_BNE
-beq :: Label -> Asm (); beq = emitBranch B_BEQ
-bcs :: Label -> Asm (); bcs = emitBranch B_BCS
-bcc :: Label -> Asm (); bcc = emitBranch B_BCC
-bmi :: Label -> Asm (); bmi = emitBranch B_BMI
-bpl :: Label -> Asm (); bpl = emitBranch B_BPL
-bvs :: Label -> Asm (); bvs = emitBranch B_BVS
-bvc :: Label -> Asm (); bvc = emitBranch B_BVC
-jsr :: Operand -> Asm (); jsr = emitIns JSR -- Powinien akceptować tylko Absolute
-ora :: Operand -> Asm (); ora = emitIns ORA
-asl :: Maybe Operand -> Asm () -- Może być Accumulator (Nothing) lub ZP/Abs/etc. (Just op)
-asl Nothing   = emitAccumulator ASL
-asl (Just op) = emitIns ASL op
-php :: Asm (); php = emitImplied PHP
-clc :: Asm (); clc = emitImplied CLC
-and :: Operand -> Asm (); and = emitIns AND
-bit :: Operand -> Asm (); bit = emitIns BIT
-rol :: Maybe Operand -> Asm ()
-rol Nothing   = emitAccumulator ROL
-rol (Just op) = emitIns ROL op
-plp :: Asm (); plp = emitImplied PLP
-sec :: Asm (); sec = emitImplied SEC
-rti :: Asm (); rti = emitImplied RTI
-eor :: Operand -> Asm (); eor = emitIns EOR
-lsr :: Maybe Operand -> Asm ()
-lsr Nothing   = emitAccumulator LSR
-lsr (Just op) = emitIns LSR op
-pha :: Asm (); pha = emitImplied PHA
-cli :: Asm (); cli = emitImplied CLI
-pla :: Asm (); pla = emitImplied PLA
-sei :: Asm (); sei = emitImplied SEI
-dey :: Asm (); dey = emitImplied DEY
-clv :: Asm (); clv = emitImplied CLV
-iny :: Asm (); iny = emitImplied INY
-dex :: Asm (); dex = emitImplied DEX
-cld :: Asm (); cld = emitImplied CLD
-nop :: Asm (); nop = emitImplied NOP
-sed :: Asm (); sed = emitImplied SED
-inc :: Operand -> Asm (); inc = emitIns INC
-dec :: Operand -> Asm (); dec = emitIns DEC
-brk :: Asm (); brk = emitImplied BRK
-ror :: Maybe Operand -> Asm ()
-ror Nothing   = emitAccumulator ROR
-ror (Just op) = emitIns ROR op
-
 
 -- --- eDSL Instruction Aliases ---
 lda :: Operand -> Asm (); lda = emitIns LDA

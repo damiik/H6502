@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Assembly (
     -- Re-export Core Types/State/Monad needed by users
@@ -12,11 +10,12 @@ module Assembly (
 
     -- List Helpers
     asc,
-    createList,
+    listCreate,
+    listCreate_,
     listAdd,
     listForEach,
     listCopy,
-    stringAsList,
+    listFromString
 ) where
 
 import Assembly.Core -- Teraz importuje wszystko, w tym nowe typy i tabelę
@@ -35,55 +34,61 @@ import qualified Data.Foldable as String -- Alias dla String.length
 asc :: Char -> Word8
 asc = fromIntegral . fromEnum
 
-createList :: AddressRef -> Asm ()
-createList addr = do
+
+-- Listy są indeksowande od 1! 
+-- Listy są przechowywane w pamięci jako:
+-- [length, element1, element2, ..., elementN]
+-- length - długość listy
+-- element1 - pierwszy element listy..
+-- wynika z tego że:
+--   listBase + 0 to długość listy
+--   listBase + 1 to pierwszy element
+--   listBase + 2 to drugi element
+--   ...
+
+listCreate_ :: AddressRef -> Asm ()
+listCreate_ addr = do
     lda $ Imm 0x00
-    sta $ OpAbs addr -- Zakłada listę w pamięci absolutnej
+    sta $ OpAbs addr -- Initializes list in absolute memory
+
+-- Modified listCreate to return AddressRef within the Asm monad
+listCreate :: String -> Asm AddressRef
+listCreate s = do
+    let sAddr = AddrLabel s
+    listCreate_ sAddr
+    return sAddr
 
 listAdd :: AddressRef -> Word8 -> Asm ()
 listAdd l element = do
   let listBaseAbs = OpAbs l
   let listBaseAbsX = OpAbsX l
   lda listBaseAbs
-  tax
-  inx
-  stx listBaseAbs -- Zapisz nową długość
+  tax -- długość -> X
+  inx -- X++
+  stx listBaseAbs -- X -> długość
   lda $ Imm element
   sta listBaseAbsX -- Zapisz element na list_base + X
 
 listForEach :: AddressRef -> (Operand -> Asm ()) -> Asm ()
 listForEach l action = do
-    let listBaseAbs = OpAbs l
-    let listBaseAbsX = OpAbsX l
-    ldx $ Imm 0x00
-    loopLabel <- makeUniqueLabel ()
+    let listLenAddr = OpAbs l
+    ldx $ Imm 0x00         -- Start index at 0
+    loopLabel <- makeUniqueLabel () -- Uses makeUniqueLabel from Core (via Macros import)
     endLabel  <- makeUniqueLabel ()
-    l_ loopLabel
-    cpx listBaseAbs
-    beq endLabel
-    -- UWAGA: Oryginalnie inkrementowało X przed użyciem, co pomijało pierwszy element
-    -- Poprawiona logika: użyj X, potem inkrementuj
-    -- action listBaseAbsX -- Wykonaj akcję z adresem elementu (base + X)
-    -- inx
-    -- JMP Absolute wymaga Operandu, nie Label. Poprawiono:
-    -- jmp $ AbsLabel loopLabel
-    -- POPRAWIONA WERSJA PĘTLI:
-    cpx listBaseAbs         -- Porównaj X z długością
-    beq endLabel            -- Jeśli równe, koniec
-    -- X jest teraz indeksem bieżącego elementu (0 do length-1)
-    action (OpAbsX l)       -- Wykonaj akcję z adresem elementu (base + X)
-    inx                     -- Przejdź do następnego indeksu
-    jmp $ AbsLabel loopLabel -- Skocz z powrotem
+    l_ loopLabel             -- Uses l_ from Core
+    cpx listLenAddr          -- Uses cpx alias defined above
+    beq endLabel             -- Uses beq from Core, jumps to endLabel if X == length, for empty list X == length == 0!
+    inx                      -- X indexed from 1!
+    action $ OpAbsX l        -- Perform action with the *address* of the element
+    jmp $ AbsLabel loopLabel -- Uses jmp alias defined above
     l_ endLabel
+
 
 listCopy :: AddressRef -> AddressRef -> Asm ()
 listCopy src dst = do
     let srcAbs = OpAbs src
     let dstAbs = OpAbs dst
-    let srcAbsX = OpAbsX src
-    let dstAbsX = OpAbsX dst
-    -- Zainicjuj długość docelową na 0
-    lda $ Imm 0
+    lda $ Imm 0  -- Inicjalizuj długość listy docelowej
     sta dstAbs
     -- Pętla kopiująca
     ldx $ Imm 0
@@ -93,22 +98,18 @@ listCopy src dst = do
     -- lda srcAbs          -- Pobierz długość źródła
     -- cmp $ OpZPX (AddrLit16 0) -- Porównaj z X (używamy ZPX jako hack do porównania z X, wymaga to aby $00 nie był używany lub można użyć CPX)
     cpx srcAbs
-    -- Alternatywnie:
-    -- cpx srcAbs -- Jeśli cpx obsługuje OpAbs
     beq endCopyLabel    -- Jeśli X == długość źródła, koniec
-    -- Kopiuj bajt
-    lda srcAbsX         -- Załaduj bajt ze źródła[X]
-    sta dstAbsX         -- Zapisz bajt w docelowym[X]
-    -- Zaktualizuj długość docelową
     inx                 -- Zwiększ X (nowa potencjalna długość)
+    lda $ OpAbsX src         -- Załaduj bajt ze źródła[X]
+    sta $ OpAbsX dst         -- Zapisz bajt w docelowym[X]
     txa                 -- Przenieś X do A
     sta dstAbs          -- Zapisz nową długość w docelowym
     jmp $ AbsLabel copyLoopLabel
     l_ endCopyLabel
 
 
-stringAsList :: String -> Asm ()
-stringAsList s = do
+listFromString :: String -> Asm ()
+listFromString s = do
     let bytes = map (fromIntegral . ord) s
     db [fromIntegral $ String.length s] -- Długość
     db bytes                         -- Bajty

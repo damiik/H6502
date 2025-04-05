@@ -1,36 +1,23 @@
-{-# LANGUAGE LambdaCase #-}
 
 module Assembly.Macros (
     -- Macros
-    ifNotEqThen,
-    ifEqThen,
-    ifCarryThen,
-    ifNotCarryThen,
-    whileEqDo,
-    whileNotEqDo,
-    whileCarryDo,
-    whileNotCarryDo,
+    ifNotEqThen, ifEqThen, ifCarryThen, ifNotCarryThen,
+    ifMinusThen, ifPlusThen, ifOverflowThen, ifNotOverflowThen,
+    whileEqDo, whileNotEqDo, whileCarryDo, whileNotCarryDo,
+    whileMinusDo, whilePlusDo, whileOverflowDo, whileNotOverflowDo,
+    forEachRange, forEachListWithIndex,
+    mapListInPlace, mapListToNew,
+    filterList, foldList,
+    filterMoreThan, sumList,
+    caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,
     -- Helper (potentially hide later)
-    makeUniqueLabel,
-    caseOf,
-    caseOfA,
-    caseOfX,
-    caseOfY,
-    caseOfAddr,
-    caseOfZP,
-
+    makeUniqueLabel
 ) where
 
 import Data.Word (Word8)
---import Control.Monad.State.Strict (MonadState, gets, modify')
--- Fallback to wildcard import to try and resolve persistent AbsLabel import error
-import Assembly.Core -- Wildcard import of Assembly.Core
--- import Assembly.Core ( Asm Label AddressRef(AddrLabel) Operand(OpAbs) AbsLabel AsmState(asmMacroCounter) )
--- import Assembly.Core ( l_, beq, bne, bcc, bcs, jmp, makeUniqueLabel ) -- Import specific functions needed from Core
+import Assembly.Core
 
--- makeUniqueLabel is now imported from Assembly.Core
-
--- --- Macros ---
+-- --- Warunki (bez zmian) ---
 ifNotEqThen :: Asm () -> Asm ()
 ifNotEqThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -41,7 +28,7 @@ ifNotEqThen thenBlock = do
 ifEqThen :: Asm () -> Asm ()
 ifEqThen thenBlock = do
     endLabel <- makeUniqueLabel ()
-    bne endLabel -- Corrected: branch if NOT equal to skip
+    bne endLabel
     thenBlock
     l_ endLabel
 
@@ -59,13 +46,42 @@ ifNotCarryThen thenBlock = do
     thenBlock
     l_ endLabel
 
+ifMinusThen :: Asm () -> Asm ()
+ifMinusThen thenBlock = do
+    endLabel <- makeUniqueLabel ()
+    bpl endLabel
+    thenBlock
+    l_ endLabel
+
+ifPlusThen :: Asm () -> Asm ()
+ifPlusThen thenBlock = do
+    endLabel <- makeUniqueLabel ()
+    bmi endLabel
+    thenBlock
+    l_ endLabel
+
+ifOverflowThen :: Asm () -> Asm ()
+ifOverflowThen thenBlock = do
+    endLabel <- makeUniqueLabel ()
+    bvc endLabel
+    thenBlock
+    l_ endLabel
+
+ifNotOverflowThen :: Asm () -> Asm ()
+ifNotOverflowThen thenBlock = do
+    endLabel <- makeUniqueLabel ()
+    bvs endLabel
+    thenBlock
+    l_ endLabel
+
+-- --- Pętle (bez zmian) ---
 whileEqDo :: Asm () -> Asm () -> Asm ()
 whileEqDo conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
     conditionBlock
-    bne endLabel -- Branch if Not Equal (exit condition)
+    bne endLabel
     doBlock
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -76,7 +92,7 @@ whileNotEqDo conditionBlock doBlock = do
     endLabel <- makeUniqueLabel ()
     l_ startLabel
     conditionBlock
-    beq endLabel -- Branch if Equal (exit condition)
+    beq endLabel
     doBlock
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -87,7 +103,7 @@ whileCarryDo conditionBlock doBlock = do
     endLabel <- makeUniqueLabel ()
     l_ startLabel
     conditionBlock
-    bcc endLabel -- Branch if Carry Clear (exit condition)
+    bcc endLabel
     doBlock
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -98,47 +114,174 @@ whileNotCarryDo conditionBlock doBlock = do
     endLabel <- makeUniqueLabel ()
     l_ startLabel
     conditionBlock
-    bcs endLabel -- Branch if Carry Set (exit condition)
+    bcs endLabel
     doBlock
     jmp $ AbsLabel startLabel
     l_ endLabel
 
+whileMinusDo :: Asm () -> Asm () -> Asm ()
+whileMinusDo conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    conditionBlock
+    bpl endLabel
+    doBlock
+    jmp $ AbsLabel startLabel
+    l_ endLabel
 
--- -- General case macro that takes a loading function and a list of (value, action) pairs
--- caseOf :: (Word8 -> Asm ()) -> [(Word8, Asm ())] -> Asm ()
--- caseOf loadValue cases = do
---     endLabel <- makeUniqueLabel ()
---     casesWithLabels <- mapM (\(val, action) -> do
---         caseLabel <- makeUniqueLabel ()
---         return (val, caseLabel, action)
---       ) cases
-    
---     -- Generate code for each case
---     mapM_ (\(val, caseLabel, action) -> do
---         loadValue val    -- Load the case value to compare against
---         cmp $ Imm val    -- Compare with the current value
---         beq caseLabel    -- Branch if equal to this case's label
---       ) casesWithLabels
-    
---     -- Jump to end if no case matches
---     jmp $ AbsLabel endLabel
-    
---     -- Generate the case blocks
---     mapM_ (\(_, caseLabel, action) -> do
---         l_ caseLabel
---         action
---         jmp $ AbsLabel endLabel
---       ) casesWithLabels
-    
---     -- End label
---     l_ endLabel
+whilePlusDo :: Asm () -> Asm () -> Asm ()
+whilePlusDo conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    conditionBlock
+    bmi endLabel
+    doBlock
+    jmp $ AbsLabel startLabel
+    l_ endLabel
 
--- -- Specialized case macro for the A register (most common use case)
--- caseOfA :: [(Word8, Asm ())] -> Asm ()
--- caseOfA = caseOf (\_ -> return ()) -- No need to load anything, A already has the value
+whileOverflowDo :: Asm () -> Asm () -> Asm ()
+whileOverflowDo conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    conditionBlock
+    bvc endLabel
+    doBlock
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+whileNotOverflowDo :: Asm () -> Asm () -> Asm ()
+whileNotOverflowDo conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    conditionBlock
+    bvs endLabel
+    doBlock
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+-- --- Iteracje (bez zmian) ---
+forEachRange :: Word8 -> Word8 -> (Operand -> Asm ()) -> Asm ()
+forEachRange start end action = do
+    ldx $ Imm start
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    cpx $ Imm end
+    beq endLabel
+    action (OpAbsX (AddrLit16 0))
+    inx
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+forEachListWithIndex :: AddressRef -> (Operand -> Word8 -> Asm ()) -> Asm ()
+forEachListWithIndex listBase action = do
+    ldx $ Imm 0x00
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    cpx $ OpAbs listBase
+    beq endLabel
+    action (OpAbsX listBase) (fromIntegral $ fromEnum 'X')
+    inx
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+-- --- Mapowanie (bez zmian) ---
+mapListInPlace :: AddressRef -> (Operand -> Asm ()) -> Asm ()
+mapListInPlace listBase transform = do
+    ldx $ Imm 0x00
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    cpx $ OpAbs listBase
+    beq endLabel
+    lda $ OpAbsX listBase
+    transform (OpAbsX listBase)
+    sta $ OpAbsX listBase
+    inx
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+mapListToNew :: AddressRef -> AddressRef -> (Operand -> Asm ()) -> Asm ()
+mapListToNew srcList dstList transform = do
+    lda $ Imm 0x00
+    sta $ OpAbs dstList
+    ldx $ Imm 0x00
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    cpx $ OpAbs srcList
+    beq endLabel
+    lda $ OpAbsX srcList
+    transform (OpAbsX srcList)
+    sta $ OpAbsX dstList
+    inx
+    txa
+    sta $ OpAbs dstList
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+-- Przykład użycia filterList: wybierz wartości > 20 z myList1 do myList3
+filterMoreThan :: AddressRef -> AddressRef -> Word8 -> Asm ()
+filterMoreThan l1 l2 v = do
+    filterList l1 l2 $ \e skipLabel -> do
+        cmp $ Imm v
+        bcc skipLabel -- Pomiń, jeśli mniejsze (carry clear)
+        beq skipLabel -- Pomiń, jeśli równe (zero set)
+        lda e                 -- Przywróć wartość do A, jeśli warunek spełniony
+
+-- --- Nowe makra: Filter i Fold ---
+filterList :: AddressRef -> AddressRef -> (Operand -> Label -> Asm ()) -> Asm ()
+filterList srcList dstList predicate = do
+    lda $ Imm 0x00
+    sta $ OpAbs dstList -- Zainicjuj długość nowej listy
+    ldx $ Imm 0x00
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    skipLabel <- makeLabelWithPrefix "skip_filterList"
+    l_ startLabel
+    cpx $ OpAbs srcList -- Porównaj X z długością źródłowej listy
+    beq endLabel
+    inx  -- inkrementuj X, aby przejść do następnego lub pierwszego elementu (indexowanie od 1!)
+    lda $ OpAbsX srcList -- Załaduj element
+    predicate (OpAbsX srcList) skipLabel -- Wykonaj predykat z etykietą pomijania
+    ldy $ OpAbs dstList -- Załaduj bieżącą długość docelowej listy do Y
+    iny -- Zwiększ Y, aby uzyskać nowy indeks następnego lub pierwszego elementu (indexowanie od 1!)
+    sta $ OpAbsY dstList -- Zapisz element w nowej liście (używając Y jako indeksu)
+    tya                 --    Y -> A
+    sta $ OpAbs dstList -- Zaktualizuj długość nowej listy
+    l_ skipLabel
+    jmp $ AbsLabel startLabel
+    l_ endLabel
 
 
--- General case macro that takes a comparison function and a list of (value, action) pairs
+-- Przykład użycia foldList: oblicz sumę elementów w myList2
+sumList :: AddressRef -> AddressRef -> Asm ()
+sumList myList2 result = do
+    foldList myList2 0 $ \acc elem -> do
+        clc
+        adc elem -- Dodaj element do akumulatora
+    sta $ AbsAddress result -- Zapisz wynik    
+
+foldList :: AddressRef -> Word8 -> (Word8 -> Operand -> Asm ()) -> Asm ()
+foldList listBase initialValue combine = do
+    lda $ Imm initialValue -- Zainicjuj akumulator wartością początkową
+    ldx $ Imm 0x00
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    cpx $ OpAbs listBase -- Porównaj X z długością listy
+    beq endLabel
+    combine (fromIntegral $ fromEnum 'A') (OpAbsX listBase) -- Połącz bieżący akumulator z elementem
+    inx
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+-- --- Przełączniki (bez zmian) ---
 caseOf :: (Word8 -> Asm ()) -> [(Word8, Asm ())] -> Asm ()
 caseOf compareWith cases = do
     endLabel <- makeUniqueLabel ()
@@ -146,54 +289,37 @@ caseOf compareWith cases = do
         caseLabel <- makeUniqueLabel ()
         return (val, caseLabel, action)
       ) cases
-    
-    -- Generate code for each case
     mapM_ (\(val, caseLabel, action) -> do
-        compareWith val   -- Run the comparison function with this value
-        beq caseLabel     -- Branch if equal to this case's label
+        compareWith val
+        beq caseLabel
       ) casesWithLabels
-    
-    -- Jump to end if no case matches
     jmp $ AbsLabel endLabel
-    
-    -- Generate the case blocks
     mapM_ (\(_, caseLabel, action) -> do
         l_ caseLabel
         action
         jmp $ AbsLabel endLabel
       ) casesWithLabels
-    
-    -- End label
     l_ endLabel
 
--- Case for A register (most common use case)
 caseOfA :: [(Word8, Asm ())] -> Asm ()
 caseOfA = caseOf (cmp . Imm)
 
--- Case for X register
 caseOfX :: [(Word8, Asm ())] -> Asm ()
 caseOfX = caseOf (cpx . Imm)
 
--- Case for Y register
 caseOfY :: [(Word8, Asm ())] -> Asm ()
 caseOfY = caseOf (cpy . Imm)
 
--- Case for comparing a memory address
 caseOfAddr :: AddressRef -> [(Word8, Asm ())] -> Asm ()
 caseOfAddr addr = caseOf (\val -> do
     lda $ OpAbs addr
     cmp $ Imm val)
 
--- Case for comparing a zero page address
 caseOfZP :: AddressRef -> [(Word8, Asm ())] -> Asm ()
 caseOfZP addr = caseOf (\val -> do
     lda $ OpZP addr
     cmp $ Imm val)
 
--- Case for comparing multiple bytes (e.g., for 16-bit values)
--- addrBytes: A list of tuples where each tuple contains:
---  * AddressRef - The memory address where a byte is stored.
---  * Word8 - Number used to indicate how many bytes are compared. The number of elements in this list determines how many bytes are compared.
 caseOfMultiBytes :: [(AddressRef, Word8)] -> [([(Word8, Word8)], Asm ())] -> Asm ()
 caseOfMultiBytes addrBytes cases = do
     endLabel <- makeUniqueLabel ()
@@ -203,38 +329,24 @@ caseOfMultiBytes addrBytes cases = do
         noMatchLabel <- makeUniqueLabel ()
         return (vals, caseLabel, matchLabel, noMatchLabel, action)
       ) cases
-    
-    -- Generate comparison code for each case
     mapM_ (\(vals, caseLabel, matchLabel, noMatchLabel, _) -> do
         l_ matchLabel
-        -- Compare each byte in sequence
         let addrVals = zip addrBytes vals
-        sequence_ $ zipWith (\(addr, expectedVal) (val, _) -> do
+        sequence_ $ zipWith (\(addr, _) (val, _) -> do
             lda $ OpAbs addr
             cmp $ Imm val
             bne noMatchLabel
           ) addrBytes vals
-        
-        -- If we get here, all bytes matched
         jmp $ AbsLabel caseLabel
-        
-        -- No match, try next case
         l_ noMatchLabel
       ) casesWithLabels
-    
-    -- Jump to end if no case matches
     jmp $ AbsLabel endLabel
-    
-    -- Generate the case blocks
     mapM_ (\(_, caseLabel, _, _, action) -> do
         l_ caseLabel
         action
         jmp $ AbsLabel endLabel
       ) casesWithLabels
-    
-    -- End label
     l_ endLabel
-
 -- caseOfList
 
 -- Example with custom comparison

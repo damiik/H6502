@@ -1,5 +1,6 @@
-import Assembly
-import Assembly.Macros() -- Keep importing macros
+import Assembly(Asm, runAssembler, generateBinary, formatHexBytes, listCreate, listCreate_, listAdd, listForEach, listCopy, listFromString)
+import Assembly.Core -- Importujemy wszystko z Core
+import Assembly.Macros(filterMoreThan) -- Keep importing macros
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
 import Data.Word (Word16, Word8)
@@ -9,17 +10,36 @@ import Data.Word (Word16, Word8)
 
 mySimpleProgram :: Asm ()
 mySimpleProgram = do
-    l_ "start"
-    -- Inicjalizacja list
-    -- let myList1 = AddrLabel "lista1"
-    let myList2 = AddrLabel "lista2"
-    let myList3 = AddrLabel "lista3" -- Obszar na listę 3
-    let myList4 = AddrLabel "lista4" -- Obszar na listę 4
 
-    -- createList myList1
-    createList myList2
-    createList myList3
-    createList myList4
+    jmp $ AbsLabel "start" -- Skok do początku programu
+
+    l_ "lista2"
+    db [0x00] -- Length of the list
+    db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
+    
+    l_ "lista3"
+    db [0x00] -- Length of the list
+    db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
+
+    l_ "lista4"
+    db [0x00] -- Length of the list
+    db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
+
+    l_ "lista5"
+    db [0x00] -- Length of the list
+    db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
+
+    l_ "lista1"
+    listFromString "Hello World!"
+
+  
+    l_ "start"
+
+    let myList2 = AddrLabel "lista2"  -- Obszar na listę 2
+    listCreate_ (myList2) -- Inicjalizuj listę 2
+    myList3 <- listCreate "lista3" -- Obszar na listę 3
+    myList4 <- listCreate "lista4" -- Obszar na listę 4
+    myList5 <- listCreate "lista5" -- Obszar na listę 5
 
     -- Dodaj elementy do list
     -- listAdd myList1 (asc 'H')
@@ -35,22 +55,14 @@ mySimpleProgram = do
     listCopy (AddrLabel "lista1") myList3   -- Pierwsze wywołanie listCopy
     listCopy myList2 myList4  -- Drugie wywołanie listCopy
 
+    filterMoreThan myList2 myList5 0x20 -- Przykład użycia filterLessThan
+
     -- Inny kod...
     lda $ Imm 0x00
     l_ "forever"
     jmp $ AbsLabel "forever"
 
-    l_ "lista1"
-    stringAsList "Hello World!"
 
-    l_ "lista2"
-    db [0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding  
-
-    l_ "lista3"
-    db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding
-
-    l_ "lista4"
-    db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding
 
      
 

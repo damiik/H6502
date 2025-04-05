@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
+
 module Assembly.Instructions6502 (
     AddressingMode(..),
     Mnemonic(..),
