@@ -9,8 +9,22 @@
 # to be used for project dependencies. For example:
 #
 # snapshot: lts-22.28
-snapshot: nightly-2025-02-15 # GHC 9.10.1
-compiler: ghc-9.10.1
+#snapshot: nightly-2025-02-15 # GHC 9.10.1
+#compiler: ghc-9.10.1
+
+
+snapshot: nightly-2025-04-03 # GHC 9.10.1
+compiler: ghc-9.12.2
+
+extra-deps:
+# Reinstated because pruned
+- Cabal-3.14.1.0
+# Reinstated because pruned
+- Cabal-syntax-3.14.1.0
+- parsec-3.1.18.0
+# mustache cannot deal with Data.Text.show ambiguity in boot package text-2.1.2
+- text-2.1.1
+
 # snapshot: ghc-9.10.1
 #
 # The location of a snapshot can be provided as a file or url. Stack assumes
