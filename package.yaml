@@ -42,6 +42,7 @@ library:
   - Assembly
   - Assembly.Core   # Add the new Core module
   - Assembly.Macros
+  - Assembly.List
 
 executables:
   H6502-exe:

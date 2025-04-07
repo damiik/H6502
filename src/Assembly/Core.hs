@@ -9,8 +9,9 @@ module Assembly.Core (
     Address,
     Label,
     ProgramCounter,
+    LabelExpression(..), -- New type for label arithmetic
     AddressRef(..),
-    AddressingMode(..), -- NOWY TYP
+    AddressingMode(..),
     Operand(..),
     pattern Imm,
     pattern AbsLit,
@@ -63,7 +64,10 @@ module Assembly.Core (
     lo,
     hi,
     hx,
+    asc,
+    addrVal,
     wordToBytesLE,
+    (Assembly.Core.+), -- operator for AddressRef
 
     -- eDSL Instruction Aliases 
     lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty, 
@@ -88,16 +92,29 @@ import Numeric (showHex)
 import Data.List (foldl') -- Potrzebne do budowania tabeli
 
 import Assembly.Branch (BranchMnemonic(..)) -- Importujemy BranchMnemonic z osobnego modułu
-import Assembly.Instructions6502 (getModeSize, instructionData, Mnemonic(..), AddressingMode(..)) -- Importujemy dane instrukcji z osobnego modułu
+import Assembly.Instructions6502 (getModeSize, instructionData, Mnemonic(..), AddressingMode(..))
 
 -- --- Types ---
 type Address = Word16
 type Label = String
 type ProgramCounter = Word16
-data AddressRef = AddrLit16 Word16 | AddrLabel Label deriving (Show, Eq, Ord) -- Dodano Ord
+
+-- New type for label arithmetic expressions
+data LabelExpression
+  = LabelRef Label
+  | LabelAdd LabelExpression Word16
+  | LabelSub LabelExpression Word16
+  deriving (Show, Eq, Ord)
+
+-- Updated AddressRef to include label expressions
+data AddressRef
+  = AddrLit16 Word16
+  | AddrLabel Label
+  | AddrLabelExpr LabelExpression
+  deriving (Show, Eq, Ord)
 
 
--- ZAKTUALIZOWANY Operand, aby pasował do AddressingMode
+-- Updated Operand to match AddressingMode
 data Operand
     = OpImm Word8          -- Immediate
     | OpZP AddressRef      -- ZeroPage
@@ -223,14 +240,19 @@ getInstructionInfo m maybeOp = do
 
 -- --- Core Primitive Functions (MODYFIKACJE) ---
 
--- resolveAddressMaybe (bez zmian)
+-- resolveAddressMaybe (updated to handle AddrLabelExpr)
 resolveAddressMaybe :: Maybe AddressRef -> AsmState -> Maybe Word16
-resolveAddressMaybe Nothing _ = Just 0 -- Dla Imm, wartość nie ma znaczenia
-resolveAddressMaybe (Just (AddrLit16 l)) _ = Just l
-resolveAddressMaybe (Just (AddrLabel l)) asmState = Map.lookup l labels
-    where labels = asmLabels asmState
+resolveAddressMaybe Nothing _ = Just 0 -- For Imm, value doesn't matter
+resolveAddressMaybe (Just (AddrLit16 v)) _ = Just v
+resolveAddressMaybe (Just (AddrLabel l)) s = Map.lookup l (asmLabels s)
+resolveAddressMaybe (Just (AddrLabelExpr expr)) s = resolveLabelExpr expr (asmLabels s)
+  where
+    resolveLabelExpr :: LabelExpression -> Map Label ProgramCounter -> Maybe Word16
+    resolveLabelExpr (LabelRef l) labels = Map.lookup l labels
+    resolveLabelExpr (LabelAdd subExpr offset) labels = (Prelude.+) offset <$> resolveLabelExpr subExpr labels
+    resolveLabelExpr (LabelSub subExpr offset) labels = subtract offset <$> resolveLabelExpr subExpr labels -- Using subtract for correct order
 
--- getInstructionSize (teraz używa getInstructionInfo)
+-- getInstructionSize (now uses getInstructionInfo)
 getInstructionSize :: Mnemonic -> Maybe Operand -> Either String Word16
 getInstructionSize m maybeOp = fmap (fromIntegral . snd) (getInstructionInfo m maybeOp)
 
@@ -239,7 +261,7 @@ emitGeneric :: SymbolicInstruction -> Either String Word16 -> Asm ()
 emitGeneric _ (Left err) = error $ "Assembly Error (emitGeneric): " ++ err -- TODO: Lepsza obsługa błędów
 emitGeneric instruction (Right size) = do
   pc <- gets asmPC
-  modify' $ \s -> s { asmCode = (pc, instruction) : asmCode s, asmPC = pc + size }
+  modify' $ \s -> s { asmCode = (pc, instruction) : asmCode s, asmPC = pc Prelude.+ size }
 
 -- emitIns (bez zmian, ale używa zaktualizowanego getInstructionSize)
 emitIns :: Mnemonic -> Operand -> Asm ()
@@ -272,7 +294,7 @@ string :: String -> Asm (); string str = let bytes = map (fromIntegral . ord) st
 makeUniqueLabel_ :: String -> Asm Label
 makeUniqueLabel_ prefix = do
     count <- gets asmMacroCounter
-    modify' $ \s -> s { asmMacroCounter = count + 1 }
+    modify' $ \s -> s { asmMacroCounter = count Prelude.+ 1 }
     return $ "_lbl_" ++ prefix ++ "_" ++ show count
 
 
@@ -305,7 +327,7 @@ generateInstructionBytes m maybeOp asmState = do
                  3 -> [opcode, lo resolvedAddr, hi resolvedAddr] -- Abs, AbsX, AbsY, Ind
                  _ -> error "Internal error: Invalid instruction size derived" -- Nie powinno się zdarzyć
 
--- getOperandAddressRef (aktualizacja dla nowych Op*)
+-- getOperandAddressRef (no changes needed, extracts AddressRef)
 getOperandAddressRef :: Maybe Operand -> Maybe AddressRef
 getOperandAddressRef = \case
     Just (OpZP r)   -> Just r
@@ -330,6 +352,32 @@ hi :: Word16 -> Word8; hi w = fromIntegral (w `shiftR` 8)
 hx :: Word16 -> String; hx a = showHex a ""
 wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [lo w, hi w]
 
+-- addrVal (updated, but still errors for unresolved labels at compile time)
+addrVal :: AddressRef -> Word16
+addrVal = \case
+  AddrLit16 v -> v
+  AddrLabel l -> error $ "Compile-time error!!: Cannot get value of unresolved label '" ++ l ++ "'"
+  AddrLabelExpr expr -> evalLabelExpr expr
+  where
+    -- This helper will error out if it encounters a LabelRef, as expected.
+    evalLabelExpr :: LabelExpression -> Word16
+    evalLabelExpr (LabelRef l) = error $ "Compile-time error: Cannot get value of unresolved label '" ++ l ++ "' within expression"
+    evalLabelExpr (LabelAdd subExpr offset) = evalLabelExpr subExpr Prelude.+ offset
+    evalLabelExpr (LabelSub subExpr offset) = evalLabelExpr subExpr - offset -- Note: subtraction order
+
+
+infixl 6 +
+(+):: AddressRef -> Word16 -> AddressRef
+a + i  = 
+    case a of 
+        AddrLit16 v -> AddrLit16 (v Prelude.+ i)
+        AddrLabel l -> AddrLabelExpr (LabelAdd (LabelRef l) i)
+        AddrLabelExpr expr -> AddrLabelExpr (LabelAdd expr i)
+
+
+-- Character to ASCII code
+asc :: Char -> Word8
+asc = fromIntegral . fromEnum
 -- --- eDSL Instruction Aliases (TRZEBA DODAĆ NOWE) ---
 
 -- --- eDSL Instruction Aliases ---
@@ -398,5 +446,3 @@ ror :: Maybe Operand -> Asm ()
 ror Nothing   = emitAccumulator ROR
 ror (Just op) = emitIns ROR op
 
-
--- Uwaga: Trzeba dodać aliasy dla wszystkich mnemoników z `Mnemonic`

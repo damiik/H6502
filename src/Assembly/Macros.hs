@@ -1,21 +1,53 @@
-
+{-# LANGUAGE PatternSynonyms #-}
 module Assembly.Macros (
     -- Macros
     ifNotEqThen, ifEqThen, ifCarryThen, ifNotCarryThen,
     ifMinusThen, ifPlusThen, ifOverflowThen, ifNotOverflowThen,
     whileEqDo, whileNotEqDo, whileCarryDo, whileNotCarryDo,
     whileMinusDo, whilePlusDo, whileOverflowDo, whileNotOverflowDo,
-    forEachRange, forEachListWithIndex,
-    mapListInPlace, mapListToNew,
-    filterList, foldList,
-    filterMoreThan, sumList,
+    forEachRange,
     caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,
+    addAto16bit, -- Add 8-bit value in A to a 16-bit memory location
     -- Helper (potentially hide later)
     makeUniqueLabel
 ) where
 
+--import Assembly.List (forEach, forEachListWithIndex, mapListInPlace, mapListToNew, filterList, foldList, filterMoreThan, sumList)
+import Control.Monad.IO.Class (liftIO)
 import Data.Word (Word8)
 import Assembly.Core
+    ( adc,
+      bcc,
+      bcs,
+      beq,
+      bmi,
+      bne,
+      bpl,
+      bvc,
+      bvs,
+      clc,
+      cmp,
+      cpx,
+      cpy,
+      inx,
+      jmp,
+      jsr,
+      l_,
+      lda,
+      ldx,
+      makeUniqueLabel,
+      sta,
+      zpLit,
+      AddressRef(AddrLabel, AddrLit16),
+      Asm,
+      Operand(..), -- Import all constructors
+      pattern Imm, -- Import the pattern synonym
+      pattern AbsLabel,
+      (+),
+      addrVal
+      )
+
+import Prelude hiding((+))
 
 -- --- Warunki (bez zmian) ---
 ifNotEqThen :: Asm () -> Asm ()
@@ -90,10 +122,13 @@ whileNotEqDo :: Asm () -> Asm () -> Asm ()
 whileNotEqDo conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
+    --let loop = do jmp $ AbsLabel startLabel 
+   
     l_ startLabel
     conditionBlock
     beq endLabel
     doBlock
+    --loop
     jmp $ AbsLabel startLabel
     l_ endLabel
 
@@ -163,6 +198,41 @@ whileNotOverflowDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
+-- Macro for 16-bit addition: Adds the 8-bit value in A to the 16-bit value at (accLowAddr, accHighAddr)
+-- Requires caller to provide both addresses.
+-- Uses ZP $00 as temporary storage for A. WARNING: Ensure ZP $00 is safe to use.
+-- addAto16bit :: AddressRef -> AddressRef -> Asm ()
+-- addAto16bit accLowAddr accHighAddr = do
+--     let tempOperandAddr = zpLit 0x00 -- Use ZP $00 for temporary storage
+
+--     sta tempOperandAddr          -- Store A (operand) temporarily
+
+--     -- Add low byte
+--     lda $ OpAbs accLowAddr       -- Load low byte of accumulator
+--     clc                          -- Clear carry
+--     adc tempOperandAddr          -- Add operand from temp storage
+--     sta $ OpAbs accLowAddr       -- Store result in low byte
+
+--     -- Add high byte with carry
+--     lda $ OpAbs accHighAddr      -- Load high byte of accumulator
+--     adc $ Imm 0                  -- Add 0 + carry
+--     sta $ OpAbs accHighAddr      -- Store result in high byte
+
+addAto16bit :: AddressRef -> Asm ()   
+addAto16bit accAddr = do
+    let tempOperandAddr = zpLit 0x00 -- Use ZP $00 for temporary storage
+    -- Store A (operand) temporarily
+    sta tempOperandAddr          -- Store A (operand) temporarily
+    -- Add low byte
+    lda $ OpAbs accAddr          -- Load low byte of accumulator
+    clc                          -- Clear carry
+    adc tempOperandAddr          -- Add operand from temp storage
+    sta $ OpAbs accAddr          -- Store result in low byte
+    -- Add high byte with carry
+    lda $ OpAbs $ accAddr + 1    -- Load high byte of accumulator
+    adc $ Imm 0                  -- Add 0 + carry
+    sta $ OpAbs $ accAddr + 1    -- Store result in high byte
+
 -- --- Iteracje (bez zmian) ---
 forEachRange :: Word8 -> Word8 -> (Operand -> Asm ()) -> Asm ()
 forEachRange start end action = do
@@ -173,110 +243,6 @@ forEachRange start end action = do
     cpx $ Imm end
     beq endLabel
     action (OpAbsX (AddrLit16 0))
-    inx
-    jmp $ AbsLabel startLabel
-    l_ endLabel
-
-forEachListWithIndex :: AddressRef -> (Operand -> Word8 -> Asm ()) -> Asm ()
-forEachListWithIndex listBase action = do
-    ldx $ Imm 0x00
-    startLabel <- makeUniqueLabel ()
-    endLabel <- makeUniqueLabel ()
-    l_ startLabel
-    cpx $ OpAbs listBase
-    beq endLabel
-    action (OpAbsX listBase) (fromIntegral $ fromEnum 'X')
-    inx
-    jmp $ AbsLabel startLabel
-    l_ endLabel
-
--- --- Mapowanie (bez zmian) ---
-mapListInPlace :: AddressRef -> (Operand -> Asm ()) -> Asm ()
-mapListInPlace listBase transform = do
-    ldx $ Imm 0x00
-    startLabel <- makeUniqueLabel ()
-    endLabel <- makeUniqueLabel ()
-    l_ startLabel
-    cpx $ OpAbs listBase
-    beq endLabel
-    lda $ OpAbsX listBase
-    transform (OpAbsX listBase)
-    sta $ OpAbsX listBase
-    inx
-    jmp $ AbsLabel startLabel
-    l_ endLabel
-
-mapListToNew :: AddressRef -> AddressRef -> (Operand -> Asm ()) -> Asm ()
-mapListToNew srcList dstList transform = do
-    lda $ Imm 0x00
-    sta $ OpAbs dstList
-    ldx $ Imm 0x00
-    startLabel <- makeUniqueLabel ()
-    endLabel <- makeUniqueLabel ()
-    l_ startLabel
-    cpx $ OpAbs srcList
-    beq endLabel
-    lda $ OpAbsX srcList
-    transform (OpAbsX srcList)
-    sta $ OpAbsX dstList
-    inx
-    txa
-    sta $ OpAbs dstList
-    jmp $ AbsLabel startLabel
-    l_ endLabel
-
--- Przykład użycia filterList: wybierz wartości > 20 z myList1 do myList3
-filterMoreThan :: AddressRef -> AddressRef -> Word8 -> Asm ()
-filterMoreThan l1 l2 v = do
-    filterList l1 l2 $ \e skipLabel -> do
-        cmp $ Imm v
-        bcc skipLabel -- Pomiń, jeśli mniejsze (carry clear)
-        beq skipLabel -- Pomiń, jeśli równe (zero set)
-        lda e                 -- Przywróć wartość do A, jeśli warunek spełniony
-
--- --- Nowe makra: Filter i Fold ---
-filterList :: AddressRef -> AddressRef -> (Operand -> Label -> Asm ()) -> Asm ()
-filterList srcList dstList predicate = do
-    lda $ Imm 0x00
-    sta $ OpAbs dstList -- Zainicjuj długość nowej listy
-    ldx $ Imm 0x00
-    startLabel <- makeUniqueLabel ()
-    endLabel <- makeUniqueLabel ()
-    skipLabel <- makeLabelWithPrefix "skip_filterList"
-    l_ startLabel
-    cpx $ OpAbs srcList -- Porównaj X z długością źródłowej listy
-    beq endLabel
-    inx  -- inkrementuj X, aby przejść do następnego lub pierwszego elementu (indexowanie od 1!)
-    lda $ OpAbsX srcList -- Załaduj element
-    predicate (OpAbsX srcList) skipLabel -- Wykonaj predykat z etykietą pomijania
-    ldy $ OpAbs dstList -- Załaduj bieżącą długość docelowej listy do Y
-    iny -- Zwiększ Y, aby uzyskać nowy indeks następnego lub pierwszego elementu (indexowanie od 1!)
-    sta $ OpAbsY dstList -- Zapisz element w nowej liście (używając Y jako indeksu)
-    tya                 --    Y -> A
-    sta $ OpAbs dstList -- Zaktualizuj długość nowej listy
-    l_ skipLabel
-    jmp $ AbsLabel startLabel
-    l_ endLabel
-
-
--- Przykład użycia foldList: oblicz sumę elementów w myList2
-sumList :: AddressRef -> AddressRef -> Asm ()
-sumList myList2 result = do
-    foldList myList2 0 $ \acc elem -> do
-        clc
-        adc elem -- Dodaj element do akumulatora
-    sta $ AbsAddress result -- Zapisz wynik    
-
-foldList :: AddressRef -> Word8 -> (Word8 -> Operand -> Asm ()) -> Asm ()
-foldList listBase initialValue combine = do
-    lda $ Imm initialValue -- Zainicjuj akumulator wartością początkową
-    ldx $ Imm 0x00
-    startLabel <- makeUniqueLabel ()
-    endLabel <- makeUniqueLabel ()
-    l_ startLabel
-    cpx $ OpAbs listBase -- Porównaj X z długością listy
-    beq endLabel
-    combine (fromIntegral $ fromEnum 'A') (OpAbsX listBase) -- Połącz bieżący akumulator z elementem
     inx
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -382,4 +348,3 @@ checkSpecialPositions = do
         ([(150, 0), (150, 0)], do  -- Position (150, 150)
             jsr $ AbsLabel "activate_teleporter")
         ]
-

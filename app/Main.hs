@@ -1,6 +1,6 @@
-import Assembly(Asm, runAssembler, generateBinary, formatHexBytes, listCreate, listCreate_, listAdd, listForEach, listCopy, listFromString)
+import Assembly(Asm, runAssembler, generateBinary, formatHexBytes) 
 import Assembly.Core -- Importujemy wszystko z Core
-import Assembly.Macros(filterMoreThan) -- Keep importing macros
+import Assembly.List(createList, createList_, createListFromString, addToList, copyList, filterMoreThanList, sumList) -- Import from Assembly.List instead
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
 import Data.Word (Word16, Word8)
@@ -30,32 +30,39 @@ mySimpleProgram = do
     db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
 
     l_ "lista1"
-    listFromString "Hello World!"
+    createListFromString "Hello World!"
+
+    l_ "sumResult"
+    db [0x00, 0x00] -- Wynik sumowania
 
   
     l_ "start"
 
     let myList2 = AddrLabel "lista2"  -- Obszar na listę 2
-    listCreate_ (myList2) -- Inicjalizuj listę 2
-    myList3 <- listCreate "lista3" -- Obszar na listę 3
-    myList4 <- listCreate "lista4" -- Obszar na listę 4
-    myList5 <- listCreate "lista5" -- Obszar na listę 5
+    let sumResult = AddrLabel "sumResult" -- Obszar na wynik sumowania
+    createList_ (myList2) -- Inicjalizuj listę 2
+    myList3 <- createList "lista3" -- Obszar na listę 3
+    myList4 <- createList "lista4" -- Obszar na listę 4
+    myList5 <- createList "lista5" -- Obszar na listę 5
 
     -- Dodaj elementy do list
-    -- listAdd myList1 (asc 'H')
-    -- listAdd myList1 (asc 'i')
-    -- listAdd myList1 (asc '!')
+    -- addToList myList1 (asc 'H')
+    -- addToList myList1 (asc 'i')
+    -- addToList myList1 (asc '!')
 
-    listAdd myList2 0x10
-    listAdd myList2 0x20
-    listAdd myList2 0x30
-    listAdd myList2 0x40
+    addToList myList2 0x10
+    addToList myList2 0x20
+    addToList myList2 0x30
+    addToList myList2 0x40
+    addToList myList2 0x50
+    addToList myList2 0x60
 
     -- Kopiuj listy wielokrotnie
-    listCopy (AddrLabel "lista1") myList3   -- Pierwsze wywołanie listCopy
-    listCopy myList2 myList4  -- Drugie wywołanie listCopy
+    copyList (AddrLabel "lista1") myList3   -- Pierwsze wywołanie copyList
+    copyList myList2 myList4  -- Drugie wywołanie copyList
 
-    filterMoreThan myList2 myList5 0x20 -- Przykład użycia filterLessThan
+    filterMoreThanList myList2 myList5 0x20 -- Przykład użycia filterMoreThanList
+    sumList myList2 sumResult
 
     -- Inny kod...
     lda $ Imm 0x00

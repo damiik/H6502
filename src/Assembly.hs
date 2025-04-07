@@ -8,17 +8,12 @@ module Assembly (
     generateBinary,
     formatHexBytes,
 
-    -- List Helpers
-    asc,
-    listCreate,
-    listCreate_,
-    listAdd,
-    listForEach,
-    listCopy,
-    listFromString
+    -- Re-export List helpers
+    module Assembly.List
 ) where
 
-import Assembly.Core -- Teraz importuje wszystko, w tym nowe typy i tabelę
+import Assembly.Core
+import Assembly.List
 import Control.Monad.State.Strict (execState)
 import Data.Word (Word8, Word16)
 import Data.Int (Int8)
@@ -29,90 +24,6 @@ import Data.Char (ord)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Numeric (showHex)
 import qualified Data.Foldable as String -- Alias dla String.length
-
--- --- List Helpers (bez zmian, ale używają zaktualizowanych aliasów z Core) ---
-asc :: Char -> Word8
-asc = fromIntegral . fromEnum
-
-
--- Listy są indeksowande od 1! 
--- Listy są przechowywane w pamięci jako:
--- [length, element1, element2, ..., elementN]
--- length - długość listy
--- element1 - pierwszy element listy..
--- wynika z tego że:
---   listBase + 0 to długość listy
---   listBase + 1 to pierwszy element
---   listBase + 2 to drugi element
---   ...
-
-listCreate_ :: AddressRef -> Asm ()
-listCreate_ addr = do
-    lda $ Imm 0x00
-    sta $ OpAbs addr -- Initializes list in absolute memory
-
--- Modified listCreate to return AddressRef within the Asm monad
-listCreate :: String -> Asm AddressRef
-listCreate s = do
-    let sAddr = AddrLabel s
-    listCreate_ sAddr
-    return sAddr
-
-listAdd :: AddressRef -> Word8 -> Asm ()
-listAdd l element = do
-  let listBaseAbs = OpAbs l
-  let listBaseAbsX = OpAbsX l
-  lda listBaseAbs
-  tax -- długość -> X
-  inx -- X++
-  stx listBaseAbs -- X -> długość
-  lda $ Imm element
-  sta listBaseAbsX -- Zapisz element na list_base + X
-
-listForEach :: AddressRef -> (Operand -> Asm ()) -> Asm ()
-listForEach l action = do
-    let listLenAddr = OpAbs l
-    ldx $ Imm 0x00         -- Start index at 0
-    loopLabel <- makeUniqueLabel () -- Uses makeUniqueLabel from Core (via Macros import)
-    endLabel  <- makeUniqueLabel ()
-    l_ loopLabel             -- Uses l_ from Core
-    cpx listLenAddr          -- Uses cpx alias defined above
-    beq endLabel             -- Uses beq from Core, jumps to endLabel if X == length, for empty list X == length == 0!
-    inx                      -- X indexed from 1!
-    action $ OpAbsX l        -- Perform action with the *address* of the element
-    jmp $ AbsLabel loopLabel -- Uses jmp alias defined above
-    l_ endLabel
-
-
-listCopy :: AddressRef -> AddressRef -> Asm ()
-listCopy src dst = do
-    let srcAbs = OpAbs src
-    let dstAbs = OpAbs dst
-    lda $ Imm 0  -- Inicjalizuj długość listy docelowej
-    sta dstAbs
-    -- Pętla kopiująca
-    ldx $ Imm 0
-    copyLoopLabel <- makeUniqueLabel ()
-    endCopyLabel  <- makeUniqueLabel ()
-    l_ copyLoopLabel
-    -- lda srcAbs          -- Pobierz długość źródła
-    -- cmp $ OpZPX (AddrLit16 0) -- Porównaj z X (używamy ZPX jako hack do porównania z X, wymaga to aby $00 nie był używany lub można użyć CPX)
-    cpx srcAbs
-    beq endCopyLabel    -- Jeśli X == długość źródła, koniec
-    inx                 -- Zwiększ X (nowa potencjalna długość)
-    lda $ OpAbsX src         -- Załaduj bajt ze źródła[X]
-    sta $ OpAbsX dst         -- Zapisz bajt w docelowym[X]
-    txa                 -- Przenieś X do A
-    sta dstAbs          -- Zapisz nową długość w docelowym
-    jmp $ AbsLabel copyLoopLabel
-    l_ endCopyLabel
-
-
-listFromString :: String -> Asm ()
-listFromString s = do
-    let bytes = map (fromIntegral . ord) s
-    db [fromIntegral $ String.length s] -- Długość
-    db bytes                         -- Bajty
 
 -- --- Binary Generation (Pass 2) --- ZAKTUALIZOWANA
 
@@ -127,7 +38,7 @@ generateBinary finalState = foldl' processInstruction (Right []) (reverse $ asmC
             case Map.lookup targetLabel labels of
                 Nothing -> Left $ unknownLbl targetLabel
                 Just targetAddr ->
-                    let offset = fromIntegral targetAddr - fromIntegral (pc + 2)
+                    let offset = fromIntegral targetAddr - fromIntegral (pc Prelude.+ 2)
                     in if offset >= -128 && offset <= 127
                        then Right (fromIntegral offset)
                        else Left (branchRange targetLabel pc offset)
