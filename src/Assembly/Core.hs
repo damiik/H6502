@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-
 module Assembly.Core (
     -- Core Types
     Address,
@@ -66,19 +65,25 @@ module Assembly.Core (
     hx,
     asc,
     addrVal,
-    wordToBytesLE,
-    (Assembly.Core.+), -- operator for AddressRef
+    evalLabelExpr, -- NEW EXPORT
+    wordToBytesLE, -- Added export
+    (.+) , -- Renamed operator for AddressRef
+    (.-), -- Renamed operator for AddressRef
+    parens,            -- function for wrapping AddressRef in parentheses
 
-    -- eDSL Instruction Aliases 
-    lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty, 
-    cmp, cpx, cpy, txa, tya, txs, tsx, bne, beq, bcs, bcc, bmi, 
-    bpl, bvs, bvc, jsr, rts, ora, asl, php, clc, and, bit, rol, 
-    ror, plp, sec, rti, eor, lsr, pha, cli, pla, sei, dey, clv, 
-    iny, dex, cld, nop, sed, inc, dec
+    -- New typeclass for arithmetic expressions and its methods
+    ArithExpr(add, sub),
+
+    -- eDSL Instruction Aliases
+    lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty,
+    cmp, cpx, cpy, txa, tya, txs, tsx, bne, beq, bcs, bcc, bmi,
+    bpl, bvs, bvc, jsr, rts, ora, asl, php, clc, and, bit, rol,
+    ror, plp, sec, rti, eor, lsr, pha, cli, pla, sei, dey, clv,
+    iny, dex, cld, nop, sed, inc, dec, brk
 ) where
 
-
-import Prelude hiding (and, or) -- remove conflict with opcode names
+import Prelude hiding (and, or) -- Hiding only 'and', 'or'
+import qualified Prelude as P (and, or)  -- Use P.(+) and P.(-) for standard numeric ops
 import Control.Monad.State.Strict
 import Control.Monad (when)
 import Data.Word
@@ -86,7 +91,7 @@ import Data.Int (Int8)
 import Data.Bits ((.&.), shiftR)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map) -- Jawny import dla Map
-import Data.Maybe (mapMaybe, fromMaybe) -- Potrzebne dla lookupów
+import Data.Maybe (fromMaybe) -- Potrzebne dla lookupów
 import Data.Char (ord)
 import Numeric (showHex)
 import Data.List (foldl') -- Potrzebne do budowania tabeli
@@ -104,6 +109,7 @@ data LabelExpression
   = LabelRef Label
   | LabelAdd LabelExpression Word16
   | LabelSub LabelExpression Word16
+  | LabelParen LabelExpression
   deriving (Show, Eq, Ord)
 
 -- Updated AddressRef to include label expressions
@@ -113,6 +119,32 @@ data AddressRef
   | AddrLabelExpr LabelExpression
   deriving (Show, Eq, Ord)
 
+-- Renamed operators for AddressRef
+infixl 6 .+
+(.+):: AddressRef -> Word16 -> AddressRef
+a .+ i  =
+    case a of
+        AddrLit16 v -> AddrLit16 (v + i) -- Use P.(+) for Word16 addition
+        AddrLabel l -> AddrLabelExpr (LabelAdd (LabelRef l) i)
+        AddrLabelExpr expr -> AddrLabelExpr (LabelAdd expr i)
+
+infixl 6 .-
+(.-) :: AddressRef -> Word16 -> AddressRef
+a .- i =
+  case a of
+    AddrLit16 v -> AddrLit16 (v - i) -- Use P.(-) for Word16 subtraction
+    AddrLabel l -> AddrLabelExpr (LabelSub (LabelRef l) i)
+    AddrLabelExpr expr -> AddrLabelExpr (LabelSub expr i)
+
+-- New typeclass for arithmetic expressions
+class ArithExpr a where
+  add :: a -> Word16 -> a
+  sub :: a -> Word16 -> a
+
+-- Instance using the renamed operators
+instance ArithExpr AddressRef where
+  add = (.+)
+  sub = (.-)
 
 -- Updated Operand to match AddressingMode
 data Operand
@@ -173,18 +205,16 @@ type OpcodeEntry = (Word8, Word8)
 instructionTable :: Map Mnemonic (Map AddressingMode OpcodeEntry)
 instructionTable = buildInstructionTable instructionData
 
-
-
 -- Funkcja pomocnicza do konwersji (przeniesiona/utworzona tutaj)
 branchMnemonicToMnemonic :: BranchMnemonic -> Mnemonic
 branchMnemonicToMnemonic = \case
-    Assembly.Branch.B_BNE -> BNE; 
-    Assembly.Branch.B_BEQ -> BEQ; 
-    Assembly.Branch.B_BCS -> BCS; 
+    Assembly.Branch.B_BNE -> BNE;
+    Assembly.Branch.B_BEQ -> BEQ;
+    Assembly.Branch.B_BCS -> BCS;
     Assembly.Branch.B_BCC -> BCC;
-    Assembly.Branch.B_BMI -> BMI; 
-    Assembly.Branch.B_BPL -> BPL; 
-    Assembly.Branch.B_BVS -> BVS; 
+    Assembly.Branch.B_BMI -> BMI;
+    Assembly.Branch.B_BPL -> BPL;
+    Assembly.Branch.B_BVS -> BVS;
     Assembly.Branch.B_BVC -> BVC;
     -- Te konstruktory po prawej stronie odnoszą się teraz do typu Mnemonic z Instructions6502
 
@@ -240,7 +270,7 @@ getInstructionInfo m maybeOp = do
 
 -- --- Core Primitive Functions (MODYFIKACJE) ---
 
--- resolveAddressMaybe (updated to handle AddrLabelExpr)
+-- resolveAddressMaybe (updated to handle AddrLabelExpr and LabelParen)
 resolveAddressMaybe :: Maybe AddressRef -> AsmState -> Maybe Word16
 resolveAddressMaybe Nothing _ = Just 0 -- For Imm, value doesn't matter
 resolveAddressMaybe (Just (AddrLit16 v)) _ = Just v
@@ -249,19 +279,20 @@ resolveAddressMaybe (Just (AddrLabelExpr expr)) s = resolveLabelExpr expr (asmLa
   where
     resolveLabelExpr :: LabelExpression -> Map Label ProgramCounter -> Maybe Word16
     resolveLabelExpr (LabelRef l) labels = Map.lookup l labels
-    resolveLabelExpr (LabelAdd subExpr offset) labels = (Prelude.+) offset <$> resolveLabelExpr subExpr labels
+    resolveLabelExpr (LabelAdd subExpr offset) labels = (+) offset <$> resolveLabelExpr subExpr labels -- Use P.(+)
     resolveLabelExpr (LabelSub subExpr offset) labels = subtract offset <$> resolveLabelExpr subExpr labels -- Using subtract for correct order
+    resolveLabelExpr (LabelParen subExpr) labels = resolveLabelExpr subExpr labels -- Handle LabelParen
 
 -- getInstructionSize (now uses getInstructionInfo)
 getInstructionSize :: Mnemonic -> Maybe Operand -> Either String Word16
 getInstructionSize m maybeOp = fmap (fromIntegral . snd) (getInstructionInfo m maybeOp)
 
--- emitGeneric (bez zmian)
+-- emitGeneric (Use P.(+) for PC update)
 emitGeneric :: SymbolicInstruction -> Either String Word16 -> Asm ()
 emitGeneric _ (Left err) = error $ "Assembly Error (emitGeneric): " ++ err -- TODO: Lepsza obsługa błędów
 emitGeneric instruction (Right size) = do
   pc <- gets asmPC
-  modify' $ \s -> s { asmCode = (pc, instruction) : asmCode s, asmPC = pc Prelude.+ size }
+  modify' $ \s -> s { asmCode = (pc, instruction) : asmCode s, asmPC = pc + size }
 
 -- emitIns (bez zmian, ale używa zaktualizowanego getInstructionSize)
 emitIns :: Mnemonic -> Operand -> Asm ()
@@ -286,23 +317,23 @@ l_ lbl = do pc <- gets asmPC; labels <- gets asmLabels
             modify' $ \s -> s { asmLabels = Map.insert lbl pc labels }
             emitGeneric (SLabelDef lbl) (Right 0)
 
--- db, dw, string, makeUniqueLabel (bez zmian)
+-- db, dw, string (bez zmian)
 db :: [Word8] -> Asm (); db bs = let size = fromIntegral $ length bs in when (size > 0) $ emitGeneric (SBytes bs) (Right size)
 dw :: [Word16] -> Asm (); dw ws = let size = fromIntegral (length ws) * 2 in when (size > 0) $ emitGeneric (SWords ws) (Right size)
 string :: String -> Asm (); string str = let bytes = map (fromIntegral . ord) str; size = fromIntegral $ length bytes in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
 
+-- makeUniqueLabel_ (Use P.(+) for counter update)
 makeUniqueLabel_ :: String -> Asm Label
 makeUniqueLabel_ prefix = do
     count <- gets asmMacroCounter
-    modify' $ \s -> s { asmMacroCounter = count Prelude.+ 1 }
+    modify' $ \s -> s { asmMacroCounter = count + 1 }
     return $ "_lbl_" ++ prefix ++ "_" ++ show count
-
 
 makeUniqueLabel :: () -> Asm Label
 makeUniqueLabel _ = makeUniqueLabel_ ""
 
 makeLabelWithPrefix :: String -> Asm Label
-makeLabelWithPrefix = makeUniqueLabel_ 
+makeLabelWithPrefix = makeUniqueLabel_
 
 
 -- --- Opcode-related functions (USUNIĘTE/ZASTĄPIONE) ---
@@ -341,44 +372,36 @@ getOperandAddressRef = \case
     Just (OpIndY r) -> Just r
     _               -> Nothing -- Dla Imm, Implicit, Accumulator
 
--- branchOpcode (przeniesione)
--- branchOpcode :: BranchMnemonic -> Word8
--- branchOpcode = \case BNE -> 0xD0; BEQ -> 0xF0; BCS -> 0xB0; BCC -> 0x90; BMI -> 0x30; BPL -> 0x10; BVS -> 0x70; BVC -> 0x50
 
-
--- --- Miscellaneous (bez zmian) ---
+-- --- Miscellaneous ---
 lo :: Word16 -> Word8; lo = fromIntegral . (.&. 0xFF)
 hi :: Word16 -> Word8; hi w = fromIntegral (w `shiftR` 8)
 hx :: Word16 -> String; hx a = showHex a ""
 wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [lo w, hi w]
 
--- addrVal (updated, but still errors for unresolved labels at compile time)
+-- Top-level function for testing
+evalLabelExpr :: LabelExpression -> Word16
+evalLabelExpr = \case
+  LabelRef l -> error $ "Compile-time error: Cannot get value of unresolved label '" ++ l ++ "' within expression"
+  LabelParen expr -> evalLabelExpr expr
+  LabelAdd subExpr offset -> evalLabelExpr subExpr + offset -- Use P.(+)
+  LabelSub subExpr offset -> evalLabelExpr subExpr - offset -- Use P.(-)
+
+-- addrVal using evalLabelExpr
 addrVal :: AddressRef -> Word16
 addrVal = \case
   AddrLit16 v -> v
   AddrLabel l -> error $ "Compile-time error!!: Cannot get value of unresolved label '" ++ l ++ "'"
   AddrLabelExpr expr -> evalLabelExpr expr
-  where
-    -- This helper will error out if it encounters a LabelRef, as expected.
-    evalLabelExpr :: LabelExpression -> Word16
-    evalLabelExpr (LabelRef l) = error $ "Compile-time error: Cannot get value of unresolved label '" ++ l ++ "' within expression"
-    evalLabelExpr (LabelAdd subExpr offset) = evalLabelExpr subExpr Prelude.+ offset
-    evalLabelExpr (LabelSub subExpr offset) = evalLabelExpr subExpr - offset -- Note: subtraction order
 
-
-infixl 6 +
-(+):: AddressRef -> Word16 -> AddressRef
-a + i  = 
-    case a of 
-        AddrLit16 v -> AddrLit16 (v Prelude.+ i)
-        AddrLabel l -> AddrLabelExpr (LabelAdd (LabelRef l) i)
-        AddrLabelExpr expr -> AddrLabelExpr (LabelAdd expr i)
-
+-- parens function definition
+parens :: AddressRef -> AddressRef
+parens (AddrLabelExpr e) = AddrLabelExpr (LabelParen e)
+parens addr = addr
 
 -- Character to ASCII code
 asc :: Char -> Word8
 asc = fromIntegral . fromEnum
--- --- eDSL Instruction Aliases (TRZEBA DODAĆ NOWE) ---
 
 -- --- eDSL Instruction Aliases ---
 lda :: Operand -> Asm (); lda = emitIns LDA
@@ -445,4 +468,3 @@ brk :: Asm (); brk = emitImplied BRK
 ror :: Maybe Operand -> Asm ()
 ror Nothing   = emitAccumulator ROR
 ror (Just op) = emitIns ROR op
-

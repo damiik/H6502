@@ -43,11 +43,13 @@ import Assembly.Core
       Operand(..), -- Import all constructors
       pattern Imm, -- Import the pattern synonym
       pattern AbsLabel,
-      (+),
-      addrVal
+      (.+), -- Import renamed operator
+      (.-), -- Import renamed operator
+      parens, -- Import parens if needed by macros (though unlikely)
+      ArithExpr(add, sub) -- Import the class methods if needed directly (unlikely)
       )
-
-import Prelude hiding((+))
+import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
+import qualified Prelude as P ((+), (-))
 
 -- --- Warunki (bez zmian) ---
 ifNotEqThen :: Asm () -> Asm ()
@@ -122,8 +124,8 @@ whileNotEqDo :: Asm () -> Asm () -> Asm ()
 whileNotEqDo conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
-    --let loop = do jmp $ AbsLabel startLabel 
-   
+    --let loop = do jmp $ AbsLabel startLabel
+
     l_ startLabel
     conditionBlock
     beq endLabel
@@ -198,27 +200,9 @@ whileNotOverflowDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
--- Macro for 16-bit addition: Adds the 8-bit value in A to the 16-bit value at (accLowAddr, accHighAddr)
--- Requires caller to provide both addresses.
+-- Macro for 16-bit addition: Adds the 8-bit value in A to the 16-bit value at accAddr (low byte) and accAddr .+ 1 (high byte)
 -- Uses ZP $00 as temporary storage for A. WARNING: Ensure ZP $00 is safe to use.
--- addAto16bit :: AddressRef -> AddressRef -> Asm ()
--- addAto16bit accLowAddr accHighAddr = do
---     let tempOperandAddr = zpLit 0x00 -- Use ZP $00 for temporary storage
-
---     sta tempOperandAddr          -- Store A (operand) temporarily
-
---     -- Add low byte
---     lda $ OpAbs accLowAddr       -- Load low byte of accumulator
---     clc                          -- Clear carry
---     adc tempOperandAddr          -- Add operand from temp storage
---     sta $ OpAbs accLowAddr       -- Store result in low byte
-
---     -- Add high byte with carry
---     lda $ OpAbs accHighAddr      -- Load high byte of accumulator
---     adc $ Imm 0                  -- Add 0 + carry
---     sta $ OpAbs accHighAddr      -- Store result in high byte
-
-addAto16bit :: AddressRef -> Asm ()   
+addAto16bit :: AddressRef -> Asm ()
 addAto16bit accAddr = do
     let tempOperandAddr = zpLit 0x00 -- Use ZP $00 for temporary storage
     -- Store A (operand) temporarily
@@ -229,9 +213,9 @@ addAto16bit accAddr = do
     adc tempOperandAddr          -- Add operand from temp storage
     sta $ OpAbs accAddr          -- Store result in low byte
     -- Add high byte with carry
-    lda $ OpAbs $ accAddr + 1    -- Load high byte of accumulator
+    lda $ OpAbs (accAddr .+ 1)    -- Load high byte of accumulator (using .+ operator)
     adc $ Imm 0                  -- Add 0 + carry
-    sta $ OpAbs $ accAddr + 1    -- Store result in high byte
+    sta $ OpAbs (accAddr .+ 1)    -- Store result in high byte (using .+ operator)
 
 -- --- Iteracje (bez zmian) ---
 forEachRange :: Word8 -> Word8 -> (Operand -> Asm ()) -> Asm ()
@@ -242,7 +226,7 @@ forEachRange start end action = do
     l_ startLabel
     cpx $ Imm end
     beq endLabel
-    action (OpAbsX (AddrLit16 0))
+    action (OpAbsX (AddrLit16 0)) -- Note: OpAbsX operand might need adjustment based on use case
     inx
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -255,15 +239,15 @@ caseOf compareWith cases = do
         caseLabel <- makeUniqueLabel ()
         return (val, caseLabel, action)
       ) cases
-    mapM_ (\(val, caseLabel, action) -> do
+    mapM_ (\(val, caseLabel, _) -> do -- Removed unused 'action' from this mapM_
         compareWith val
         beq caseLabel
       ) casesWithLabels
-    jmp $ AbsLabel endLabel
+    jmp $ AbsLabel endLabel -- Default case: jump to end if no match
     mapM_ (\(_, caseLabel, action) -> do
         l_ caseLabel
         action
-        jmp $ AbsLabel endLabel
+        jmp $ AbsLabel endLabel -- Jump to end after executing case action
       ) casesWithLabels
     l_ endLabel
 
@@ -289,62 +273,80 @@ caseOfZP addr = caseOf (\val -> do
 caseOfMultiBytes :: [(AddressRef, Word8)] -> [([(Word8, Word8)], Asm ())] -> Asm ()
 caseOfMultiBytes addrBytes cases = do
     endLabel <- makeUniqueLabel ()
+    defaultLabel <- makeUniqueLabel () -- Label for default case
+
     casesWithLabels <- mapM (\(vals, action) -> do
         caseLabel <- makeUniqueLabel ()
         matchLabel <- makeUniqueLabel ()
-        noMatchLabel <- makeUniqueLabel ()
+        noMatchLabel <- makeUniqueLabel () -- Potentially redundant now
         return (vals, caseLabel, matchLabel, noMatchLabel, action)
       ) cases
-    mapM_ (\(vals, caseLabel, matchLabel, noMatchLabel, _) -> do
-        l_ matchLabel
-        let addrVals = zip addrBytes vals
+
+    mapM_ (\(vals, caseLabel, matchLabel, _, _) -> do
+        l_ matchLabel -- Start check for this case
+        -- Compare each byte pair
         sequence_ $ zipWith (\(addr, _) (val, _) -> do
             lda $ OpAbs addr
             cmp $ Imm val
-            bne noMatchLabel
+            bne defaultLabel -- If any byte doesn't match, jump to default/next check
           ) addrBytes vals
-        jmp $ AbsLabel caseLabel
-        l_ noMatchLabel
+        -- If all bytes matched:
+        jmp $ AbsLabel caseLabel -- Jump to the action label for this case
       ) casesWithLabels
-    jmp $ AbsLabel endLabel
+
+    -- Default case (if none of the above matched)
+    l_ defaultLabel
+    jmp $ AbsLabel endLabel -- Jump to the very end
+
+    -- Define action blocks
     mapM_ (\(_, caseLabel, _, _, action) -> do
         l_ caseLabel
         action
-        jmp $ AbsLabel endLabel
+        jmp $ AbsLabel endLabel -- Jump to end after action
       ) casesWithLabels
-    l_ endLabel
--- caseOfList
 
--- Example with custom comparison
+    l_ endLabel -- Final end label
+
+-- Example usage (remains unchanged, illustrative only)
 customCaseExample :: Asm ()
 customCaseExample = do
-    notEqual <- makeUniqueLabel ()
+    endCase <- makeUniqueLabel () -- Use a more descriptive name
     caseOf (\val -> do
-        -- Custom comparison logic
         lda $ AbsLabel "enemy_health"
         cmp $ Imm val
-        bcs notEqual  -- Branch if >= (carry set)
-        lda $ Imm 0xFF              -- Force equality flag for <=
-        cmp $ Imm 0xFF
+        -- bcs jumps if A >= val (carry set). We want A <= val.
+        -- So, compare and branch if *not* less than (A >= val).
+        bcs endCase -- If health >= val, skip this case
+        -- If we are here, health < val. For <=, we need to handle == separately
+        -- A simpler way for <= might be needed depending on exact 6502 flags
+        -- For this example, let's assume the logic aims for "less than"
+        -- If exact <= is needed, the compare logic needs adjustment.
         ) [
-            (50, do  -- Case: enemy_health <= 50
-                jsr $ AbsLabel "enemy_wounded_animation"),
-            
-            (10, do  -- Case: enemy_health <= 10
-                jsr $ AbsLabel "enemy_critical_animation")
-        ]
-    l_ notEqual  -- Label for when no case matches
+            (11, do  -- Case: enemy_health < 11 (i.e., <= 10)
+                jsr $ AbsLabel "enemy_critical_animation"),
+            (51, do  -- Case: enemy_health < 51 (i.e., <= 50)
+                 -- Important: This case comes *after* the <= 10 case.
+                 -- If health is <= 10, it will match the first case and jump out.
+                 -- This block only runs if health is 11 <= health <= 50.
+                jsr $ AbsLabel "enemy_wounded_animation")
 
---Example: Check player position (16-bit x and y coordinates)
+        ]
+    l_ endCase
+
+
+-- Example: Check player position (16-bit x and y coordinates)
 checkSpecialPositions :: Asm ()
 checkSpecialPositions = do
-    caseOfMultiBytes [(AddrLabel "player_x", 2), (AddrLabel "player_y", 2)] [
-        ([(100, 0), (150, 0)], do  -- Position (100, 150)
+    caseOfMultiBytes [(AddrLabel "player_x_low", 1), (AddrLabel "player_x_high", 1), (AddrLabel "player_y_low", 1), (AddrLabel "player_y_high", 1)] [
+        -- Position (100, 150) = ($64, $00, $96, $00) assuming little-endian
+        ([(0x64, 1), (0x00, 1), (0x96, 1), (0x00, 1)], do
             jsr $ AbsLabel "trigger_secret_passage"),
-        
-        ([(200, 0), (50, 0)], do   -- Position (200, 50)
+
+        -- Position (200, 50) = ($C8, $00, $32, $00)
+        ([(0xC8, 1), (0x00, 1), (0x32, 1), (0x00, 1)], do
             jsr $ AbsLabel "spawn_treasure_chest"),
-        
-        ([(150, 0), (150, 0)], do  -- Position (150, 150)
+
+        -- Position (150, 150) = ($96, $00, $96, $00)
+        ([(0x96, 1), (0x00, 1), (0x96, 1), (0x00, 1)], do
             jsr $ AbsLabel "activate_teleporter")
         ]

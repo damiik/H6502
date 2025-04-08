@@ -12,7 +12,9 @@ module Assembly (
     module Assembly.List
 ) where
 
-import Assembly.Core
+
+import Prelude 
+import Assembly.Core (hx, Asm, ProgramCounter, Label, initialAsmState, unAsm, AsmState(..), SymbolicInstruction(..), branchOpcode, wordToBytesLE, generateInstructionBytes)
 import Assembly.List
 import Control.Monad.State.Strict (execState)
 import Data.Word (Word8, Word16)
@@ -38,7 +40,7 @@ generateBinary finalState = foldl' processInstruction (Right []) (reverse $ asmC
             case Map.lookup targetLabel labels of
                 Nothing -> Left $ unknownLbl targetLabel
                 Just targetAddr ->
-                    let offset = fromIntegral targetAddr - fromIntegral (pc Prelude.+ 2)
+                    let offset = fromIntegral targetAddr - fromIntegral (pc + 2)
                     in if offset >= -128 && offset <= 127
                        then Right (fromIntegral offset)
                        else Left (branchRange targetLabel pc offset)

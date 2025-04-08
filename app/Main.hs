@@ -1,10 +1,12 @@
-import Assembly(Asm, runAssembler, generateBinary, formatHexBytes) 
-import Assembly.Core -- Importujemy wszystko z Core
+import Assembly.Core hiding ( LabelExpression(..), ArithExpr(add, sub)) -- Hide Core's renamed operators and LabelAdd if needed
+import qualified Assembly.Core as C ( ArithExpr(add, sub), LabelExpression(LabelAdd)) -- Import only needed qualified names
+import Assembly(Asm, runAssembler, generateBinary, formatHexBytes)
 import Assembly.List(createList, createList_, createListFromString, addToList, copyList, filterMoreThanList, sumList) -- Import from Assembly.List instead
+import Assembly.Macros(addAto16bit)  -- Import addAto16bit
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
 import Data.Word (Word16, Word8)
--- Removed Data.Int, Data.Bits, Data.Foldable, Data.Char, Data.Maybe, GHC.*, Control.Monad.*
+import Prelude -- Explicitly import Prelude to qualify (+)
 
 -- --- Przykład Użycia ---
 
@@ -16,7 +18,7 @@ mySimpleProgram = do
     l_ "lista2"
     db [0x00] -- Length of the list
     db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
-    
+
     l_ "lista3"
     db [0x00] -- Length of the list
     db [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00] -- Padding for elements
@@ -35,8 +37,34 @@ mySimpleProgram = do
     l_ "sumResult"
     db [0x00, 0x00] -- Wynik sumowania
 
-  
+
     l_ "start"
+
+    -- Test addAto16bit
+    lda $ Imm 0x05       -- Load value 5 into A
+    sta $ OpAbs $ AddrLabel "test16bit"  -- Store low byte
+    lda $ Imm 0x00
+    sta $ OpAbs $ AddrLabel "test16bit" .+ 1  -- Store high byte (0x0005) - Use C.add
+    lda $ Imm 0x03       -- Load value 3 into A
+    addAto16bit $ AddrLabel "test16bit"  -- Add 3 to 0x0005, result should be 0x0008
+
+    -- Expected result: test16bit = 0x08, test16bit+1 = 0x00
+    -- Test label arithmetic with parentheses
+    l_ "label_arith_test"
+    -- Use standard (Prelude.+) for numeric arithmetic within the offset
+    lda $ OpAbs $ AddrLabel "label_arith_test" .+ (2 - (2*3))
+    sta $ OpAbs $ AddrLabel "label_arith_result"
+
+    jmp $ AbsLabel "l_cont"  -- Skok do testu
+
+    l_ "test16bit"
+    db [0x00, 0x00]  -- 16-bit storage for test
+
+    l_ "label_arith_result"
+    db [0x00]  -- Storage for label arithmetic result
+    db [0x00, 0x00]  -- 16-bit storage for test
+
+    l_ "l_cont"
 
     let myList2 = AddrLabel "lista2"  -- Obszar na listę 2
     let sumResult = AddrLabel "sumResult" -- Obszar na wynik sumowania
@@ -62,16 +90,14 @@ mySimpleProgram = do
     copyList myList2 myList4  -- Drugie wywołanie copyList
 
     filterMoreThanList myList2 myList5 0x20 -- Przykład użycia filterMoreThanList
-    sumList myList2 sumResult
+    sumList myList5 sumResult
 
     -- Inny kod...
     lda $ Imm 0x00
-    l_ "forever"
-    jmp $ AbsLabel "forever"
+    l_ "loop_forever"
+    jmp $ AbsLabel "loop_forever"
 
 
-
-     
 
 main :: IO ()
 main = do

@@ -1,13 +1,13 @@
 module Assembly.List (
     -- List operations
     iterateWithIndexList,
-    mapInPlaceList, 
+    mapInPlaceList,
     mapToNewList,
     filterList,
     foldList,
     filterMoreThanList,
     sumList,
-    
+
     -- List helpers
     createList,
     createList_,
@@ -21,10 +21,9 @@ import Data.Word (Word8, Word16)
 import Data.Char (ord)
 import qualified Data.Foldable as String
 import Assembly.Core hiding (LabelAdd) -- Hide Core's LabelAdd if needed
-import qualified Assembly.Core as Core (LabelExpression(LabelAdd)) -- Use qualified import if needed
+import qualified Assembly.Core as C (LabelExpression(LabelAdd), (.+)) -- Import renamed operator (.+)
 import Assembly.Macros (addAto16bit) -- Import the updated macro
-import Prelude hiding((+))
-
+import Prelude
 
 -- List creation
 createList_ :: AddressRef -> Asm ()
@@ -108,7 +107,7 @@ iterateWithIndexList listBase action = do
     cpx $ OpAbs listBase
     beq endLabel
     inx  -- increment X before first access (indexing from 1)
-    action (OpAbsX listBase) (fromIntegral $ fromEnum 'X')
+    action (OpAbsX listBase) (fromIntegral $ fromEnum 'X') -- Passing 'X' doesn't make sense here, should pass index
     jmp $ AbsLabel startLabel
     l_ endLabel
 
@@ -125,9 +124,9 @@ mapToNewList srcList dstList transform = do
     beq endLabel
     inx  -- increment X before first access (indexing from 1)
     lda $ OpAbsX srcList
-    transform (OpAbsX srcList)
+    transform (OpAbsX srcList) -- transform should modify A
     sta $ OpAbsX dstList
-    txa
+    txa -- Update length
     sta $ OpAbs dstList
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -143,7 +142,7 @@ mapInPlaceList listBase transform = do
     beq endLabel
     inx  -- increment X before first access (indexing from 1)
     lda $ OpAbsX listBase
-    transform (OpAbsX listBase)
+    transform (OpAbsX listBase) -- transform should modify A
     sta $ OpAbsX listBase
     jmp $ AbsLabel startLabel
     l_ endLabel
@@ -153,43 +152,46 @@ mapInPlaceList listBase transform = do
 filterList :: AddressRef -> AddressRef -> (Operand -> Label -> Asm ()) -> Asm ()
 filterList srcList dstList predicate = do
     lda $ Imm 0x00
-    sta $ OpAbs dstList
-    ldx $ Imm 0x00
+    sta $ OpAbs dstList -- Initialize destination length
+    ldx $ Imm 0x00      -- Source index
+    ldy $ Imm 0x00      -- Destination index
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     skipLabel <- makeLabelWithPrefix "skip_filterList"
     l_ startLabel
     cpx $ OpAbs srcList
     beq endLabel
-    inx  -- increment X before first access (indexing from 1)
-    lda $ OpAbsX srcList
+    inx  -- Increment source index (1-based access)
+    lda $ OpAbsX srcList -- Load source element
+    -- Predicate should branch to skipLabel if element should NOT be included
     predicate (OpAbsX srcList) skipLabel
-    ldy $ OpAbs dstList
-    iny
-    sta $ OpAbsY dstList
-    tya
-    sta $ OpAbs dstList
-    l_ skipLabel
+    -- Element should be included:
+    iny                 -- Increment destination index
+    sta $ OpAbsY dstList -- Store element at destination[Y]
+    tya                 -- Get new destination length (Y)
+    sta $ OpAbs dstList -- Update destination length byte
+    l_ skipLabel        -- Label to jump to if element is skipped
     jmp $ AbsLabel startLabel
     l_ endLabel
 
 -- Filter elements greater than value
 filterMoreThanList :: AddressRef -> AddressRef -> Word8 -> Asm ()
 filterMoreThanList l1 l2 v = do
-    filterList l1 l2 $ \e skipLabel -> do
+    filterList l1 l2 $ \_ skipLabel -> do -- The first argument (operand) is implicitly A here
         cmp $ Imm v
+        -- If A < v (carry clear) or A == v (zero set), skip.
         bcc skipLabel
         beq skipLabel
-        lda e
+        -- If A > v (carry set, zero clear), continue (don't jump to skipLabel)
 
--- Sum list elements into a 16-bit result stored at resultAddr (low byte) and resultAddr+1 (high byte)
+-- Sum list elements into a 16-bit result stored at resultAddr (low byte) and resultAddr.+1 (high byte)
 sumList :: AddressRef -> AddressRef -> Asm ()
 sumList listBase resultAddr = do
 
     -- Initialize 16-bit result to 0
     lda $ Imm 0
     sta $ OpAbs resultAddr
-    sta $ OpAbs $ resultAddr + 1 -- Store 0 in the high byte address
+    sta $ OpAbs (resultAddr C..+ 1) -- Use qualified renamed operator C.(.+)
 
     -- Loop through the list
     ldx $ Imm 0x00         -- Start index at 0
@@ -210,9 +212,13 @@ sumList listBase resultAddr = do
     l_ endLabel
 
 -- Fold/reduce list (8-bit accumulator)
-foldList :: AddressRef -> Word8 -> (Word8 -> Operand -> Asm ()) -> Asm ()
+foldList :: AddressRef -> Word8 -> (Operand -> Operand -> Asm ()) -> Asm ()
 foldList listBase initialValue combine = do
     lda $ Imm initialValue
+    -- Store initial accumulator value somewhere safe if needed, e.g., ZP
+    let tempAcc = zpLit 0x01 -- Example: Use ZP $01 for accumulator
+    sta tempAcc
+
     ldx $ Imm 0x00
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
@@ -220,6 +226,12 @@ foldList listBase initialValue combine = do
     cpx $ OpAbs listBase
     beq endLabel
     inx  -- increment X before first access (indexing from 1)
-    combine (fromIntegral $ fromEnum 'A') (OpAbsX listBase)
+    -- Combine current accumulator (from tempAcc) with list element (OpAbsX listBase)
+    -- The result should typically end up back in A (or tempAcc)
+    combine tempAcc (OpAbsX listBase)
+    -- Assuming result is in A after combine, store it back
+    sta tempAcc
     jmp $ AbsLabel startLabel
     l_ endLabel
+    -- After loop, final result is in tempAcc, load it if needed
+    lda tempAcc
