@@ -23,6 +23,11 @@ dependencies:
 - base >= 4.7 && < 5
 - mtl
 - containers
+- split # Added for Data.List.Split
+- optparse-applicative # Added for command-line options
+- bytestring # Added for ByteString support
+- binary
+- filepath
 
 ghc-options:
 - -Wall
@@ -43,6 +48,12 @@ library:
   - Assembly.Core   # Add the new Core module
   - Assembly.Macros
   - Assembly.List
+  - C64
+  other-modules:
+  - C64.HelloWorld
+  - Assembly.Branch
+  - Assembly.Instructions6502
+  - C64.HorizontalBars
 
 executables:
   H6502-exe:

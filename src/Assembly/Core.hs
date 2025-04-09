@@ -28,8 +28,9 @@ module Assembly.Core (
     pattern AbsYLabel,
     pattern AbsYLit,
     BranchMnemonic(..),
-    Mnemonic(..), -- ZAKTUALIZOWANY
+    Mnemonic(..),
     SymbolicInstruction(..),
+    Directive(..), -- NEW: Represents directives like ORG
 
     -- Core State & Monad
     AsmState(..),
@@ -45,9 +46,13 @@ module Assembly.Core (
     emitAccumulator, -- NOWY
     emitBranch,
     l_,
-    db,
-    dw,
-    string,
+    db, -- Renamed
+    dw, -- Renamed
+    string, -- Renamed
+    immChar,
+    stringPETSCI, -- NEW: PETSCII string function
+    stringC64, -- NEW: PETSCII string function for screen codes
+    org, -- Renamed & Export the org directive function
     makeUniqueLabel,
     makeLabelWithPrefix,
     generateInstructionBytes,
@@ -92,7 +97,7 @@ import Data.Bits ((.&.), shiftR)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map) -- Jawny import dla Map
 import Data.Maybe (fromMaybe) -- Potrzebne dla lookupów
-import Data.Char (ord)
+import Data.Char (ord, chr, isDigit, isAsciiUpper, isAsciiLower)
 import Numeric (showHex)
 import Data.List (foldl') -- Potrzebne do budowania tabeli
 
@@ -163,6 +168,7 @@ data Operand
 
 -- Pattern Synonyms (aktualizacja i dodanie nowych)
 pattern Imm :: Word8 -> Operand; pattern Imm v = OpImm v
+-- pattern ImmChar :: Char -> Operand; pattern ImmChar v = OpImm (fromIntegral (ord v))
 pattern AbsLit :: Word16 -> Operand; pattern AbsLit v = OpAbs (AddrLit16 v)
 pattern AbsAddress :: AddressRef -> Operand; pattern AbsAddress v = OpAbs v
 pattern AbsLabel :: Label -> Operand; pattern AbsLabel l = OpAbs (AddrLabel l)
@@ -178,8 +184,19 @@ pattern Ind :: AddressRef -> Operand; pattern Ind r = OpInd r
 pattern IndX :: AddressRef -> Operand; pattern IndX r = OpIndX r
 pattern IndY :: AddressRef -> Operand; pattern IndY r = OpIndY r
 
--- SymbolicInstruction (bez zmian na razie)
-data SymbolicInstruction = SLabelDef Label | SIns Mnemonic (Maybe Operand) | SBranch BranchMnemonic Label | SBytes [Word8] | SWords [Word16] deriving (Show, Eq)
+-- NEW: Represents directives that don't directly generate code but affect assembly
+newtype Directive = DOrg Address deriving (Show, Eq) -- HLint: Use newtype
+
+-- SymbolicInstruction (updated to include directives)
+data SymbolicInstruction
+    = SLabelDef Label
+    | SIns Mnemonic (Maybe Operand)
+    | SBranch BranchMnemonic Label
+    | SBytes [Word8]
+    | SWords [Word16]
+    | SDirective Directive -- NEW: Add directives here
+    deriving (Show, Eq)
+
 
 -- --- Assembler State (bez zmian) ---
 data AsmState = AsmState
@@ -310,6 +327,16 @@ emitAccumulator m = emitGeneric (SIns m Nothing) (getInstructionSize m Nothing)
 emitBranch :: BranchMnemonic -> Label -> Asm ()
 emitBranch m l = emitGeneric (SBranch m l) (Right 2)
 
+-- NEW: org directive function
+-- Sets the program counter to a specific address.
+org :: Address -> Asm ()
+org addr = do
+    pc <- gets asmPC -- Get current PC for the record, though it doesn't generate bytes
+    -- Add the directive instruction to the code list
+    modify' $ \s -> s { asmCode = (pc, SDirective (DOrg addr)) : asmCode s }
+    -- Set the program counter to the new address
+    modify' $ \s -> s { asmPC = addr }
+
 -- l_ (bez zmian)
 l_ :: Label -> Asm ()
 l_ lbl = do pc <- gets asmPC; labels <- gets asmLabels
@@ -317,10 +344,45 @@ l_ lbl = do pc <- gets asmPC; labels <- gets asmLabels
             modify' $ \s -> s { asmLabels = Map.insert lbl pc labels }
             emitGeneric (SLabelDef lbl) (Right 0)
 
--- db, dw, string (bez zmian)
+-- db, dw, string (Renamed)
 db :: [Word8] -> Asm (); db bs = let size = fromIntegral $ length bs in when (size > 0) $ emitGeneric (SBytes bs) (Right size)
 dw :: [Word16] -> Asm (); dw ws = let size = fromIntegral (length ws) * 2 in when (size > 0) $ emitGeneric (SWords ws) (Right size)
 string :: String -> Asm (); string str = let bytes = map (fromIntegral . ord) str; size = fromIntegral $ length bytes in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
+
+immChar :: Char -> Operand; immChar v = OpImm (fromIntegral (ord v))
+
+-- NEW: stringPETSCI function for PETSCII encoding
+stringPETSCI :: String -> Asm ()
+stringPETSCI str =
+  let
+    -- Simple PETSCII conversion (basic characters)
+    petscii :: Char -> Word8
+    petscii c = case c of
+      c' | isAsciiUpper c' -> fromIntegral (ord c' + 128) -- Uppercase letters
+        | isAsciiLower c' -> fromIntegral (ord c' - 32)  -- Lowercase to uppercase PETSCII
+      ' '      -> 32                         -- Space
+      _        -> fromIntegral (ord c)       -- Other characters (basic assumption)
+    bytes = map petscii str
+    size = fromIntegral $ length bytes
+  in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
+
+stringC64 :: String -> Asm ()
+stringC64  str =
+  let
+    -- Simple PETSCII conversion (basic characters)
+    asciiToScreencode :: Char -> Word8
+    asciiToScreencode c
+      | isAsciiUpper c = fromIntegral (ord c - 64)          -- A-Z: 65-90 -> 1-26
+      | isAsciiLower c = fromIntegral (ord c - 96)          -- a-z: 97-122 -> 1-26 (mapowane na wielkie)
+      | isDigit c      = fromIntegral (ord c - 48 + 48)     -- 0-9: 48-57 -> 48-57
+      | c == ' '             =  32                    -- Spacja: 32
+      | c == '@'             =  0                     -- @: 0
+      | c == '$'             =  36                    -- $: 36
+      | otherwise            =  63                    -- Nieobsługiwane znaki: ? (63)
+    bytes = map asciiToScreencode str
+    size = fromIntegral $ length bytes
+  in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
+
 
 -- makeUniqueLabel_ (Use P.(+) for counter update)
 makeUniqueLabel_ :: String -> Asm Label
