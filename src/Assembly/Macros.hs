@@ -1,20 +1,34 @@
 {-# LANGUAGE PatternSynonyms #-}
 module Assembly.Macros (
     -- Macros
-    ifNotEqThen, ifEqThen, ifCarryThen, ifNotCarryThen,
-    ifMinusThen, ifPlusThen, ifOverflowThen, ifNotOverflowThen,
-    whileEqDo, whileNotEqDo, whileCarryDo, whileNotCarryDo,
-    whileMinusDo, whilePlusDo, whileOverflowDo, whileNotOverflowDo,
-    forEachRange,
+    ifnzThen, ifzThen, ifneThen, ifeqThen, ifcThen, ifncThen,
+    ifmThen, ifpThen, ifoThen, ifnoThen,
+    whileZ, doWhileZ,
+    whileNz, doWhileNz, 
+    whileC, doWhileC, 
+    whileNc, doWhileNc, 
+    whileM, doWhileM,
+    whileP, doWhileP, 
+    whileO, doWhileO,
+    whileNo, doWhileNo,
+    whileEq, doWhileEq, 
+    whileNe, doWhileNe,
+    doWhileX, 
+    doWhileY,
+    
+    --whileAddr, doWhileAddr, whileZP, doWhileZP,
+    forEachRange, 
     caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,
     addAto16bit, -- Add 8-bit value in A to a 16-bit memory location
     -- Helper (potentially hide later)
-    makeUniqueLabel
+    makeUniqueLabel,
+    waitRaster,
+    cmpX, cmpY, cmpR, staRb, staRw,
 ) where
 
 --import Assembly.List (forEach, forEachListWithIndex, mapListInPlace, mapListToNew, filterList, foldList, filterMoreThan, sumList)
 import Control.Monad.IO.Class (liftIO)
-import Data.Word (Word8)
+import Data.Word (Word8, Word16)
 import Assembly.Core
     ( adc,
       bcc,
@@ -32,12 +46,19 @@ import Assembly.Core
       inx,
       jmp,
       jsr,
+      iny,
+      inx,
       l_,
       lda,
       ldx,
+      tya,
+      txa,
       makeUniqueLabel,
       sta,
       zpLit,
+      addr2word16,
+      lo,
+      hi,
       AddressRef(AddrLabel, AddrLit16),
       Asm,
       Operand(..), -- Import all constructors
@@ -50,67 +71,99 @@ import Assembly.Core
       )
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
+import C64 (rasterLine)
 
--- --- Warunki (bez zmian) ---
-ifNotEqThen :: Asm () -> Asm ()
-ifNotEqThen thenBlock = do
+-- --- Warunki ---
+ifnzThen :: Asm () -> Asm ()
+ifnzThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     beq endLabel
     thenBlock
     l_ endLabel
 
-ifEqThen :: Asm () -> Asm ()
-ifEqThen thenBlock = do
+ifzThen :: Asm () -> Asm ()
+ifzThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bne endLabel
     thenBlock
     l_ endLabel
 
-ifCarryThen :: Asm () -> Asm ()
-ifCarryThen thenBlock = do
+ifneThen :: Asm () -> Asm ()
+ifneThen thenBlock = do
+    endLabel <- makeUniqueLabel ()
+    beq endLabel
+    thenBlock
+    l_ endLabel
+
+ifeqThen :: Asm () -> Asm ()
+ifeqThen thenBlock = do
+    endLabel <- makeUniqueLabel ()
+    bne endLabel
+    thenBlock
+    l_ endLabel
+
+ifcThen :: Asm () -> Asm ()
+ifcThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bcc endLabel
     thenBlock
     l_ endLabel
 
-ifNotCarryThen :: Asm () -> Asm ()
-ifNotCarryThen thenBlock = do
+ifncThen :: Asm () -> Asm ()
+ifncThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bcs endLabel
     thenBlock
     l_ endLabel
 
-ifMinusThen :: Asm () -> Asm ()
-ifMinusThen thenBlock = do
+ifmThen :: Asm () -> Asm ()
+ifmThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bpl endLabel
     thenBlock
     l_ endLabel
 
-ifPlusThen :: Asm () -> Asm ()
-ifPlusThen thenBlock = do
+ifpThen :: Asm () -> Asm ()
+ifpThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bmi endLabel
     thenBlock
     l_ endLabel
 
-ifOverflowThen :: Asm () -> Asm ()
-ifOverflowThen thenBlock = do
+ifoThen :: Asm () -> Asm ()
+ifoThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bvc endLabel
     thenBlock
     l_ endLabel
 
-ifNotOverflowThen :: Asm () -> Asm ()
-ifNotOverflowThen thenBlock = do
+ifnoThen :: Asm () -> Asm ()
+ifnoThen thenBlock = do
     endLabel <- makeUniqueLabel ()
     bvs endLabel
     thenBlock
     l_ endLabel
 
--- --- Pętle (bez zmian) ---
-whileEqDo :: Asm () -> Asm () -> Asm ()
-whileEqDo conditionBlock doBlock = do
+-- --- Pętle  ---
+doWhileX :: Asm () -> Asm ()
+doWhileX doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    inx
+    bne startLabel
+
+doWhileY :: Asm () -> Asm ()
+doWhileY doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    iny
+    bne startLabel
+
+-- TESTING FIRST!
+whileEq :: Asm () -> Asm () -> Asm ()
+whileEq conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -120,12 +173,20 @@ whileEqDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whileNotEqDo :: Asm () -> Asm () -> Asm ()
-whileNotEqDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileEq :: Asm () -> Asm () -> Asm ()
+doWhileEq conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    beq startLabel
+
+-- TESTING FIRST!
+whileNe :: Asm () -> Asm () -> Asm ()
+whileNe conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
-    --let loop = do jmp $ AbsLabel startLabel
-
     l_ startLabel
     conditionBlock
     beq endLabel
@@ -134,8 +195,45 @@ whileNotEqDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whileCarryDo :: Asm () -> Asm () -> Asm ()
-whileCarryDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileNe :: Asm () -> Asm () -> Asm ()
+doWhileNe conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bne startLabel
+
+whileZ :: Asm () -> Asm () -> Asm ()
+whileZ = whileEq
+
+doWhileZ :: Asm () -> Asm () -> Asm ()
+doWhileZ = doWhileEq
+
+-- TESTING FIRST!
+whileNz :: Asm () -> Asm () -> Asm ()
+whileNz conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    beq endLabel
+    doBlock
+    conditionBlock
+    jmp $ AbsLabel startLabel
+    l_ endLabel
+
+-- TESTING LAST!
+doWhileNz :: Asm () -> Asm () -> Asm ()
+doWhileNz conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bne startLabel
+
+
+whileC :: Asm () -> Asm () -> Asm ()
+whileC conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -145,8 +243,17 @@ whileCarryDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whileNotCarryDo :: Asm () -> Asm () -> Asm ()
-whileNotCarryDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileC :: Asm () -> Asm () -> Asm ()
+doWhileC conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bcs startLabel
+
+whileNc :: Asm () -> Asm () -> Asm ()
+whileNc conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -156,8 +263,17 @@ whileNotCarryDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whileMinusDo :: Asm () -> Asm () -> Asm ()
-whileMinusDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileNc :: Asm () -> Asm () -> Asm ()
+doWhileNc conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bcc startLabel
+
+whileM :: Asm () -> Asm () -> Asm ()
+whileM conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -167,8 +283,18 @@ whileMinusDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whilePlusDo :: Asm () -> Asm () -> Asm ()
-whilePlusDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileM :: Asm () -> Asm () -> Asm ()
+doWhileM conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bmi startLabel
+
+-- TESTING FIRST!
+whileP :: Asm () -> Asm () -> Asm ()
+whileP conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -178,8 +304,18 @@ whilePlusDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whileOverflowDo :: Asm () -> Asm () -> Asm ()
-whileOverflowDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileP :: Asm () -> Asm () -> Asm ()
+doWhileP conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bpl startLabel
+
+
+whileO :: Asm () -> Asm () -> Asm ()
+whileO conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -189,8 +325,19 @@ whileOverflowDo conditionBlock doBlock = do
     jmp $ AbsLabel startLabel
     l_ endLabel
 
-whileNotOverflowDo :: Asm () -> Asm () -> Asm ()
-whileNotOverflowDo conditionBlock doBlock = do
+-- TESTING LAST!
+doWhileO :: Asm () -> Asm () -> Asm ()
+doWhileO conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bvs startLabel
+
+
+
+whileNo :: Asm () -> Asm () -> Asm ()
+whileNo conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
@@ -199,6 +346,17 @@ whileNotOverflowDo conditionBlock doBlock = do
     doBlock
     jmp $ AbsLabel startLabel
     l_ endLabel
+
+-- TESTING LAST!
+doWhileNo :: Asm () -> Asm () -> Asm ()
+doWhileNo conditionBlock doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    conditionBlock
+    bvc startLabel
+
+
 
 -- Macro for 16-bit addition: Adds the 8-bit value in A to the 16-bit value at accAddr (low byte) and accAddr .+ 1 (high byte)
 -- Uses ZP $00 as temporary storage for A. WARNING: Ensure ZP $00 is safe to use.
@@ -350,3 +508,37 @@ checkSpecialPositions = do
         ([(0x96, 1), (0x00, 1), (0x96, 1), (0x00, 1)], do
             jsr $ AbsLabel "activate_teleporter")
         ]
+
+
+
+cmpR :: AddressRef -> Word8 -> Asm()
+cmpR address value = do
+    lda $ OpImm value
+    cmp $ OpAbs address
+
+cmpY :: Word8  -> Asm()
+cmpY value = do
+    tya
+    cmp $ Imm value
+
+cmpX :: Word8  -> Asm()
+cmpX value = do
+    txa
+    cmp $ Imm value
+
+staRb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
+staRb op value = do
+    lda $ Imm value        -- Reset delay counter
+    sta $ OpAbs op
+
+staRw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
+staRw op value = do
+    lda $ Imm $ lo value -- Lower byte
+    sta $ OpAbs op
+    lda $ Imm $ hi value-- Upper byte
+    sta $ OpAbs $ AddrLit16 (addr2word16 op P.+ 1) -- Store upper byte in next address    
+
+
+waitRaster :: Asm ()
+waitRaster = do whileNe (cmpR rasterLine 100) $ do return()
+

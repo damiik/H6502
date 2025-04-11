@@ -5,7 +5,7 @@ import Assembly.List(createList, createList_, createListFromString, addToList, c
 import Assembly.Macros(addAto16bit)  -- Import addAto16bit
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
-import C64 (horizontalBars)
+import C64.Examples (horizontalBars)
 import Data.Word (Word16, Word8)
 import Data.ByteString as BS (writeFile, toStrict)
 import Data.Binary.Put (runPut, putWord16le, putWord8)

@@ -31,11 +31,12 @@ library
       Assembly.Macros
       Assembly.List
       C64
+      C64.Examples
   other-modules:
       C64.HelloWorld
+      C64.HorizontalBars
       Assembly.Branch
       Assembly.Instructions6502
-      C64.HorizontalBars
   hs-source-dirs:
       src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints

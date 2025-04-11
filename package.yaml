@@ -49,11 +49,12 @@ library:
   - Assembly.Macros
   - Assembly.List
   - C64
+  - C64.Examples
   other-modules:
-  - C64.HelloWorld
-  - Assembly.Branch
-  - Assembly.Instructions6502
-  - C64.HorizontalBars
+  - C64.HelloWorld  # reexported by C64.Examples
+  - C64.HorizontalBars # reexported by C64.Examples
+  - Assembly.Branch  # reexported by Assembly
+  - Assembly.Instructions6502 # reexported by Assembly
 
 executables:
   H6502-exe:

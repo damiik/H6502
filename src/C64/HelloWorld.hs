@@ -2,6 +2,7 @@ module C64.HelloWorld (helloWorld) where
 
 import Assembly.Core
 import Assembly(Asm)
+import Assembly.Macros
 
 startSequence = [0x0c, 0x08, 0xb5, 0x07, 0x9e, 0x20, 0x32, 0x30, 0x36, 0x32, 0x00, 0x00, 0x00]
 
@@ -14,14 +15,11 @@ helloWorld = do
     sta $ OpAbs $ AddrLit16 0xD021       -- Ustaw kolor ramki
 
     ldx $ Imm 0x00   -- Licznik/index
-    l_ "loop"    
-    lda $ AbsXLabel "text"    -- Załaduj kolejny znak
-    beq "end"     -- Jeśli zero (koniec ciągu), zakończ
-    sta $ OpAbsX $ AddrLit16 0x0400 -- Zapisz znak na ekranie (pozycja 1024)
-    inx           --Zwiększ licznik
-    jmp $ AbsLabel "loop" --   ; Powtórz pętlę
-
-    l_ "end"
+    lda $ AbsXLabel "text" -- Załaduj pierwszy znak z tekstu
+    while_ IsNonZero $ do
+        sta $ OpAbsX $ AddrLit16 0x0400 -- Zapisz znak na ekranie (pozycja 1024)    
+        inx
+        lda $ AbsXLabel "text"
     rts         -- Powrót do BASIC
 
     l_ "text"

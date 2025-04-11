@@ -46,6 +46,9 @@ module Assembly.Core (
     emitAccumulator, -- NOWY
     emitBranch,
     l_,
+    if_,
+    while_,
+    doWhile_,
     db, -- Renamed
     dw, -- Renamed
     string, -- Renamed
@@ -69,7 +72,7 @@ module Assembly.Core (
     hi,
     hx,
     asc,
-    addrVal,
+    addr2word16,
     evalLabelExpr, -- NEW EXPORT
     wordToBytesLE, -- Added export
     (.+) , -- Renamed operator for AddressRef
@@ -84,7 +87,10 @@ module Assembly.Core (
     cmp, cpx, cpy, txa, tya, txs, tsx, bne, beq, bcs, bcc, bmi,
     bpl, bvs, bvc, jsr, rts, ora, asl, php, clc, and, bit, rol,
     ror, plp, sec, rti, eor, lsr, pha, cli, pla, sei, dey, clv,
-    iny, dex, cld, nop, sed, inc, dec, brk
+    iny, dex, cld, nop, sed, inc, dec, brk,
+
+    -- conditions
+    Conditions(..),
 ) where
 
 import Prelude hiding (and, or) -- Hiding only 'and', 'or'
@@ -450,8 +456,8 @@ evalLabelExpr = \case
   LabelSub subExpr offset -> evalLabelExpr subExpr - offset -- Use P.(-)
 
 -- addrVal using evalLabelExpr
-addrVal :: AddressRef -> Word16
-addrVal = \case
+addr2word16 :: AddressRef -> Word16
+addr2word16 = \case
   AddrLit16 v -> v
   AddrLabel l -> error $ "Compile-time error!!: Cannot get value of unresolved label '" ++ l ++ "'"
   AddrLabelExpr expr -> evalLabelExpr expr
@@ -530,3 +536,92 @@ brk :: Asm (); brk = emitImplied BRK
 ror :: Maybe Operand -> Asm ()
 ror Nothing   = emitAccumulator ROR
 ror (Just op) = emitIns ROR op
+
+
+-- Typ danych reprezentujący warunki flag procesora
+data Conditions =
+    IsNonZero   -- Z=0 (BNE) - Wynik ostatniej operacji nie był zerem
+  | IsZero      -- Z=1 (BEQ) - Wynik ostatniej operacji był zerem
+  | IsCarryClear      -- C=0 (BCC) - Nie było przeniesienia
+  | IsCarrySet        -- C=1 (BCS) - Było przeniesienie
+  | IsNegative  -- N=1 (BMI) - Wynik był ujemny (najstarszy bit ustawiony)
+  | IsPositive  -- N=0 (BPL) - Wynik był dodatni lub zerowy (najstarszy bit wyczyszczony)
+  | IsOverflowClear   -- V=0 (BVC) - Nie było nadmiaru w operacji arytmetycznej ze znakiem
+  | IsOverflowSet     -- V=1 (BVS) - Był nadmiar w operacji arytmetycznej ze znakiem
+  deriving (Eq, Show)
+
+-- Funkcja generująca odpowiedni skok warunkowy
+branchOnCondition :: Conditions -> Label -> Asm ()
+branchOnCondition IsNonZero target = emitBranch B_BNE target
+branchOnCondition IsZero    target = emitBranch B_BEQ target
+branchOnCondition IsCarryClear      target = emitBranch B_BCC target
+branchOnCondition IsCarrySet        target = emitBranch B_BCS target
+branchOnCondition IsNegative  target = emitBranch B_BMI target
+branchOnCondition IsPositive  target = emitBranch B_BPL target
+branchOnCondition IsOverflowClear   target = emitBranch B_BVC target
+branchOnCondition IsOverflowSet     target = emitBranch B_BVS target
+
+-- Funkcja odwracająca warunek  
+invert :: Conditions -> Conditions
+invert IsNonZero = IsZero
+invert IsZero    = IsNonZero
+invert IsCarryClear      = IsCarrySet
+invert IsCarrySet        = IsCarryClear
+invert IsNegative  = IsPositive
+invert IsPositive  = IsNegative
+invert IsOverflowClear   = IsOverflowSet
+invert IsOverflowSet     = IsOverflowClear
+
+-- Opcjonalne synonimy wzorców dla czytelności
+pattern AccIsZero      :: Conditions
+pattern AccIsZero      = IsZero
+
+pattern AccIsNonZero   :: Conditions
+pattern AccIsNonZero   = IsNonZero
+
+pattern AccIsPositive  :: Conditions
+pattern AccIsPositive  = IsPositive
+
+pattern AccIsNegative  :: Conditions
+pattern AccIsNegative  = IsNegative
+
+
+-- Wykonuje blok kodu, jeśli podany warunek jest PRAWDZIWY
+-- (Zakłada, że flagi zostały ustawione *przed* wywołaniem if_)
+if_ :: Conditions -> Asm () -> Asm ()
+if_ condition asmBlock = do
+    skipLabel <- makeUniqueLabel ()
+    -- Wykonaj skok WARUNKOWY ZA blok, jeśli warunek jest FAŁSZYWY
+    branchOnCondition (invert condition) skipLabel
+    -- Wykonaj blok kodu, jeśli warunek jest PRAWIDŁOWY (nie skoczono)
+    asmBlock
+    l_ skipLabel -- Etykieta końca bloku if
+
+-- Zaktualizowane makro WHILE
+-- Wykonuje blok kodu, dopóki warunek jest PRAWDZIWY
+-- (Zakłada, że flagi są ustawiane *przed* sprawdzeniem warunku na początku pętli)
+while_ :: Conditions -> Asm () -> Asm ()
+while_ condition asmBlock = do
+    startLabel <- makeUniqueLabel ()
+    endLabel   <- makeUniqueLabel ()
+    l_ startLabel
+    -- Sprawdź warunek: skocz na koniec, jeśli FAŁSZYWY
+    branchOnCondition (invert condition) endLabel
+    -- Wykonaj ciało pętli, jeśli warunek PRAWDZIWY
+    asmBlock
+    jmp $ AbsLabel startLabel -- Wróć na początek, aby ponownie sprawdzić warunek
+    l_ endLabel
+
+-- Zaktualizowane makro DO-WHILE
+-- Wykonuje blok kodu RAZ, a następnie powtarza, dopóki warunek jest PRAWDZIWY
+-- (Zakłada, że flagi są ustawiane *wewnątrz* bloku, tuż przed końcem iteracji)
+doWhile_ :: Conditions -> Asm () -> Asm ()
+doWhile_ condition asmBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    -- Wykonaj ciało pętli
+    asmBlock
+    -- Sprawdź warunek na końcu: skocz na początek, jeśli PRAWIDZIWY
+    branchOnCondition condition startLabel
+    -- W przeciwnym razie (warunek FAŁSZYWY), wypadnij z pętli
+
