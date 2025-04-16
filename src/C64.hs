@@ -1,6 +1,12 @@
 module C64 (
-    screenRam, colorRam,
-    rasterLine, borderColor, backgroundColor,
+    screenRam, colorRam, 
+    vicBankSelect, 
+    vicMemoryControl,
+    vicBorderColor, vicBackgroundColor,
+    vicRaster, cia1DataPortA,
+    kernalClrscr, kernalGetin,
+    keyCursorDown, keyCursorRight,
+    keyCursorUp, keyCursorLeft,
     control1, control2, memory,
     color0, color1, color2, color3,
     _BLACK, _WHITE, _RED, _CYAN, _PURPLE,
@@ -26,14 +32,7 @@ screenRam = AddrLit16 0x0400
 colorRam :: AddressRef
 colorRam = AddrLit16 0xd800
 
-rasterLine :: AddressRef
-rasterLine = AddrLit16 0xd012
 
-borderColor :: AddressRef
-borderColor = AddrLit16 0xd020
-
-backgroundColor :: AddressRef
-backgroundColor = AddrLit16 0xd021
 
 -- 0xD011 Control Register #1
 -- - Bit#0-#2: YSCROLL Screen Soft Scroll Vertical
@@ -49,7 +48,6 @@ backgroundColor = AddrLit16 0xd021
 -- Initial Value: %10011011
 control1 = AddrLit16 0xd011
 -- 0xD012 RASTER Raster counter
-raster = AddrLit16 0xd012 
 
 -- 0xD016 Control register 2
 -- -  Bit#0-#2: XSCROLL Screen Soft Scroll Horizontal
@@ -70,6 +68,25 @@ control2 = AddrLit16 0xd016
 -- - Bit#4-#7: VM Address Bits 10-13 of the Screen RAM (*1024)
 -- Initial Value: %00010100
 memory = AddrLit16 0xd018
+
+
+
+vicBankSelect      = AddrLit16 0xDD00
+vicMemoryControl   = AddrLit16 0xD018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
+vicBorderColor     = AddrLit16 0xD020
+vicBackgroundColor = AddrLit16 0xD021
+vicRaster          = AddrLit16 0xD012
+cia1DataPortA      = AddrLit16 0xDC00 -- Joystick Port 2 (nieużywane)
+
+-- Rutyny KERNAL
+kernalClrscr       = AddrLit16 0xE544
+kernalGetin        = AddrLit16 0xFFE4 -- Odczytuje znak z klawiatury (blokujące)
+
+-- Kody PETSCII dla klawiszy kursorów
+keyCursorDown :: Word8;  keyCursorDown  = 17
+keyCursorRight :: Word8;  keyCursorRight = 29
+keyCursorUp    :: Word8; keyCursorUp    = 145
+keyCursorLeft  :: Word8; keyCursorLeft  = 157
 
 
 

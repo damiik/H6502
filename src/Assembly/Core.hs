@@ -27,6 +27,8 @@ module Assembly.Core (
     pattern ZPY,
     pattern AbsYLabel,
     pattern AbsYLit,
+    pattern ImmLsbLabel, -- Export new pattern synonym
+    pattern ImmMsbLabel, -- Export new pattern synonym
     BranchMnemonic(..),
     Mnemonic(..),
     SymbolicInstruction(..),
@@ -68,8 +70,7 @@ module Assembly.Core (
     branchOpcode, -- NOWA FUNKCJA POMOCNICZA
 
     -- Miscellaneous
-    lo,
-    hi,
+    lsb, msb,
     hx,
     asc,
     addr2word16,
@@ -91,6 +92,10 @@ module Assembly.Core (
 
     -- conditions
     Conditions(..),
+    pattern AccIsNonZero,
+    pattern AccIsZero,
+    pattern AccIsPositive,
+    pattern AccIsNegative,
 ) where
 
 import Prelude hiding (and, or) -- Hiding only 'and', 'or'
@@ -126,6 +131,7 @@ data LabelExpression
 -- Updated AddressRef to include label expressions
 data AddressRef
   = AddrLit16 Word16
+  | AddrLit8 Word8
   | AddrLabel Label
   | AddrLabelExpr LabelExpression
   deriving (Show, Eq, Ord)
@@ -136,6 +142,7 @@ infixl 6 .+
 a .+ i  =
     case a of
         AddrLit16 v -> AddrLit16 (v + i) -- Use P.(+) for Word16 addition
+        AddrLit8 v -> AddrLit8 (fromIntegral (fromIntegral v + i)) -- Use P.(+) for Word16 addition
         AddrLabel l -> AddrLabelExpr (LabelAdd (LabelRef l) i)
         AddrLabelExpr expr -> AddrLabelExpr (LabelAdd expr i)
 
@@ -144,6 +151,7 @@ infixl 6 .-
 a .- i =
   case a of
     AddrLit16 v -> AddrLit16 (v - i) -- Use P.(-) for Word16 subtraction
+    AddrLit8 v -> AddrLit8 (fromIntegral (fromIntegral v - i)) -- Use P.(-) for Word16 subtraction
     AddrLabel l -> AddrLabelExpr (LabelSub (LabelRef l) i)
     AddrLabelExpr expr -> AddrLabelExpr (LabelSub expr i)
 
@@ -169,6 +177,9 @@ data Operand
     | OpInd AddressRef     -- Indirect (tylko JMP)
     | OpIndX AddressRef    -- IndirectX ($NN,X)
     | OpIndY AddressRef    -- IndirectY ($NN),Y
+    -- NEW: Operands for immediate LSB/MSB of a label's address
+    | OpImmLsbLabel Label  -- Immediate LSB of label address, e.g., LDA #<label
+    | OpImmMsbLabel Label  -- Immediate MSB of label address, e.g., LDA #>label
     -- Brak konstruktora dla Implicit, Accumulator, Relative - są obsługiwane inaczej
     deriving (Show, Eq)
 
@@ -189,6 +200,9 @@ pattern ZPY :: AddressRef -> Operand; pattern ZPY r = OpZPY r
 pattern Ind :: AddressRef -> Operand; pattern Ind r = OpInd r
 pattern IndX :: AddressRef -> Operand; pattern IndX r = OpIndX r
 pattern IndY :: AddressRef -> Operand; pattern IndY r = OpIndY r
+-- NEW: Pattern synonyms for immediate LSB/MSB operands
+pattern ImmLsbLabel :: Label -> Operand; pattern ImmLsbLabel l = OpImmLsbLabel l
+pattern ImmMsbLabel :: Label -> Operand; pattern ImmMsbLabel l = OpImmMsbLabel l
 
 -- NEW: Represents directives that don't directly generate code but affect assembly
 newtype Directive = DOrg Address deriving (Show, Eq) -- HLint: Use newtype
@@ -274,6 +288,9 @@ getOperandAddressingMode _ (Just (OpAbsY _))  = Right AbsoluteY
 getOperandAddressingMode _ (Just (OpInd _))   = Right Indirect
 getOperandAddressingMode _ (Just (OpIndX _))  = Right IndirectX
 getOperandAddressingMode _ (Just (OpIndY _))  = Right IndirectY
+-- NEW: Handle LSB/MSB label operands as Immediate mode
+getOperandAddressingMode _ (Just (OpImmLsbLabel _)) = Right Immediate
+getOperandAddressingMode _ (Just (OpImmMsbLabel _)) = Right Immediate
 getOperandAddressingMode m Nothing = case m of
     -- Sprawdzanie czy mnemonic obsługuje tryb Accumulator
     ASL -> Right Accumulator
@@ -297,6 +314,7 @@ getInstructionInfo m maybeOp = do
 resolveAddressMaybe :: Maybe AddressRef -> AsmState -> Maybe Word16
 resolveAddressMaybe Nothing _ = Just 0 -- For Imm, value doesn't matter
 resolveAddressMaybe (Just (AddrLit16 v)) _ = Just v
+resolveAddressMaybe (Just (AddrLit8 v)) _ = Just (fromIntegral v) -- Convert to Word16
 resolveAddressMaybe (Just (AddrLabel l)) s = Map.lookup l (asmLabels s)
 resolveAddressMaybe (Just (AddrLabelExpr expr)) s = resolveLabelExpr expr (asmLabels s)
   where
@@ -408,23 +426,34 @@ makeLabelWithPrefix = makeUniqueLabel_
 -- impliedOpcode, operandOpcode zostają zastąpione przez logikę w generateBinary używającą instructionTable
 
 -- Funkcja pomocnicza dla generateBinary (może być w Assembly.hs)
+-- generateInstructionBytes (updated to handle OpImmLsbLabel and OpImmMsbLabel)
 generateInstructionBytes :: Mnemonic -> Maybe Operand -> AsmState -> Either String [Word8]
 generateInstructionBytes m maybeOp asmState = do
     (opcode, size) <- getInstructionInfo m maybeOp
-    addressRef <- Right $ getOperandAddressRef maybeOp -- Pobierz AddressRef, jeśli istnieje
-    resolvedAddrMaybe <- Right $ resolveAddressMaybe addressRef asmState
 
-    case resolvedAddrMaybe of
-        Nothing | size > 1 && maybeOp /= Nothing -> Left $ "Failed to resolve address for " ++ show m ++ " " ++ show maybeOp -- Błąd jeśli adres jest potrzebny a nie da się go rozwiązać
-        _ -> let resolvedAddr = fromMaybe 0 resolvedAddrMaybe -- Domyślnie 0 jeśli niepotrzebny (np. Imm) lub błąd
-                 operandVal = case maybeOp of Just (OpImm v) -> v; _ -> 0 -- Pobierz wartość dla Immediate
-             in Right $ case size of
-                 1 -> [opcode]
-                 2 -> case fromMaybe Implicit (either (const Nothing) Just (getOperandAddressingMode m maybeOp)) of -- Potrzebujemy trybu, aby odróżnić Imm od innych 2-bajtowych
-                          Immediate -> [opcode, operandVal]
-                          _         -> [opcode, lo resolvedAddr] -- ZP, ZPX, ZPY, IndX, IndY
-                 3 -> [opcode, lo resolvedAddr, hi resolvedAddr] -- Abs, AbsX, AbsY, Ind
-                 _ -> error "Internal error: Invalid instruction size derived" -- Nie powinno się zdarzyć
+    -- Handle specific operand types
+    case maybeOp of
+        Just (OpImmLsbLabel l) ->
+            case Map.lookup l (asmLabels asmState) of
+                Just addr -> Right [opcode, lsb addr]
+                Nothing   -> Left $ "Failed to resolve label '" ++ l ++ "' for LSB operand"
+        Just (OpImmMsbLabel l) ->
+            case Map.lookup l (asmLabels asmState) of
+                Just addr -> Right [opcode, msb addr]
+                Nothing   -> Left $ "Failed to resolve label '" ++ l ++ "' for MSB operand"
+        Just (OpImm v) -> Right [opcode, v] -- Standard Immediate
+        _ -> do -- Handle address-based operands
+            addressRef <- Right $ getOperandAddressRef maybeOp
+            resolvedAddrMaybe <- Right $ resolveAddressMaybe addressRef asmState
+            case resolvedAddrMaybe of
+                Nothing | size > 1 && maybeOp /= Nothing ->
+                    Left $ "Failed to resolve address for " ++ show m ++ " " ++ show maybeOp
+                _ -> let resolvedAddr = fromMaybe 0 resolvedAddrMaybe
+                     in Right $ case size of
+                         1 -> [opcode] -- Implicit or Accumulator
+                         2 -> [opcode, lsb resolvedAddr] -- ZP, ZPX, ZPY, IndX, IndY, Relative
+                         3 -> [opcode, lsb resolvedAddr, msb resolvedAddr] -- Abs, AbsX, AbsY, Ind
+                         _ -> error "Internal error: Invalid instruction size derived"
 
 -- getOperandAddressRef (no changes needed, extracts AddressRef)
 getOperandAddressRef :: Maybe Operand -> Maybe AddressRef
@@ -442,10 +471,10 @@ getOperandAddressRef = \case
 
 
 -- --- Miscellaneous ---
-lo :: Word16 -> Word8; lo = fromIntegral . (.&. 0xFF)
-hi :: Word16 -> Word8; hi w = fromIntegral (w `shiftR` 8)
+lsb :: Word16 -> Word8; lsb = fromIntegral . (.&. 0xFF)
+msb :: Word16 -> Word8; msb w = fromIntegral (w `shiftR` 8)
 hx :: Word16 -> String; hx a = showHex a ""
-wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [lo w, hi w]
+wordToBytesLE :: Word16 -> [Word8]; wordToBytesLE w = [msb w, msb w]
 
 -- Top-level function for testing
 evalLabelExpr :: LabelExpression -> Word16
@@ -459,8 +488,19 @@ evalLabelExpr = \case
 addr2word16 :: AddressRef -> Word16
 addr2word16 = \case
   AddrLit16 v -> v
-  AddrLabel l -> error $ "Compile-time error!!: Cannot get value of unresolved label '" ++ l ++ "'"
+  AddrLit8 v -> fromIntegral v
+  AddrLabel l -> -- resolveAddressMaybe (AddrLabel l)
+    -- TODO: Handle this case properly
+    error $ "Compile-time error!!: Cannot get value of unresolved label '" ++ l ++ "'"
   AddrLabelExpr expr -> evalLabelExpr expr
+
+addr2word8 :: AddressRef -> Word8
+addr2word8 = \case
+  AddrLit16 v -> fromIntegral v
+  AddrLit8 v -> v
+  AddrLabel l -> error $ "Compile-time error!!: Cannot get value of unresolved label '" ++ l ++ "'"
+  AddrLabelExpr expr -> fromIntegral $ evalLabelExpr expr
+
 
 -- parens function definition
 parens :: AddressRef -> AddressRef
@@ -572,7 +612,7 @@ invert IsPositive  = IsNegative
 invert IsOverflowClear   = IsOverflowSet
 invert IsOverflowSet     = IsOverflowClear
 
--- Opcjonalne synonimy wzorców dla czytelności
+-- Opcjonalne synonimy wzorców dla czytelności (syntax sugar)
 pattern AccIsZero      :: Conditions
 pattern AccIsZero      = IsZero
 
@@ -624,4 +664,3 @@ doWhile_ condition asmBlock = do
     -- Sprawdź warunek na końcu: skocz na początek, jeśli PRAWIDZIWY
     branchOnCondition condition startLabel
     -- W przeciwnym razie (warunek FAŁSZYWY), wypadnij z pętli
-

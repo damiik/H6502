@@ -23,7 +23,11 @@ module Assembly.Macros (
     -- Helper (potentially hide later)
     makeUniqueLabel,
     waitRaster,
-    cmpX, cmpY, cmpR, staRb, staRw,
+    cmp_r, cmp_y, cmp_x, sta_rb, sta_rw, add_rrw, sta_zw, add_zrw, sta_zrw, add_zzw,
+    copyBlock,
+    fillScreen,
+    decsum, binsum,
+    configureVectors,
 ) where
 
 --import Assembly.List (forEach, forEachListWithIndex, mapListInPlace, mapListToNew, filterList, foldList, filterMoreThan, sumList)
@@ -51,27 +55,50 @@ import Assembly.Core
       l_,
       lda,
       ldx,
+      ldy,
       tya,
       txa,
+      tax,
+      tay,
+      dex,
+      dey,
       makeUniqueLabel,
       sta,
+      sed,
+      cld,
+      rts,
+      rti,
       zpLit,
       addr2word16,
-      lo,
-      hi,
-      AddressRef(AddrLabel, AddrLit16),
+      lsb,
+      msb,
+      AddressRef(AddrLabel, AddrLit16, AddrLit8, AddrLabelExpr),
       Asm,
       Operand(..), -- Import all constructors
       pattern Imm, -- Import the pattern synonym
       pattern AbsLabel,
+      pattern ImmLsbLabel, -- Import the new pattern synonym
+      pattern ImmMsbLabel, -- Import the new pattern synonym
       (.+), -- Import renamed operator
       (.-), -- Import renamed operator
       parens, -- Import parens if needed by macros (though unlikely)
-      ArithExpr(add, sub) -- Import the class methods if needed directly (unlikely)
+      ArithExpr(add, sub), -- Import the class methods if needed directly (unlikely)
+      evalLabelExpr,
+      LabelExpression(LabelRef),
+      while_,
+      doWhile_,
+      pattern IsNonZero
       )
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
-import C64 (rasterLine)
+import C64 (vicRaster)
+
+-- zmienne lokalne na stronie zerowej 
+-- te adresy mogą się pokrywać z innmi zmiennymi lokalnymi
+srcTemp = AddrLit16 0x12 -- 2
+dstTemp = AddrLit16 0x14 -- 2
+
+
 
 -- --- Warunki ---
 ifnzThen :: Asm () -> Asm ()
@@ -511,34 +538,192 @@ checkSpecialPositions = do
 
 
 
-cmpR :: AddressRef -> Word8 -> Asm()
-cmpR address value = do
+{-# HLINT ignore "Use camelCase" #-}
+cmp_r :: AddressRef -> Word8 -> Asm()
+cmp_r address value = do
     lda $ OpImm value
     cmp $ OpAbs address
 
-cmpY :: Word8  -> Asm()
-cmpY value = do
+
+cmp_y :: Word8  -> Asm()
+cmp_y value = do
     tya
     cmp $ Imm value
 
-cmpX :: Word8  -> Asm()
-cmpX value = do
+cmp_x :: Word8  -> Asm()
+cmp_x value = do
     txa
     cmp $ Imm value
 
-staRb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
-staRb op value = do
+sta_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
+sta_rb op value = do
     lda $ Imm value        -- Reset delay counter
     sta $ OpAbs op
 
-staRw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
-staRw op value = do
-    lda $ Imm $ lo value -- Lower byte
+sta_rw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
+sta_rw op value = do
+    lda $ Imm $ lsb value -- Lower byte
     sta $ OpAbs op
-    lda $ Imm $ hi value-- Upper byte
+    lda $ Imm $ msb value-- Upper byte
     sta $ OpAbs $ AddrLit16 (addr2word16 op P.+ 1) -- Store upper byte in next address    
+
+add_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+add_rrw op1 op2 = do
+    lda $ OpAbs op1
+    clc
+    adc $ OpAbs op2
+    sta $ OpAbs op1
+    lda $ OpAbs (op1 .+ 1)
+    adc $ OpAbs (op2 .+ 1)
+    sta $ OpAbs (op1 .+ 1)
+
+sta_zw :: AddressRef -> Word16 -> Asm() -- op1 <- op2
+sta_zw op1 value = do
+    lda $ Imm $ lsb value
+    sta $ OpZP op1
+    lda $ Imm $ msb value
+    sta $ OpZP (op1 .+ 1)
+
+add_zrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+add_zrw op1 op2 = do
+    lda $ OpZP op1
+    clc
+    adc $ OpAbs op2
+    sta $ OpZP op1
+    lda $ OpZP (op1 .+ 1)
+    adc $ OpAbs (op2 .+ 1)
+    sta $ OpZP (op1 .+ 1)
+
+sta_zrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op2
+sta_zrw op1 op2 = do
+    lda $ OpAbs op2
+    sta $ OpZP op1
+    lda $ OpAbs (op2 .+ 1)
+    sta $ OpZP (op1 .+ 1)
+
+add_zzw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+add_zzw op1 op2 = do
+    lda $ OpZP op1
+    clc
+    adc $ OpZP op2
+    sta $ OpZP op1
+    lda $ OpZP (op1 .+ 1)
+    adc $ OpZP (op2 .+ 1)
+    sta $ OpZP (op1 .+ 1)
+
+-- | Kopiuje blok pamięci używając pętli while_.
+-- | Używa rejestrów A, X, Y.
+-- | UWAGA: Kopiuje maksymalnie 256 bajtów (licznik 8-bitowy w X).
+-- | Parametry:
+-- |   dest: Adres docelowy
+-- |   src: Adres źródłowy
+-- |   count: Liczba bajtów do skopiowania
+copyBlock :: AddressRef -- Cel
+            -> AddressRef -- Źródło
+            -> Word8 -- Liczba bajtów (max 256)
+            -> Asm ()
+copyBlock dest src count = do
+
+    -- Inicjalizacja wskaźników (tak jak poprzednio)
+    sta_zrw srcTemp src   -- srcTemp = src
+    sta_zrw dstTemp dest  -- dstTemp = dest
+
+    -- Inicjalizacja licznika (X) i indeksu (Y)
+    lda $ Imm count
+    tax         -- Przenieś liczbę bajtów do X. WAŻNE: TAX ustawia flagę Z!
+                -- Jeśli count=0, Z=1. Jeśli count!=0, Z=0.
+    ldy $ Imm 0      -- Inicjalizuj indeks Y
+
+    -- Pętla WHILE: kontynuuj, dopóki X jest RÓŻNY od zera (Z=0)
+    -- Makro while_ sprawdza warunek *przed* wykonaniem bloku 'do'
+    -- Flaga Z jest ustawiona przez TAX przed pierwszym sprawdzeniem
+    -- oraz przez DEX na końcu każdej iteracji dla następnego sprawdzenia
+    while_ IsNonZero $ do
+        -- Ciało pętli:
+        lda $ OpIndY srcTemp  -- Załaduj bajt ze źródła
+        sta $ OpIndY dstTemp   -- Zapisz bajt do celu
+        iny                           -- Zwiększ indeks
+
+        -- Zmniejsz licznik X - to ustawi flagę Z dla sprawdzenia
+        -- na początku *następnej* iteracji przez makro while_
+        dex
+
+    -- Koniec pętli (gdy warunek ResultIsNonZero przestanie być prawdziwy,
+    -- czyli gdy DEX ustawi flagę Z (X=0))
+    -- Nie jest potrzebna etykieta końca, makro while_ zarządza skokami
 
 
 waitRaster :: Asm ()
-waitRaster = do whileNe (cmpR rasterLine 100) $ do return()
+waitRaster = do 
+    while_ IsNonZero $ do
+        cmp_r vicRaster 100  
 
+
+
+fillScreen :: AddressRef  -> Word8 -> Asm ()
+fillScreen screenAddr fillB = do
+    lda $ Imm fillB
+    ldx $ Imm 250
+    while_ IsNonZero $ do
+        dex
+        sta $ OpAbsX screenAddr
+        sta $ OpAbsX $ screenAddr .+ 250
+        sta $ OpAbsX $ screenAddr .+ 500
+        sta $ OpAbsX $ screenAddr .+ 750
+
+
+decsum = do  
+        sed                              -- decimal mode
+        clc                              -- clear carry
+        doWhile_ IsNonZero $ do          -- while Y != 0
+            dey                          -- Y--
+            lda $ OpIndY $ AddrLit8 0x40 -- Get 2 decimal digits from string 1
+            adc $ OpIndY $ AddrLit8 0x42 -- Add pair of digits from string 2
+            sta $ OpIndY $ AddrLit8 0x40 -- Store result in string 1
+            tya                          -- Y -> A (set Zero flag if Y=0)
+        cld                              -- Back to binary arithmetic mode
+        rts
+
+
+-- Multidigit binary addition (bcd)
+-- Address of number 1 at 0040:0041. 
+-- Address of number 2 at 0042:0043. 
+-- Length of numbers (in bytes) in Index Register Y. Numbers arranged starting with most significant digits.
+-- Reslult: Sum replaces number with starting address in memory locations 0040 and 0041.
+binsum :: Asm ()
+binsum = do  
+        clc                              -- clear carry
+        doWhile_ IsNonZero $ do          -- while Y != 0
+            dey                          -- Y--
+            lda $ OpIndY $ AddrLit8 0x40 -- Get 2 decimal digits from string 1
+            adc $ OpIndY $ AddrLit8 0x42 -- Add pair of digits from string 2
+            sta $ OpIndY $ AddrLit8 0x40 -- Store result in string 1
+            tya                          -- Y -> A (set Zero flag if Y=0)
+        rts
+
+-- Updated configureVectors to accept AddressRef and use symbolic LSB/MSB loading
+configureVectors :: AddressRef -> Asm ()
+configureVectors addrRef = do
+    -- Extract the label name. Raise error if it's not a label reference.
+    let labelName = case addrRef of
+            AddrLabel l -> l
+            AddrLabelExpr (LabelRef l) -> l
+            _ -> error "configureVectors requires a label reference (AddrLabel or AddrLabelExpr (LabelRef ...))"
+
+    -- IRQ Vector -> Use symbolic LSB/MSB operands
+    lda $ ImmLsbLabel labelName
+    sta $ OpAbs $ AddrLit16 0x0314
+    lda $ ImmMsbLabel labelName
+    sta $ OpAbs $ AddrLit16 0x0315
+
+    -- NMI Vector -> Use symbolic LSB/MSB operands
+    lda $ ImmLsbLabel labelName
+    sta $ OpAbs $ AddrLit16 0x0318
+    lda $ ImmMsbLabel labelName
+    sta $ OpAbs $ AddrLit16 0x0319
+
+    -- BRK Vector -> Use symbolic LSB/MSB operands
+    lda $ ImmLsbLabel labelName
+    sta $ OpAbs $ AddrLit16 0x0316
+    lda $ ImmMsbLabel labelName
+    sta $ OpAbs $ AddrLit16 0x0317

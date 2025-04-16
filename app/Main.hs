@@ -140,7 +140,7 @@ mySimpleProgram01 = do
 main :: IO ()
 main = do
     opts <- execParser options
-    let initialStartAddress = 0x8000 -- Default start address if no ORG is used
+    let initialStartAddress = 0x800 -- Default start address if no ORG is used (BASIC loader -1)
     putStrLn $ "Attempting assembly (default start: $" ++ showHex initialStartAddress "" ++ ")"
     case runAssembler initialStartAddress horizontalBars of
       Left err -> putStrLn $ "Assembly failed: \n" ++ err

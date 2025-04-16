@@ -37,41 +37,57 @@ chunksOf n xs = let (ys, zs) = splitAt n xs in ys : chunksOf n zs
 
 -- --- Binary Generation (Pass 2) --- ZAKTUALIZOWANA
 
-unknownLbl l = "Pass 2 Error: Unknown label in branch '" ++ l ++ "'"
+unknownLbl l = "Pass 2 Error: Unknown label '" ++ l ++ "'"
 branchRange l pc o = "Pass 2 Error: Branch target out of range for '" ++ l ++ "' at PC " ++ hx pc ++ " (offset=" ++ show o ++ ")"
+overlapErr pc expected = "Pass 2 Error: Overlapping instructions detected at PC " ++ hx pc ++ " (expected " ++ hx expected ++ ")"
 
-generateBinary :: AsmState -> Either String [Word8]
-generateBinary finalState = foldl' processInstruction (Right []) (reverse $ asmCode finalState)
-  where labels = asmLabels finalState
-        calculateOffset :: ProgramCounter -> Label -> Either String Int8
-        calculateOffset pc targetLabel =
+-- generateBinary (Updated to handle ORG padding)
+generateBinary :: Word16 -> AsmState -> Either String [Word8]
+generateBinary startAddress finalState =
+    snd <$> foldl' processInstruction (Right (startAddress, [])) (reverse $ asmCode finalState)
+  where
+    labels = asmLabels finalState
+
+    calculateOffset :: ProgramCounter -> Label -> Either String Int8
+    calculateOffset pc targetLabel =
             case Map.lookup targetLabel labels of
                 Nothing -> Left $ unknownLbl targetLabel
                 Just targetAddr ->
                     let offset = fromIntegral targetAddr - fromIntegral (pc + 2)
                     in if offset >= -128 && offset <= 127
                        then Right (fromIntegral offset)
-                       else Left (branchRange targetLabel pc offset)
+                       else Left $ branchRange targetLabel pc offset
 
-        processInstruction :: Either String [Word8] -> (ProgramCounter, SymbolicInstruction) -> Either String [Word8]
-        processInstruction (Left err) _ = Left err
-        processInstruction (Right currentBytes) (pc, instruction) =
-            case instructionBytes pc instruction of
-                Left err       -> Left err
-                Right newBytes -> Right (currentBytes ++ newBytes)
+    processInstruction :: Either String (Word16, [Word8]) -> (ProgramCounter, SymbolicInstruction) -> Either String (Word16, [Word8])
+    processInstruction (Left err) _ = Left err
+    processInstruction (Right (expectedAddr, currentBytes)) (pc, instruction) = do
+        -- Calculate padding if needed
+        let gapSize = fromIntegral pc - fromIntegral expectedAddr
+        paddingBytes <- case compare gapSize 0 of
+            LT -> Left $ overlapErr pc expectedAddr -- Error if PC goes backward
+            EQ -> Right []                          -- No gap
+            GT -> Right $ replicate gapSize 0x00    -- Fill gap with 0x00
 
-        -- ZAKTUALIZOWANA: Używa generateInstructionBytes z Core
-        instructionBytes :: ProgramCounter -> SymbolicInstruction -> Either String [Word8]
-        instructionBytes _ (SLabelDef _) = Right [] -- Labels don't generate bytes
-        instructionBytes _ (SBytes bs) = Right bs
-        instructionBytes _ (SWords ws) = Right $ concatMap wordToBytesLE ws
-        instructionBytes _ (SDirective (DOrg _)) = Right [] -- ORG directive doesn't generate bytes
-        instructionBytes pc (SBranch bm targetLabel) =
-            calculateOffset pc targetLabel >>= \offset -> Right [branchOpcode bm, fromIntegral (offset :: Int8)]
-        instructionBytes _ (SIns m maybeOp) =
-            -- Używamy teraz funkcji pomocniczej zdefiniowanej w Core.hs
-            -- która korzysta z instructionTable
-            generateInstructionBytes m maybeOp finalState
+        -- Get bytes for the current instruction
+        newBytes <- instructionBytes pc instruction
+
+        -- Calculate the next expected address
+        let nextExpectedAddr = pc + fromIntegral (length newBytes)
+
+        -- Append padding and new bytes
+        Right (nextExpectedAddr, currentBytes ++ paddingBytes ++ newBytes)
+
+    instructionBytes :: ProgramCounter -> SymbolicInstruction -> Either String [Word8]
+    instructionBytes _ (SLabelDef _) = Right [] -- Labels don't generate bytes
+    instructionBytes _ (SBytes bs) = Right bs
+    instructionBytes _ (SWords ws) = Right $ concatMap wordToBytesLE ws
+    instructionBytes _ (SDirective (DOrg _)) = Right [] -- ORG directive doesn't generate bytes
+    instructionBytes pc (SBranch bm targetLabel) =
+        calculateOffset pc targetLabel >>= \offset -> Right [branchOpcode bm, fromIntegral (offset :: Int8)]
+    instructionBytes _ (SIns m maybeOp) =
+        -- Używamy teraz funkcji pomocniczej zdefiniowanej w Core.hs
+        -- która korzysta z instructionTable
+        generateInstructionBytes m maybeOp finalState
 
 
 -- --- Assembler Runner (UPDATED) ---
@@ -81,19 +97,17 @@ runAssembler initialStartAddr asmAction =
     let finalState = execState (unAsm asmAction) (initialAsmState initialStartAddr)
         orderedCode = reverse $ asmCode finalState
         -- Find the PC of the first instruction/data entry (ignoring labels/directives)
-        firstRealInstruction = find (\(_, instr) -> case instr of
-                                                      SLabelDef _ -> False
-                                                      SDirective _ -> False
-                                                      _ -> True) orderedCode
-        -- Determine the actual start address for formatting
-        actualStartAddress = case firstRealInstruction of
-                                Just (pc, _) -> pc
-                                Nothing      -> initialStartAddr -- Fallback if only labels/directives
-    in case generateBinary finalState of
+        firstRealInstructionPC = fst <$> find (\(_, instr) -> case instr of
+                                                                    SLabelDef _ -> False
+                                                                    SDirective _ -> False
+                                                                    _ -> True) orderedCode
+        -- Determine the actual start address for formatting and binary generation start point
+        actualStartAddress = fromMaybe initialStartAddr firstRealInstructionPC
+    in case generateBinary actualStartAddress finalState of -- Pass actualStartAddress
         Left err   -> Left err
         Right code -> Right (actualStartAddress, code, asmLabels finalState)
 
--- --- Formatting Utility (bez zmian) ---
+-- --- Formatting Utility ---
 formatHexBytes :: Word16 -> [Word8] -> String
 formatHexBytes startAddr bytes = unlines $ formatLines 16 (zip [startAddr..] bytes)
   where
