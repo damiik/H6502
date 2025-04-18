@@ -19,6 +19,7 @@ module Assembly.Core (
     pattern AbsXLit,
     pattern AbsXLabel,
     pattern ZPLabel,
+    pattern ZPAddr,
     zpLit,
     pattern Ind,
     pattern IndX,
@@ -55,7 +56,6 @@ module Assembly.Core (
     dw, -- Renamed
     string, -- Renamed
     immChar,
-    stringPETSCI, -- NEW: PETSCII string function
     stringC64, -- NEW: PETSCII string function for screen codes
     org, -- Renamed & Export the org directive function
     makeUniqueLabel,
@@ -194,6 +194,7 @@ pattern AbsXLabel :: Label -> Operand; pattern AbsXLabel l = OpAbsX (AddrLabel l
 pattern AbsYLit :: Word16 -> Operand; pattern AbsYLit v = OpAbsY (AddrLit16 v)
 pattern AbsYLabel :: Label -> Operand; pattern AbsYLabel l = OpAbsY (AddrLabel l)
 pattern ZPLabel :: Label -> Operand; pattern ZPLabel l = OpZP (AddrLabel l)
+pattern ZPAddr :: Word8 -> Operand; pattern ZPAddr l = OpZP (AddrLit8 l)
 zpLit :: Word8 -> Operand; zpLit v = OpZP (AddrLit16 (fromIntegral v))
 pattern ZPX :: AddressRef -> Operand; pattern ZPX r = OpZPX r
 pattern ZPY :: AddressRef -> Operand; pattern ZPY r = OpZPY r
@@ -375,20 +376,20 @@ string :: String -> Asm (); string str = let bytes = map (fromIntegral . ord) st
 
 immChar :: Char -> Operand; immChar v = OpImm (fromIntegral (ord v))
 
--- NEW: stringPETSCI function for PETSCII encoding
-stringPETSCI :: String -> Asm ()
-stringPETSCI str =
-  let
-    -- Simple PETSCII conversion (basic characters)
-    petscii :: Char -> Word8
-    petscii c = case c of
-      c' | isAsciiUpper c' -> fromIntegral (ord c' + 128) -- Uppercase letters
-        | isAsciiLower c' -> fromIntegral (ord c' - 32)  -- Lowercase to uppercase PETSCII
-      ' '      -> 32                         -- Space
-      _        -> fromIntegral (ord c)       -- Other characters (basic assumption)
-    bytes = map petscii str
-    size = fromIntegral $ length bytes
-  in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
+-- -- NEW: stringPETSCI function for PETSCII encoding
+-- stringPETSCI :: String -> Asm ()
+-- stringPETSCI str =
+--   let
+--     -- Simple PETSCII conversion (basic characters)
+--     petscii :: Char -> Word8
+--     petscii c = case c of
+--       c' | isAsciiUpper c' -> fromIntegral (ord c' + 128) -- Uppercase letters
+--         | isAsciiLower c' -> fromIntegral (ord c' - 32)  -- Lowercase to uppercase PETSCII
+--       ' '      -> 32                         -- Space
+--       _        -> fromIntegral (ord c)       -- Other characters (basic assumption)
+--     bytes = map petscii str
+--     size = fromIntegral $ length bytes
+--   in when (size > 0) $ emitGeneric (SBytes bytes) (Right size)
 
 stringC64 :: String -> Asm ()
 stringC64  str =
@@ -402,6 +403,14 @@ stringC64  str =
       | c == ' '             =  32                    -- Spacja: 32
       | c == '@'             =  0                     -- @: 0
       | c == '$'             =  36                    -- $: 36
+      | c == ','             =  44                    -- ,: 44
+      | c == '.'             =  46                    -- .: 46
+      | c == ':'             =  58                    -- :: 58
+      | c == ';'             =  59                    -- ;: 59
+      | c == '='             =  61                    -- =: 61
+      | c == '?'             =  63                    -- ?: 63
+      | c == '!'             =  33                    -- !: 33
+      | c == '#'             =  35                    -- #: 35
       | otherwise            =  63                    -- Nieobsługiwane znaki: ? (63)
     bytes = map asciiToScreencode str
     size = fromIntegral $ length bytes
@@ -582,35 +591,35 @@ ror (Just op) = emitIns ROR op
 data Conditions =
     IsNonZero   -- Z=0 (BNE) - Wynik ostatniej operacji nie był zerem
   | IsZero      -- Z=1 (BEQ) - Wynik ostatniej operacji był zerem
-  | IsCarryClear      -- C=0 (BCC) - Nie było przeniesienia
-  | IsCarrySet        -- C=1 (BCS) - Było przeniesienie
+  | IsNonCarry      -- C=0 (BCC) - Nie było przeniesienia
+  | IsCarry        -- C=1 (BCS) - Było przeniesienie
   | IsNegative  -- N=1 (BMI) - Wynik był ujemny (najstarszy bit ustawiony)
   | IsPositive  -- N=0 (BPL) - Wynik był dodatni lub zerowy (najstarszy bit wyczyszczony)
-  | IsOverflowClear   -- V=0 (BVC) - Nie było nadmiaru w operacji arytmetycznej ze znakiem
-  | IsOverflowSet     -- V=1 (BVS) - Był nadmiar w operacji arytmetycznej ze znakiem
+  | IsNonOverflow   -- V=0 (BVC) - Nie było nadmiaru w operacji arytmetycznej ze znakiem
+  | IsOverflow     -- V=1 (BVS) - Był nadmiar w operacji arytmetycznej ze znakiem
   deriving (Eq, Show)
 
 -- Funkcja generująca odpowiedni skok warunkowy
 branchOnCondition :: Conditions -> Label -> Asm ()
 branchOnCondition IsNonZero target = emitBranch B_BNE target
 branchOnCondition IsZero    target = emitBranch B_BEQ target
-branchOnCondition IsCarryClear      target = emitBranch B_BCC target
-branchOnCondition IsCarrySet        target = emitBranch B_BCS target
+branchOnCondition IsNonCarry     target = emitBranch B_BCC target
+branchOnCondition IsCarry        target = emitBranch B_BCS target
 branchOnCondition IsNegative  target = emitBranch B_BMI target
 branchOnCondition IsPositive  target = emitBranch B_BPL target
-branchOnCondition IsOverflowClear   target = emitBranch B_BVC target
-branchOnCondition IsOverflowSet     target = emitBranch B_BVS target
+branchOnCondition IsNonOverflow   target = emitBranch B_BVC target
+branchOnCondition IsOverflow     target = emitBranch B_BVS target
 
 -- Funkcja odwracająca warunek  
 invert :: Conditions -> Conditions
-invert IsNonZero = IsZero
-invert IsZero    = IsNonZero
-invert IsCarryClear      = IsCarrySet
-invert IsCarrySet        = IsCarryClear
-invert IsNegative  = IsPositive
-invert IsPositive  = IsNegative
-invert IsOverflowClear   = IsOverflowSet
-invert IsOverflowSet     = IsOverflowClear
+invert IsNonZero     = IsZero
+invert IsZero        = IsNonZero
+invert IsNonCarry    = IsCarry
+invert IsCarry       = IsNonCarry
+invert IsNegative    = IsPositive
+invert IsPositive    = IsNegative
+invert IsNonOverflow = IsOverflow
+invert IsOverflow    = IsNonOverflow
 
 -- Opcjonalne synonimy wzorców dla czytelności (syntax sugar)
 pattern AccIsZero      :: Conditions

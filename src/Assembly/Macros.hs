@@ -24,10 +24,12 @@ module Assembly.Macros (
     makeUniqueLabel,
     waitRaster,
     cmp_r, cmp_y, cmp_x, sta_rb, sta_rw, add_rrw, sta_zw, add_zrw, sta_zrw, add_zzw,
+    sta_ob,
     copyBlock,
     fillScreen,
     decsum, binsum,
     configureVectors,
+    printChar
 ) where
 
 --import Assembly.List (forEach, forEachListWithIndex, mapListInPlace, mapListToNew, filterList, foldList, filterMoreThan, sumList)
@@ -77,6 +79,7 @@ import Assembly.Core
       Operand(..), -- Import all constructors
       pattern Imm, -- Import the pattern synonym
       pattern AbsLabel,
+      pattern ZPAddr,
       pattern ImmLsbLabel, -- Import the new pattern synonym
       pattern ImmMsbLabel, -- Import the new pattern synonym
       (.+), -- Import renamed operator
@@ -91,7 +94,7 @@ import Assembly.Core
       )
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
-import C64 (vicRaster)
+import C64 (vicRaster, screenRam, colorRam)
 
 -- zmienne lokalne na stronie zerowej 
 -- te adresy mogą się pokrywać z innmi zmiennymi lokalnymi
@@ -560,6 +563,12 @@ sta_rb op value = do
     lda $ Imm value        -- Reset delay counter
     sta $ OpAbs op
 
+sta_ob :: Operand -> Word8 -> Asm() -- op <- value :: Word8
+sta_ob op value = do
+    lda $ Imm value        -- Reset delay counter
+    sta op
+
+
 sta_rw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
 sta_rw op value = do
     lda $ Imm $ lsb value -- Lower byte
@@ -711,19 +720,27 @@ configureVectors addrRef = do
             _ -> error "configureVectors requires a label reference (AddrLabel or AddrLabelExpr (LabelRef ...))"
 
     -- IRQ Vector -> Use symbolic LSB/MSB operands
-    lda $ ImmLsbLabel labelName
-    sta $ OpAbs $ AddrLit16 0x0314
-    lda $ ImmMsbLabel labelName
-    sta $ OpAbs $ AddrLit16 0x0315
+    -- lda $ ImmLsbLabel labelName
+    -- sta $ OpAbs $ AddrLit16 0x0314
+    -- lda $ ImmMsbLabel labelName
+    -- sta $ OpAbs $ AddrLit16 0x0315
 
-    -- NMI Vector -> Use symbolic LSB/MSB operands
+    --NMI Vector -> Use symbolic LSB/MSB operands
+    -- $0318/$0319 is the RAM NMI vector, mirroring $FFFA/$FFFB.
     lda $ ImmLsbLabel labelName
     sta $ OpAbs $ AddrLit16 0x0318
     lda $ ImmMsbLabel labelName
     sta $ OpAbs $ AddrLit16 0x0319
 
     -- BRK Vector -> Use symbolic LSB/MSB operands
-    lda $ ImmLsbLabel labelName
-    sta $ OpAbs $ AddrLit16 0x0316
-    lda $ ImmMsbLabel labelName
-    sta $ OpAbs $ AddrLit16 0x0317
+    -- lda $ ImmLsbLabel labelName
+    -- sta $ OpAbs $ AddrLit16 0x0316
+    -- lda $ ImmMsbLabel labelName
+    -- sta $ OpAbs $ AddrLit16 0x0317
+
+printChar :: Word16 -> Word8 -> Asm()
+printChar textPos color = do
+    
+    sta $ OpAbsX (screenRam .+ textPos)    -- Store the character at the screen memory location
+    lda $ Imm color
+    sta $ OpAbsX (colorRam .+ textPos)    -- Store the color at the screen color memory location
