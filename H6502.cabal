@@ -28,6 +28,7 @@ library
       Lib
       Assembly
       Assembly.Core
+      Assembly.EDSLInstr
       Assembly.Macros
       Assembly.List
       C64

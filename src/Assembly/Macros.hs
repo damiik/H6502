@@ -29,47 +29,17 @@ module Assembly.Macros (
     fillScreen,
     decsum, binsum,
     configureVectors,
-    printChar
+    printChar,
+    printByte,
+    macrosLib
 ) where
 
 --import Assembly.List (forEach, forEachListWithIndex, mapListInPlace, mapListToNew, filterList, foldList, filterMoreThan, sumList)
 import Control.Monad.IO.Class (liftIO)
 import Data.Word (Word8, Word16)
 import Assembly.Core
-    ( adc,
-      bcc,
-      bcs,
-      beq,
-      bmi,
-      bne,
-      bpl,
-      bvc,
-      bvs,
-      clc,
-      cmp,
-      cpx,
-      cpy,
-      inx,
-      jmp,
-      jsr,
-      iny,
-      inx,
-      l_,
-      lda,
-      ldx,
-      ldy,
-      tya,
-      txa,
-      tax,
-      tay,
-      dex,
-      dey,
+    ( l_,
       makeUniqueLabel,
-      sta,
-      sed,
-      cld,
-      rts,
-      rti,
       zpLit,
       addr2word16,
       lsb,
@@ -88,10 +58,11 @@ import Assembly.Core
       ArithExpr(add, sub), -- Import the class methods if needed directly (unlikely)
       evalLabelExpr,
       LabelExpression(LabelRef),
-      while_,
-      doWhile_,
-      pattern IsNonZero
+      pattern IsNonZero,
+      pattern IsCarry,
+      Conditions(..) -- Ensure Conditions type is imported if needed by macros like while_
       )
+import Assembly.EDSLInstr 
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
 import C64 (vicRaster, screenRam, colorRam)
@@ -744,3 +715,79 @@ printChar textPos color = do
     sta $ OpAbsX (screenRam .+ textPos)    -- Store the character at the screen memory location
     lda $ Imm color
     sta $ OpAbsX (colorRam .+ textPos)    -- Store the color at the screen color memory location
+
+
+macrosLib = do
+    l_ "hundreds2Petscii"
+    hundreds2Petscii
+    l_ "tens2Petscii"
+    tens2Petscii
+
+-- returns petscii character of hundreds of value from accumulator
+-- returns rest of value in 0xf8
+hundreds2Petscii = do 
+
+    let count = ZPAddr 0xf7
+    let rest = ZPAddr 0xf8
+
+    -- sta rest
+    sta_ob count 0
+    lda rest
+    sec
+    sbc (Imm 100)
+    while_ IsCarry $ do
+        inc count
+        sbc (Imm 100)
+    adc (Imm 100) -- undo last dec
+    sta rest
+    lda count 
+    clc
+    adc (Imm 0x30)        -- Convert the count to ASCII     
+    rts
+
+-- return petscii character of tens of accumulator, (max value of accumulator have to be < 99)
+-- return rest of value in 0xf8
+
+tens2Petscii = do 
+
+    let count = ZPAddr 0xf7
+    let rest = ZPAddr 0xf8
+    
+    -- sta rest
+    sta_ob count 0
+    lda rest
+    sec
+    sbc (Imm 10)
+    while_ IsCarry $ do
+        inc count
+        sbc (Imm 10)
+    adc (Imm 10) -- undo last dec
+    sta rest
+    lda count 
+    clc
+    adc (Imm 0x30)        -- Convert the count to ASCII     
+    rts
+
+
+
+--- prints decimal byte at x y coords
+--- (needs *macrosLib*)
+printByte :: Word16 -> Word16 -> Word8 -> Asm()
+printByte x y color = do
+
+    let rest = ZPAddr 0xf8
+    let screenAddress = y * 0x40 P.+ x
+    jsr $ AbsLabel "hundreds2Petscii"
+
+    ldx (Imm 0)
+    printChar screenAddress color  --Print a character from the hellotext string at the specified position
+    jsr $ AbsLabel "tens2Petscii"
+    inx
+    printChar screenAddress color  --Print a character from the hellotext string at the specified position
+
+    lda rest   
+    clc
+    adc (Imm 0x30)  
+    inx
+    printChar screenAddress color  --Print a character from the hellotext string at the specified position
+    rts

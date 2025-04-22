@@ -1,6 +1,7 @@
 module C64.HelloWorld (helloWorld) where
 
 import Assembly.Core
+import Assembly.EDSLInstr
 import Assembly(Asm)
 import Assembly.Macros
 

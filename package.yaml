@@ -46,6 +46,7 @@ library:
   - Lib
   - Assembly
   - Assembly.Core   # Add the new Core module
+  - Assembly.EDSLInstr # reexported by Assembly
   - Assembly.Macros
   - Assembly.List
   - C64

@@ -2,12 +2,12 @@
 {-# LANGUAGE BinaryLiterals    #-}
 module C64.HorizontalBars (horizontalBars) where
 
-import Assembly.Core hiding (and) -- Hide Core's and if Prelude's is needed elsewhere, or qualify Core's usage
-import qualified Assembly.Core as C (and) -- Import qualified if needed
+import Prelude hiding (and) -- Hide Prelude's and
+import Assembly.Core
+import Assembly.EDSLInstr
 import Assembly(Asm)
 import Assembly.Macros
 import Data.Word (Word8, Word16) -- Added Word16
-import Prelude hiding (and) -- Hide Prelude's and
 import Data.Bits ((.|.), (.<<.), (.>>.), (.&.), shiftL, shiftR)
 import C64
 import Control.Monad
@@ -109,95 +109,185 @@ dstTemp :: AddressRef; dstTemp = AddrLit8 zpBase4 .+ 0x06 -- 2
 -- --- Definicja zestawu znaków (UDG) ---
 -- Znak 0
 udgData :: [Word8]
-udgData = [ 0b00000000  -- 0x81
-           , 0b00000000  -- 0x42
-           , 0b00000000  -- 0x24
-           , 0b00000000  -- 0x18
-           , 0b00000000  -- 0x24
-           , 0b00000000  -- 0x42
-           , 0b00000000  -- 0x81
-           , 0b00000000  -- 0x00
+udgData = [ 0b00000000  -- 0
+           , 0b00000000 
+           , 0b00000000 
+           , 0b00000000 
+           , 0b00000000 
+           , 0b00000000 
+           , 0b00000000 
+           , 0b00000000 
            ] ++
 
-           [ 0b00011000 -- 0x81 -- 1
-           , 0b00011000 -- 0x42
-           , 0b00111100 -- 0x24 
-           , 0b01111110 -- 0x18
-           , 0b11111111 -- 0x18
-           , 0b11111111 -- 0x24
-           , 0b01100110 -- 0x42
-           , 0b01100110 -- 0x81
+           [ 0b00011000 -- 1
+           , 0b00011000
+           , 0b00111100
+           , 0b01111110
+           , 0b11111111
+           , 0b11111111
+           , 0b01100110
+           , 0b01100110
            ] ++
            
-           [ 0b00110000 -- 0x81 --2
-           , 0b11111000 -- 0x42
-           , 0b11111100 -- 0x24 
-           , 0b00111111 -- 0x18
-           , 0b00111111 -- 0x18
-           , 0b11111100 -- 0x24
-           , 0b11111000 -- 0x42
-           , 0b00110000 -- 0x81
+           [ 0b00110000 -- 2
+           , 0b11111000
+           , 0b11111100
+           , 0b00111111
+           , 0b00111111
+           , 0b11111100
+           , 0b11111000
+           , 0b00110000
            ] ++
 
-           [ 0b00000000 -- 0x81 --3
-           , 0b00001110 -- 0x42
-           , 0b00011110 -- 0x24 
-           , 0b00111111 -- 0x18
-           , 0b01111111 -- 0x18
-           , 0b01111110 -- 0x24
-           , 0b01100110 -- 0x42
-           , 0b01100110 -- 0x81
+           [ 0b00000000 -- 3
+           , 0b00001110
+           , 0b00011110
+           , 0b00111111
+           , 0b01111111
+           , 0b01111110
+           , 0b01100110
+           , 0b01100110
            ] ++
 
-           [ 0b00000000 -- 0x81 --4
-           , 0b00000000 -- 0x42
-           , 0b00000000 -- 0x24 
-           , 0b00001000 -- 0x18
-           , 0b00111110 -- 0x18
-           , 0b00001000 -- 0x24
-           , 0b00000000 -- 0x42
-           , 0b00000000 -- 0x81
+           [ 0b00000000 -- 4
+           , 0b00000000
+           , 0b00000000
+           , 0b00001000
+           , 0b00111110
+           , 0b00001000
+           , 0b00000000
+           , 0b00000000
            ] ++
 
-           [ 0b00000000 -- 0x81 --5
-           , 0b00000000 -- 0x42
-           , 0b00000100 -- 0x24 
-           , 0b00000000 -- 0x18
-           , 0b01100000 -- 0x18
-           , 0b01100000 -- 0x24
-           , 0b00000000 -- 0x42
-           , 0b00010000 -- 0x81
+           [ 0b00000000 -- 5
+           , 0b00000000
+           , 0b00000100
+           , 0b00000000
+           , 0b01100000
+           , 0b01100000
+           , 0b00000000
+           , 0b00010000
            ] ++
 
-
-           [ 0b00000000 -- 0x81 --6
-           , 0b00000000 -- 0x42
-           , 0b00000000 -- 0x24 
-           , 0b00001000 -- 0x18
-           , 0b00111110 -- 0x18
-           , 0b00001000 -- 0x24
-           , 0b00000000 -- 0x42
-           , 0b00000000 -- 0x81
+           [ 0b00000000 -- 6
+           , 0b00000000
+           , 0b00000000
+           , 0b00001000
+           , 0b00111110
+           , 0b00001000
+           , 0b00000000
+           , 0b00000000
            ] ++
 
-           [ 0b00000000 -- 0x81 --7
-           , 0b00000000 -- 0x42
-           , 0b00000100 -- 0x24 
-           , 0b00000000 -- 0x18
-           , 0b01100000 -- 0x18
-           , 0b01100000 -- 0x24
-           , 0b00000000 -- 0x42
-           , 0b00010000 -- 0x81
+           [ 0b00000000 -- 7
+           , 0b00000000
+           , 0b00000100
+           , 0b00000000
+           , 0b01100000
+           , 0b01100000
+           , 0b00000000
+           , 0b00010000
            ] ++
 
-           [ 0b11111111 -- 0x81 --8
-           , 0b11111111 -- 0x42
-           , 0b10111101 -- 0x24 
-           , 0b11100111 -- 0x18
-           , 0b11100111 -- 0x18
-           , 0b10111101 -- 0x24
-           , 0b11111111 -- 0x42
-           , 0b11111111 -- 0x81
+           [ 0b11111111 -- 8
+           , 0b11111111
+           , 0b10111101
+           , 0b11100111
+           , 0b11100111
+           , 0b10111101
+           , 0b11111111
+           , 0b11111111
+           ] ++
+           (replicate (8 * 39) 0xaa) ++
+           [ 0b00110110 -- 48 ("0")
+           , 0b01100011
+           , 0b01100011
+           , 0b01100011
+           , 0b01100011
+           , 0b00110110
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00001111 -- 49 ("1")
+           , 0b00000011
+           , 0b00000011
+           , 0b00000011
+           , 0b00000011
+           , 0b00000011
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00111110 -- 50 ("2")
+           , 0b01100011
+           , 0b00000111
+           , 0b00011100
+           , 0b01110000
+           , 0b01111111
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00111110 -- 51 ("3")
+           , 0b01100011
+           , 0b00001110
+           , 0b00000011
+           , 0b01100011
+           , 0b00111110
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00000011 -- 52 ("4")
+           , 0b00011011
+           , 0b00110011
+           , 0b01111111
+           , 0b00000011
+           , 0b00000011
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b01111111 -- 53 ("5")
+           , 0b01100000
+           , 0b01111110
+           , 0b00000011
+           , 0b01100011
+           , 0b00111110
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00011111 -- 54 ("6")
+           , 0b00110000
+           , 0b01110110
+           , 0b01100011
+           , 0b01100011
+           , 0b00110110
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b01111111 -- 55 ("7")
+           , 0b00000011
+           , 0b00000110
+           , 0b00001100
+           , 0b00011000
+           , 0b00011000
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00110110 -- 56 ("8")
+           , 0b01100011
+           , 0b00110110
+           , 0b01100011
+           , 0b01100011
+           , 0b00110110
+           , 0b00000000
+           , 0b00000000
+           ] ++
+           [ 0b00110110 -- 57 ("9")
+           , 0b01100011
+           , 0b01100011
+           , 0b00110111
+           , 0b00000110
+           , 0b00111100
+           , 0b00000000
+           , 0b00000000
            ]
 
 -- --- Definicja dużej mapy ---
@@ -206,7 +296,7 @@ largeMapPattern :: [Word8]
 largeMapPattern =  
 
         [8, 8, 8, 8, 8, 8, 8, 8, 8, 0, 0, 0, 0, 0, 0, 0, 
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+         48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 0, 0, 0, 0, 0, 0, 
          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
         [8, 8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
@@ -289,7 +379,7 @@ scrollColors :: AddressRef -> Asm ()
 scrollColors addr = do
     inc $ OpAbs scrollOffset   -- Increment scroll offset
     lda $ OpAbs scrollOffset
-    C.and $ Imm 0x0f     -- Limit to 16 positions (0-15) -- Use qualified C.and
+    and $ Imm 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
     tax                  -- Store current scroll offset in Y
     ldy $ Imm 0x00
     doWhile_ IsNonZero $ do
@@ -302,7 +392,7 @@ initGame :: Asm ()
 initGame = do
     -- Ustaw bank VIC
     lda $ OpAbs vicBankSelect
-    C.and $ Imm 0b11111100
+    and $ Imm 0b11111100 -- Use EDSL 'and'
     ora $ Imm 0b00000011
     sta $ OpAbs vicBankSelect
 
@@ -357,9 +447,76 @@ horizontalBars = do
     -- let addr = addr2word16 $ AddrLabelExpr $ LabelRef "dummyVector"
 
     initGame
-    -- configureVectors (AddrLabelExpr $ LabelRef "dummyVector")
+    configureVectors (AddrLabelExpr $ LabelRef "dummyVector")
 
     l_ "main_loop"
+
+    ldx $ Imm 0x00 -- Initialize x register to -1
+    lda $ AbsXLabel "helloText"   -- set zero flag
+    while_ IsNonZero $ do
+        printChar 10 _BLACK  --Print a character from the hellotext string at the specified position
+        inx
+        lda $ AbsXLabel "helloText"  -- set zero flag
+
+
+    l_ "scan_keyboard"
+    let scanKeycode = ZPAddr 0xf8
+    jsr $ AbsLabel "scanKeyboard"
+    lda scanKeycode
+    jsr $ AbsLabel "printByte"
+    
+    
+    -- let count = ZPAddr 0xf7  -- ZPAddr makes operand directly from Word8
+    -- let rest = ZPAddr 0xf8
+
+    -- sta_ob count 0
+    -- lda scanKeycode
+
+    -- sec
+    -- sbc (Imm 100)
+    -- while_ IsCarry $ do
+    --     inc count
+    --     sbc (Imm 100)
+    -- adc (Imm 100) -- undo last dec
+    -- sta rest
+
+    -- ldx (Imm 0)
+    -- lda count 
+    -- clc
+    -- adc (Imm 0x30)        -- Convert the count to ASCII 
+    -- printChar 10 _YELLOW  --Print a character from the hellotext string at the specified position
+
+    -- sta_ob count 0
+    -- lda rest
+    -- sec
+    -- sbc (Imm 10)
+    -- while_ IsCarry $ do
+    --     inc count
+    --     sbc (Imm 10)
+    --     sta rest
+    -- clc
+    -- adc (Imm 10) -- undo last dec
+    -- sta rest
+
+    -- ldx (Imm 1)
+    -- lda count 
+    -- clc
+    -- adc (Imm 0x30)       
+    -- printChar 10 _PINK  --Print a character from the hellotext string at the specified position
+
+
+    -- ldx (Imm 2)
+    -- lda rest   
+    -- clc
+    -- adc (Imm 0x30)  
+    -- printChar 10 _LIGHT_BLUE  --Print a character from the hellotext string at the specified position
+
+
+    -- cmp (Imm _KEY_SPACE)
+    -- beq "main_loop"
+
+    jmp $ AbsLabel "scan_keyboard"
+    macrosLib
 
     -- jsr $ OpAbs kernalGetin -- Wynik (PETSCII) w Akumulatorze
     -- Jeśli A = 0, żaden klawisz nie wciśnięty (GETIN czeka)
@@ -430,9 +587,9 @@ horizontalBars = do
 
     inc $ OpAbs lastColor
     lda $ OpAbs lastColor
-    C.and $ Imm 0x0f     -- Limit to 16 positions (0-15) -- Use qualified C.and
+    and $ Imm 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
     sta $ OpAbs lastColor
-    sta $ OpAbs scrollOffset 
+    sta $ OpAbs scrollOffset
 
 
 
@@ -446,7 +603,7 @@ horizontalBars = do
     doWhileNz (inx) $ do
         txa                -- Use index as color base
         replicateM_ 6 $ ror Nothing -- Rotate right 6 times
-        C.and $ Imm 0x0f     -- Limit to 16 colors (0-15) -- Use qualified C.and
+        and $ Imm 0x0f     -- Limit to 16 colors (0-15) -- Use EDSL 'and'
         sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam)      -- First quarter (0-249)
         sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam + 250) -- Second quarter (250-499)
         sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam + 500) -- Third quarter (500-749)
@@ -460,7 +617,7 @@ horizontalBars = do
     rts
 
     l_ "delay"
-    replicateM_ 400 $ C.and $ Imm 0xef
+    replicateM_ 400 $ and $ Imm 0xef -- Use EDSL 'and'
     rts
 
 
@@ -512,7 +669,7 @@ horizontalBars = do
         -- Kopiowanie kolumn - użycie pętli doWhile_
         ldy $ Imm 0
         clc                            -- Ustaw Carry na 0
-        doWhile_ IsCarryClear $ do     -- Pętla wykonuje się, dopóki Y < screenWidthChars
+        doWhile_ IsNonCarry $ do     -- Pętla wykonuje się, dopóki Y < screenWidthChars
 
             -- Kopiuj znak
             lda $ IndY mapSrcPtr       -- Czytaj z mapy źródłowej [mapSrcPtr],Y
@@ -536,6 +693,10 @@ horizontalBars = do
         -- Zmniejsz licznik wierszy
         dec $ OpZP rowCounter -- dec ustawia flagę Z, gdy licznik osiągnie 0
     rts
+    l_ "scanKeyboard"
+    scanKeyboard
+    l_ "printByte"
+    printByte 1 15 _YELLOW
 
     --org 0x1800
     l_ "dummyVector"
@@ -547,6 +708,9 @@ horizontalBars = do
         _LIGHT_GREEN, _YELLOW, _ORANGE, _PINK, 
         _PURPLE, _PINK, _ORANGE, _YELLOW, 
         _LIGHT_GREEN, _GREEN, _CYAN, _BLUE ] -- Color data
+
+    l_ "helloText"
+    stringC64 "Hello, World!"; db [0x00]
 
     -- replicateM_ 0x94A $ db [0x00 :: Word8] -- Padding to fill the rest of the program
 

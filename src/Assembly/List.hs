@@ -20,8 +20,9 @@ module Assembly.List (
 import Data.Word (Word8, Word16)
 import Data.Char (ord)
 import qualified Data.Foldable as String
-import Assembly.Core hiding (LabelAdd) -- Hide Core's LabelAdd if needed
+import Assembly.Core hiding (LabelAdd, lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty, cmp, cpx, cpy, txa, tya, txs, tsx, bne, beq, bcs, bcc, bmi, bpl, bvs, bvc, jsr, rts, ora, asl, php, clc, and, bit, rol, ror, plp, sec, rti, eor, lsr, pha, cli, pla, sei, dey, clv, iny, dex, cld, nop, sed, inc, dec, brk) -- Hide Core's LabelAdd and remove aliases
 import qualified Assembly.Core as C (LabelExpression(LabelAdd), (.+)) -- Import renamed operator (.+)
+import Assembly.EDSLInstr (lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty, cmp, cpx, cpy, txa, tya, txs, tsx, bne, beq, bcs, bcc, bmi, bpl, bvs, bvc, jsr, rts, ora, asl, php, clc, and, bit, rol, ror, plp, sec, rti, eor, lsr, pha, cli, pla, sei, dey, clv, iny, dex, cld, nop, sed, inc, dec, brk) -- Import EDSL aliases
 import Assembly.Macros (addAto16bit) -- Import the updated macro
 import Prelude
 

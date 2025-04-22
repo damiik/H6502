@@ -1,4 +1,5 @@
 import Assembly.Core hiding ( LabelExpression(..), ArithExpr(add, sub), org) -- Hide Core's renamed operators, LabelAdd, and org if needed
+import Assembly.EDSLInstr
 import qualified Assembly.Core as C ( ArithExpr(add, sub), LabelExpression(LabelAdd)) -- Import only needed qualified names
 import Assembly(Asm, runAssembler, generateBinary, formatHexBytes, formatBasic, org) -- Import org and formatBasic from Assembly
 import Assembly.List(createList, createList_, createListFromString, addToList, copyList, filterMoreThanList, sumList) -- Import from Assembly.List instead

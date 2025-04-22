@@ -72,13 +72,44 @@ module C64 (
     _KEY_F3,
     _KEY_F5,
     _KEY_F7,
+    _SPRITE_0_COLOR_REGISTER,
+    _SPRITE_1_COLOR_REGISTER,
+    _SPRITE_2_COLOR_REGISTER,
+    _SPRITE_3_COLOR_REGISTER,
+    _SPRITE_4_COLOR_REGISTER,
+    _SPRITE_5_COLOR_REGISTER,
+    _SPRITE_6_COLOR_REGISTER,
+    _SPRITE_7_COLOR_REGISTER,
+    _SPRITE_MULTICOLOR_REGISTERS,
+    _SPRITE_ENABLE_REGISTER,
+    _SPRITE_MC0,
+    _SPRITE_MC1,
+    _SP0X,
+    _SP0Y,
+    _SP1X,
+    _SP1Y,
+    _SP2X,
+    _SP2Y,
+    _SP3X,
+    _SP3Y,
+    _SP4X,
+    _SP4Y,
+    _SP5X,
+    _SP5Y,
+    _SP6X,
+    _SP6Y,
+    _SP7X,
+    _SP7Y,
+
+
 
 
 ) where
+import Prelude hiding (and) -- Hide 'and' from Prelude
 import Control.Monad (replicateM_)
 import Data.Word
-import Assembly.Core hiding (and)
-import qualified Assembly.Core as C (and)
+import Assembly.Core
+import Assembly.EDSLInstr 
 
 
 
@@ -283,7 +314,7 @@ scanKeyboard = do
         while_ IsNonCarry $  do         --; X < 8
 
             lda dataPortB
-            C.and $ Imm 0x01
+            and $ Imm 0x01 -- Use 'and' directly from EDSLInstr
             if_ IsZero $ do             --; found keycode = Y*8 + X
                 tya
                 asl Nothing
@@ -389,3 +420,53 @@ defineKeyboardData = do
 --    -- ... reszta programu ...
 --    jsr "scanKeys" -- Wywołanie skanowania
     -- ... sprawdzenie stanu w keyMatrixState ...
+
+
+
+_SPRITE_POINTERS                     = 0x07f8 -- 2040
+
+--; ----------------------------------------------------------
+--; VIC-II Video Display
+--; $D000-$D3FF, 53248-54271
+--; ----------------------------------------------------------
+
+--; Sprite horizontal and vertical position registers
+_SP0X                                = 0xd000 -- 53248
+_SP0Y                                = 0xd001 -- 53249
+_SP1X                                = 0xd002 -- 53250
+_SP1Y                                = 0xd003 -- 53251
+_SP2X                                = 0xd004 -- 53252
+_SP2Y                                = 0xd005 -- 53253
+_SP3X                                = 0xd006 -- 53254
+_SP3Y                                = 0xd007 -- 53255
+_SP4X                                = 0xd008 -- 53256
+_SP4Y                                = 0xd009 -- 53257
+_SP5X                                = 0xd00A -- 53258
+_SP5Y                                = 0xd00B -- 53259
+_SP6X                                = 0xd00C -- 53260
+_SP6Y                                = 0xd00D -- 53261
+_SP7X                                = 0xd00E -- 53262
+_SP7Y                                = 0xd00F -- 53263
+
+--; Most significant bits of sprites 0-7 horizontal positions
+_MSIGX                               = 0xd010 -- 53264
+
+--; Sprite enable register
+_SPRITE_ENABLE_REGISTER              = 0xd015 -- 53269
+
+--; Multicolor registers
+_SPRITE_MULTICOLOR_REGISTERS         = 0xd01c -- 53276
+
+--; Sprite Multicolor
+_SPRITE_MC0                          = 0xd025 -- 53285
+_SPRITE_MC1                          = 0xd026 -- 53286
+
+--; Sprite color registers
+_SPRITE_0_COLOR_REGISTER             = 0xd027 -- 53287
+_SPRITE_1_COLOR_REGISTER             = 0xd028 -- 53288
+_SPRITE_2_COLOR_REGISTER             = 0xd029 -- 53289
+_SPRITE_3_COLOR_REGISTER             = 0xd02a -- 53290
+_SPRITE_4_COLOR_REGISTER             = 0xd02b -- 53291
+_SPRITE_5_COLOR_REGISTER             = 0xd02c -- 53292
+_SPRITE_6_COLOR_REGISTER             = 0xd02d -- 53293
+_SPRITE_7_COLOR_REGISTER             = 0xd02e -- 53294
