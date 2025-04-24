@@ -97,6 +97,11 @@ mapColorSrcPtr :: AddressRef; mapColorSrcPtr = AddrLit8  zpBase3 .+ 0x05 -- 2
 screenDstPtr :: AddressRef; screenDstPtr = AddrLit8 zpBase3 .+ 0x07 -- 2
 colorDstPtr :: AddressRef; colorDstPtr = AddrLit8 zpBase3 .+ 0x09 -- 2
 
+-- mapScrPtrAbs :: AddressRef; mapScrPtrAbs = AddrLit16 (fromIntegral zpBase3) .+ 0x0B -- 2
+-- mapColPtrAbs :: AddressRef; mapColPtrAbs = AddrLit16 (fromIntegral zpBase3) .+ 0x0D -- 2
+-- screenDstPtrAbs :: AddressRef; screenDstPtrAbs = AddrLit16 (fromIntegral zpBase3) .+ 0x0F -- 2
+-- colorDstPtrAbs :: AddressRef; colorDstPtrAbs = AddrLit16 (fromIntegral zpBase3) .+ 0x11 -- 2
+
 -- temporary variables on zero page
 zpBase4 :: Word8
 zpBase4 = 0xF7      -- $F7-$FE
@@ -377,54 +382,60 @@ largeMapColors = take (fromIntegral mapTotalSize) $ cycle [_CYAN, _YELLOW, _GREE
 
 scrollColors :: AddressRef -> Asm ()
 scrollColors addr = do
-    inc $ OpAbs scrollOffset   -- Increment scroll offset
-    lda $ OpAbs scrollOffset
-    and $ Imm 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
+    inc scrollOffset   -- Increment scroll offset
+    lda scrollOffset
+    and # 0x0f    -- Limit to 16 positions (0-15) -- Use EDSL 'and'
     tax                  -- Store current scroll offset in Y
-    ldy $ Imm 0x00
+    ldy # 0x00
     doWhile_ IsNonZero $ do
-        lda $ AbsXLabel "colors_list" -- Get color from list, for x indexed by y
-        sta $ OpAbsY addr -- Write color to COLOR_RAM[y]
+        lda $  X ("colors_list"::String) -- Get color from list, for x indexed by y
+        sta (Y addr) -- Write color to COLOR_RAM[y]
         iny
         cmp_y 80
 
+
 initGame :: Asm ()
 initGame = do
+
+    -- Initialize zero page variables
+    sta_rb scrollOffset 0
+    sta_rb lastColor 0
+
     -- Ustaw bank VIC
-    lda $ OpAbs vicBankSelect
-    and $ Imm 0b11111100 -- Use EDSL 'and'
-    ora $ Imm 0b00000011
-    sta $ OpAbs vicBankSelect
+    lda vicBankSelect
+    and # 0b11111100 -- Use EDSL 'and'
+    ora # 0b00000011
+    sta vicBankSelect
 
     -- Skonfiguruj VIC dla pamięci ekranu i zestawu znaków
     -- Ekran @ $0400 => Bity 7-4 = %0001 (adres / 1024 = 1)
     -- Bit 0 = 0 (standard hires character mode)
     -- Całość: %00011000 = $18
-    lda $ Imm (0b00010000 .|. (lsb ((addr2word16 charsetRam) .>>. 10)))
+    lda # (0b00010000 .|. (lsb ((addr2word16 charsetRam) .>>. 10)))
     -- lda $ Imm 0x18
-    sta $ OpAbs vicMemoryControl -- vicMemoryControl = Addr 0xD018
+    sta vicMemoryControl -- vicMemoryControl = Addr 0xD018
 
 
     -- Skopiuj dane UDG
     -- copyBlock charsetRam (AddrLabel "udgDataSource") (fromIntegral $ length udgData0 + length udgData1)
 
     -- Wyczyść ekran
-    jsr $ OpAbs kernalClrscr
+    --jsr kernalClrscr
 
     -- Ustaw kolory
-    lda $ Imm  _BLACK
-    sta $ OpAbs vicBorderColor
-    sta $ OpAbs vicBackgroundColor
+    sta_rb vicBorderColor _DARK_GREY
+    sta_rb vicBackgroundColor _BLACK
 
     -- Zainicjuj pozycję przewijania
-    lda $ Imm 0
-    sta $ OpZP scrollX
-    sta $ OpZP scrollY
+    lda # 0
+    sta scrollX
+    sta scrollY
 
     -- Skopiuj początkowy widok mapy
-    jsr $ AbsLabel "copyVisibleMap"
+    jsr ("copyVisibleMap"::String)
 
     cli
+
 
 -- The main assembly programB
 horizontalBars :: Asm ()
@@ -436,12 +447,7 @@ horizontalBars = do
     org baseCodeAddr -- Ustawienie adresu początkowego dla programu
     l_ "start"
     sei                -- Disable interrupts
-    
-    sta_rb vicBorderColor _DARK_GREY
-    sta_rb vicBackgroundColor _DARK_GREY
-    -- Initialize zero page variables
-    sta_rb scrollOffset 0
-    sta_rb lastColor 0
+
 
     --let addr = addr2word16 $ AddrLabelExpr $ LabelRef "dummyVector"
     -- let addr = addr2word16 $ AddrLabelExpr $ LabelRef "dummyVector"
@@ -451,20 +457,30 @@ horizontalBars = do
 
     l_ "main_loop"
 
-    ldx $ Imm 0x00 -- Initialize x register to -1
-    lda $ AbsXLabel "helloText"   -- set zero flag
+    ldx # 0x00 -- Initialize x register to -1
+    lda (X ("helloText"::String))   -- set zero flag
     while_ IsNonZero $ do
         printChar 10 _BLACK  --Print a character from the hellotext string at the specified position
         inx
-        lda $ AbsXLabel "helloText"  -- set zero flag
+        lda (X ("helloText"::String))   -- set zero flag
 
 
     l_ "scan_keyboard"
-    let scanKeycode = ZPAddr 0xf8
-    jsr $ AbsLabel "scanKeyboard"
-    lda scanKeycode
-    jsr $ AbsLabel "printByte"
+    let scanKeycode = AddrLit8 0xf8 -- AddLit8 makes ZP address operand directly from Word8
+    jsr ("scanKeyboard"::Label)
     
+    lda scanKeycode
+    cmp# _KEY_S
+    if_ IsZero $ do
+        add_rb scrollY 1
+
+    lda scanKeycode
+    cmp# _KEY_D
+    if_ IsZero $ do
+        add_rb scrollX 1
+
+    lda scanKeycode
+    jsr ("printByte"::Label)
     
     -- let count = ZPAddr 0xf7  -- ZPAddr makes operand directly from Word8
     -- let rest = ZPAddr 0xf8
@@ -515,8 +531,8 @@ horizontalBars = do
     -- cmp (Imm _KEY_SPACE)
     -- beq "main_loop"
 
-    jmp $ AbsLabel "scan_keyboard"
-    macrosLib
+    -- jmp ("scan_keyboard"::Label)
+    -- macrosLib
 
     -- jsr $ OpAbs kernalGetin -- Wynik (PETSCII) w Akumulatorze
     -- Jeśli A = 0, żaden klawisz nie wciśnięty (GETIN czeka)
@@ -555,91 +571,91 @@ horizontalBars = do
 
     sta_rb delayCounter 80
     doWhile_ IsNonZero $ do
-         jsr $ AbsLabel "delay" -- Delay loop
-         dec $ OpAbs delayCounter 
+         jsr ("delay"::Label) -- Delay loop
+         dec delayCounter 
 
-    jsr $ AbsLabel "copyVisibleMap" -- Fill screen with initial bars
+    jsr ("copyVisibleMap"::Label) -- Fill screen with initial bars
     scrollColors colorRam
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0028)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0050)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0078)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x00a0)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x00c8)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x00f0)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0118)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0140)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0168)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0190)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x01b8)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x01e0)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0208)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0230)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0258)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0280)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x02a8)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x02d0)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x02f8)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0320)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0348)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0370)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x0398)
-    scrollColors $ AddrLit16 ( addr2word16 colorRam + 0x03c0)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0028)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0050)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0078)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00a0)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00c8)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00f0)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0118)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0140)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0168)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0190)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x01b8)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x01e0)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0208)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0230)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0258)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0280)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02a8)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02d0)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02f8)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0320)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0348)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0370)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0398)
+    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x03c0)
 
-    inc $ OpAbs lastColor
-    lda $ OpAbs lastColor
-    and $ Imm 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
-    sta $ OpAbs lastColor
-    sta $ OpAbs scrollOffset
-
-
+    inc lastColor
+    lda lastColor
+    and# 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
+    sta lastColor
+    sta scrollOffset
 
     -- jsr $ AbsLabel "copyVisibleMap" -- Fill screen with initial bars
-    jmp $ AbsLabel "main_loop"
+    jmp ("main_loop"::Label)
+    macrosLib
 
 
     -- Subroutine: Fill Screen with Bars
     l_ "fill_screen"
-    ldx $ Imm 0        -- Fill entire color RAM (implicitly 1000 bytes, but loop handles 256)
+    ldx# 0        -- Fill entire color RAM (implicitly 1000 bytes, but loop handles 256)
     doWhileNz (inx) $ do
         txa                -- Use index as color base
-        replicateM_ 6 $ ror Nothing -- Rotate right 6 times
-        and $ Imm 0x0f     -- Limit to 16 colors (0-15) -- Use EDSL 'and'
-        sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam)      -- First quarter (0-249)
-        sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam + 250) -- Second quarter (250-499)
-        sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam + 500) -- Third quarter (500-749)
-        sta $ OpAbsX $ AddrLit16 (addr2word16 colorRam + 750) -- Fourth quarter (750-999)
+        replicateM_ 6 $ ror A_     -- Rotate right 6 times
+        and# 0x0f     -- Limit to 16 colors (0-15) -- Use EDSL 'and'
+        sta $ X (addr2word16 colorRam)      -- First quarter (0-249)
+        sta $ X (addr2word16 colorRam + 250) -- Second quarter (250-499)
+        sta $ X (addr2word16 colorRam + 500) -- Third quarter (500-749)
+        sta $ X (addr2word16 colorRam + 750) -- Fourth quarter (750-999)
 
-        lda $ Imm 0xA0 --immChar '='   -- Space character code
-        sta $ OpAbsX $ AddrLit16 (addr2word16 screenRam)
-        sta $ OpAbsX $ AddrLit16 (addr2word16 screenRam + 250)
-        sta $ OpAbsX $ AddrLit16 (addr2word16 screenRam + 500)
-        sta $ OpAbsX $ AddrLit16 (addr2word16 screenRam + 750)
+        lda# 0xA0 --immChar '='   -- Space character code
+        sta $ X (addr2word16 screenRam)
+        sta $ X (addr2word16 screenRam + 250)
+        sta $ X (addr2word16 screenRam + 500)
+        sta $ X (addr2word16 screenRam + 750)
     rts
 
     l_ "delay"
-    replicateM_ 400 $ and $ Imm 0xef -- Use EDSL 'and'
+    replicateM_ 400 $ and# 0xef -- Use EDSL 'and'
     rts
 
 
 
-    -- *** Podprogram Kopiowania Widocznego Fragmentu Mapy ***
+    -- Copy visible part of worldmap procedure
+    -- *scrollX* and *scrollY* are used for calculate starting worldmap address
     l_ "copyVisibleMap"
 
-    let temp = OpZP tmp16R1
-    let temp' = OpZP (tmp16R1 .+ 1)
+    let temp = tmp16R1
+    let temp' = tmp16R1 .+ 1
 
     -- Ustaw wskaźniki docelowe
     sta_rw screenDstPtr (addr2word16 screenRam)
     sta_rw colorDstPtr (addr2word16 colorRam)
 
     -- Oblicz adres początkowy w dużej mapie: largeMapData + scrollY * mapWidth + scrollX
-    lda $ OpZP scrollY
+    lda scrollY
     sta temp
-    lda $ Imm 0
+    lda# 0
     sta temp'
 
     -- Mnożenie * 64 (przesunięcie w lewo o 6) - użycie pętli doWhile_
-    ldx $ Imm 6
+    ldx# 6
     doWhile_ IsNonZero $ do  -- Pętla wykonuje się, dopóki X > 0
         asl $ Just temp
         rol $ Just temp'
@@ -647,61 +663,60 @@ horizontalBars = do
 
     -- Dodaj scrollX
     clc
-    lda $ OpZP scrollX
+    lda scrollX
     adc temp
     sta temp -- temp16 = offset(getZPAddr temp16)
-    lda $ Imm 0
+    lda# 0
     adc temp'
     sta temp' -- temp16 = offset
 
     -- Ustaw wskaźniki źródłowe
-    sta_zw mapSrcPtr largeMapDataAddr
-    add_zzw mapSrcPtr tmp16R1 
+    sta_rw mapSrcPtr largeMapDataAddr
+    add_rrw mapSrcPtr tmp16R1 
 
-    sta_zw mapColorSrcPtr largeMapColorAddr
-    add_zzw mapColorSrcPtr tmp16R1
+    sta_rw mapColorSrcPtr largeMapColorAddr
+    add_rrw mapColorSrcPtr tmp16R1
 
     -- Kopiowanie wiersz po wierszu - użycie pętli doWhile_
-    lda $ Imm screenHeightChars  -- set Z flag
-    sta $ OpZP rowCounter
+    lda# screenHeightChars  -- set Z flag
+    sta rowCounter
     doWhile_ IsNonZero $ do -- Pętla wykonuje się, dopóki rowCounter > 0
-
         -- Kopiowanie kolumn - użycie pętli doWhile_
-        ldy $ Imm 0
-        clc                            -- Ustaw Carry na 0
-        doWhile_ IsNonCarry $ do     -- Pętla wykonuje się, dopóki Y < screenWidthChars
-
+        ldy# 0
+        clc                             -- Ustaw Carry na 0
+        doWhile_ IsNonCarry $ do        -- Pętla wykonuje się, dopóki Y < screenWidthChars
             -- Kopiuj znak
-            lda $ IndY mapSrcPtr       -- Czytaj z mapy źródłowej [mapSrcPtr],Y
-            sta $ IndY screenDstPtr    -- Pisz do pamięci ekranu [screenDstPtr],Y
+            lda $ IY mapSrcPtr          -- Czytaj z mapy źródłowej [mapSrcPtr],Y
+            sta $ IY screenDstPtr       -- Pisz do pamięci ekranu [screenDstPtr],Y
             -- Kopiuj kolor
-            lda $ IndY mapColorSrcPtr  -- Czytaj z mapy kolorów [mapColorSrcPtr],Y
-            sta $ IndY colorDstPtr     -- Pisz do pamięci kolorów [colorDstPtr],Y
+            lda $ IY mapColorSrcPtr     -- Czytaj z mapy kolorów [mapColorSrcPtr],Y
+            sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
             iny
-            cpy $ Imm screenWidthChars -- Ustawia Carry, gdy Y >= screenWidthChars
+            cpy# screenWidthChars       -- Ustawia Carry, gdy Y >= screenWidthChars
 
         -- Przesuń wskaźniki źródłowe *mapSrcPtr* i *mapColorSrcPtr* o 1 wiersz
-        sta_zw tmp16R1 mapWidthChars    -- temp16 = mapWidthChars (64)
-        add_zzw mapSrcPtr tmp16R1       -- mapSrcPtr = mapSrcPtr + mapWidthChars
-        add_zzw mapColorSrcPtr tmp16R1  -- mapColorSrcPtr = mapColorSrcPtr + mapWidthChars
+        sta_rw tmp16R1 mapWidthChars    -- temp16 = mapWidthChars (64)
+        add_rrw mapSrcPtr tmp16R1       -- mapSrcPtr = mapSrcPtr + mapWidthChars
+        add_rrw mapColorSrcPtr tmp16R1  -- mapColorSrcPtr = mapColorSrcPtr + mapWidthChars
 
         -- Przesuń wskaźniki *screenDstPtr* i *colorDstPtr* na początek następnego wiersza ekranu
-        sta_zw tmp16R1 screenWidthChars  -- temp16 = screenWidthChars (40)
-        add_zzw screenDstPtr tmp16R1    -- screenDstPtr = screenDstPtr + screenWidthChars
-        add_zzw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
+        sta_rw tmp16R1 screenWidthChars -- temp16 = screenWidthChars (40)
+        add_rrw screenDstPtr tmp16R1    -- screenDstPtr = screenDstPtr + screenWidthChars
+        add_rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
 
         -- Zmniejsz licznik wierszy
-        dec $ OpZP rowCounter -- dec ustawia flagę Z, gdy licznik osiągnie 0
+        dec rowCounter                  -- dec ustawia flagę Z, gdy licznik osiągnie 0
     rts
+
     l_ "scanKeyboard"
     scanKeyboard
+
     l_ "printByte"
     printByte 1 15 _YELLOW
 
     --org 0x1800
     l_ "dummyVector"
     rti
- 
 
     l_ "colors_list"
     db [_LIGHT_BLUE, _BLUE, _CYAN, _GREEN,

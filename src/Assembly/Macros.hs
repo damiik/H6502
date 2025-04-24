@@ -23,8 +23,7 @@ module Assembly.Macros (
     -- Helper (potentially hide later)
     makeUniqueLabel,
     waitRaster,
-    cmp_r, cmp_y, cmp_x, sta_rb, sta_rw, add_rrw, sta_zw, add_zrw, sta_zrw, add_zzw,
-    sta_ob,
+    cmp_r, cmp_y, cmp_x, sta_rb, sta_rw, adc_rrw, add_rrw, adc_rb, add_rb, sta_rrw, 
     copyBlock,
     fillScreen,
     decsum, binsum,
@@ -44,6 +43,7 @@ import Assembly.Core
       addr2word16,
       lsb,
       msb,
+      Label,
       AddressRef(AddrLabel, AddrLit16, AddrLit8, AddrLabelExpr),
       Asm,
       Operand(..), -- Import all constructors
@@ -57,6 +57,7 @@ import Assembly.Core
       parens, -- Import parens if needed by macros (though unlikely)
       ArithExpr(add, sub), -- Import the class methods if needed directly (unlikely)
       evalLabelExpr,
+      resolveAddressMaybe,
       LabelExpression(LabelRef),
       pattern IsNonZero,
       pattern IsCarry,
@@ -171,7 +172,7 @@ whileEq conditionBlock doBlock = do
     conditionBlock
     bne endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -193,7 +194,7 @@ whileNe conditionBlock doBlock = do
     beq endLabel
     doBlock
     --loop
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -220,7 +221,7 @@ whileNz conditionBlock doBlock = do
     beq endLabel
     doBlock
     conditionBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -241,7 +242,7 @@ whileC conditionBlock doBlock = do
     conditionBlock
     bcc endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -261,7 +262,7 @@ whileNc conditionBlock doBlock = do
     conditionBlock
     bcs endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -281,7 +282,7 @@ whileM conditionBlock doBlock = do
     conditionBlock
     bpl endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -302,7 +303,7 @@ whileP conditionBlock doBlock = do
     conditionBlock
     bmi endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -323,7 +324,7 @@ whileO conditionBlock doBlock = do
     conditionBlock
     bvc endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -345,7 +346,7 @@ whileNo conditionBlock doBlock = do
     conditionBlock
     bvs endLabel
     doBlock
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- TESTING LAST!
@@ -363,31 +364,31 @@ doWhileNo conditionBlock doBlock = do
 -- Uses ZP $00 as temporary storage for A. WARNING: Ensure ZP $00 is safe to use.
 addAto16bit :: AddressRef -> Asm ()
 addAto16bit accAddr = do
-    let tempOperandAddr = zpLit 0x00 -- Use ZP $00 for temporary storage
+    let tempOperandAddr = AddrLit8 0x00 -- Use ZP $00 for temporary storage
     -- Store A (operand) temporarily
     sta tempOperandAddr          -- Store A (operand) temporarily
     -- Add low byte
-    lda $ OpAbs accAddr          -- Load low byte of accumulator
+    lda accAddr          -- Load low byte of accumulator
     clc                          -- Clear carry
     adc tempOperandAddr          -- Add operand from temp storage
-    sta $ OpAbs accAddr          -- Store result in low byte
+    sta accAddr          -- Store result in low byte
     -- Add high byte with carry
-    lda $ OpAbs (accAddr .+ 1)    -- Load high byte of accumulator (using .+ operator)
-    adc $ Imm 0                  -- Add 0 + carry
-    sta $ OpAbs (accAddr .+ 1)    -- Store result in high byte (using .+ operator)
+    lda (accAddr .+ 1)    -- Load high byte of accumulator (using .+ operator)
+    adc# 0                  -- Add 0 + carry
+    sta (accAddr .+ 1)    -- Store result in high byte (using .+ operator)
 
 -- --- Iteracje (bez zmian) ---
 forEachRange :: Word8 -> Word8 -> (Operand -> Asm ()) -> Asm ()
 forEachRange start end action = do
-    ldx $ Imm start
+    ldx# start
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
-    cpx $ Imm end
+    cpx# end
     beq endLabel
     action (OpAbsX (AddrLit16 0)) -- Note: OpAbsX operand might need adjustment based on use case
     inx
-    jmp $ AbsLabel startLabel
+    jmp startLabel
     l_ endLabel
 
 -- --- Przełączniki (bez zmian) ---
@@ -402,32 +403,32 @@ caseOf compareWith cases = do
         compareWith val
         beq caseLabel
       ) casesWithLabels
-    jmp $ AbsLabel endLabel -- Default case: jump to end if no match
+    jmp endLabel -- Default case: jump to end if no match
     mapM_ (\(_, caseLabel, action) -> do
         l_ caseLabel
         action
-        jmp $ AbsLabel endLabel -- Jump to end after executing case action
+        jmp endLabel -- Jump to end after executing case action
       ) casesWithLabels
     l_ endLabel
 
 caseOfA :: [(Word8, Asm ())] -> Asm ()
-caseOfA = caseOf (cmp . Imm)
+caseOfA = caseOf (cmp #)
 
 caseOfX :: [(Word8, Asm ())] -> Asm ()
-caseOfX = caseOf (cpx . Imm)
+caseOfX = caseOf (cpx #)
 
 caseOfY :: [(Word8, Asm ())] -> Asm ()
-caseOfY = caseOf (cpy . Imm)
+caseOfY = caseOf (cpy #)
 
 caseOfAddr :: AddressRef -> [(Word8, Asm ())] -> Asm ()
 caseOfAddr addr = caseOf (\val -> do
-    lda $ OpAbs addr
-    cmp $ Imm val)
+    lda addr
+    cmp# val)
 
 caseOfZP :: AddressRef -> [(Word8, Asm ())] -> Asm ()
 caseOfZP addr = caseOf (\val -> do
-    lda $ OpZP addr
-    cmp $ Imm val)
+    lda addr
+    cmp# val)
 
 caseOfMultiBytes :: [(AddressRef, Word8)] -> [([(Word8, Word8)], Asm ())] -> Asm ()
 caseOfMultiBytes addrBytes cases = do
@@ -445,23 +446,23 @@ caseOfMultiBytes addrBytes cases = do
         l_ matchLabel -- Start check for this case
         -- Compare each byte pair
         sequence_ $ zipWith (\(addr, _) (val, _) -> do
-            lda $ OpAbs addr
-            cmp $ Imm val
+            lda addr
+            cmp# val
             bne defaultLabel -- If any byte doesn't match, jump to default/next check
           ) addrBytes vals
         -- If all bytes matched:
-        jmp $ AbsLabel caseLabel -- Jump to the action label for this case
+        jmp caseLabel -- Jump to the action label for this case
       ) casesWithLabels
 
     -- Default case (if none of the above matched)
     l_ defaultLabel
-    jmp $ AbsLabel endLabel -- Jump to the very end
+    jmp endLabel -- Jump to the very end
 
     -- Define action blocks
     mapM_ (\(_, caseLabel, _, _, action) -> do
         l_ caseLabel
         action
-        jmp $ AbsLabel endLabel -- Jump to end after action
+        jmp endLabel -- Jump to end after action
       ) casesWithLabels
 
     l_ endLabel -- Final end label
@@ -471,8 +472,8 @@ customCaseExample :: Asm ()
 customCaseExample = do
     endCase <- makeUniqueLabel () -- Use a more descriptive name
     caseOf (\val -> do
-        lda $ AbsLabel "enemy_health"
-        cmp $ Imm val
+        lda ("enemy_health"::Label)
+        cmp# val
         -- bcs jumps if A >= val (carry set). We want A <= val.
         -- So, compare and branch if *not* less than (A >= val).
         bcs endCase -- If health >= val, skip this case
@@ -482,12 +483,12 @@ customCaseExample = do
         -- If exact <= is needed, the compare logic needs adjustment.
         ) [
             (11, do  -- Case: enemy_health < 11 (i.e., <= 10)
-                jsr $ AbsLabel "enemy_critical_animation"),
+                jsr ("enemy_critical_animation"::Label)),
             (51, do  -- Case: enemy_health < 51 (i.e., <= 50)
                  -- Important: This case comes *after* the <= 10 case.
                  -- If health is <= 10, it will match the first case and jump out.
                  -- This block only runs if health is 11 <= health <= 50.
-                jsr $ AbsLabel "enemy_wounded_animation")
+                jsr ("enemy_wounded_animation"::Label))
 
         ]
     l_ endCase
@@ -499,15 +500,15 @@ checkSpecialPositions = do
     caseOfMultiBytes [(AddrLabel "player_x_low", 1), (AddrLabel "player_x_high", 1), (AddrLabel "player_y_low", 1), (AddrLabel "player_y_high", 1)] [
         -- Position (100, 150) = ($64, $00, $96, $00) assuming little-endian
         ([(0x64, 1), (0x00, 1), (0x96, 1), (0x00, 1)], do
-            jsr $ AbsLabel "trigger_secret_passage"),
+            jsr ("trigger_secret_passage"::Label)),
 
         -- Position (200, 50) = ($C8, $00, $32, $00)
         ([(0xC8, 1), (0x00, 1), (0x32, 1), (0x00, 1)], do
-            jsr $ AbsLabel "spawn_treasure_chest"),
+            jsr ("spawn_treasure_chest"::Label)),
 
         -- Position (150, 150) = ($96, $00, $96, $00)
         ([(0x96, 1), (0x00, 1), (0x96, 1), (0x00, 1)], do
-            jsr $ AbsLabel "activate_teleporter")
+            jsr ("activate_teleporter"::Label))
         ]
 
 
@@ -515,81 +516,102 @@ checkSpecialPositions = do
 {-# HLINT ignore "Use camelCase" #-}
 cmp_r :: AddressRef -> Word8 -> Asm()
 cmp_r address value = do
-    lda $ OpImm value
-    cmp $ OpAbs address
+    lda# value
+    cmp address
 
 
 cmp_y :: Word8  -> Asm()
 cmp_y value = do
     tya
-    cmp $ Imm value
+    cmp# value
 
 cmp_x :: Word8  -> Asm()
 cmp_x value = do
     txa
-    cmp $ Imm value
+    cmp# value
 
 sta_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
 sta_rb op value = do
-    lda $ Imm value        -- Reset delay counter
-    sta $ OpAbs op
-
-sta_ob :: Operand -> Word8 -> Asm() -- op <- value :: Word8
-sta_ob op value = do
-    lda $ Imm value        -- Reset delay counter
+    lda# value
     sta op
 
+adc_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
+adc_rb op value = do
+    lda# value
+    adc op
+    sta op
+
+add_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
+add_rb op value = do
+    clc
+    lda# value
+    adc op
+    sta op
 
 sta_rw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
 sta_rw op value = do
-    lda $ Imm $ lsb value -- Lower byte
-    sta $ OpAbs op
-    lda $ Imm $ msb value-- Upper byte
-    sta $ OpAbs $ AddrLit16 (addr2word16 op P.+ 1) -- Store upper byte in next address    
+    -- let nextAddr = case op of 
+    --         AddrLit8 addr -> AddrLit8 $ addr P.+ 1 -- Increment the address by 1 op P.+ 1
+    --         AddrLit16 addr -> AddrLit16 $ addr P.+ 1 -- Increment the address by 1
+    --         _ -> error "Unsupported address type"   
+
+    lda# lsb value -- Lower byte
+    sta op
+    lda# msb value-- Upper byte
+    sta (op .+ 1) -- Store upper byte in next address    
+
+adc_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+adc_rrw op1 op2 = do
+    lda op1
+    adc op2
+    sta op1
+    lda (op1 .+ 1)
+    adc (op2 .+ 1)
+    sta (op1 .+ 1)
 
 add_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
 add_rrw op1 op2 = do
-    lda $ OpAbs op1
     clc
-    adc $ OpAbs op2
-    sta $ OpAbs op1
-    lda $ OpAbs (op1 .+ 1)
-    adc $ OpAbs (op2 .+ 1)
-    sta $ OpAbs (op1 .+ 1)
+    lda op1
+    adc op2
+    sta op1
+    lda (op1 .+ 1)
+    adc (op2 .+ 1)
+    sta (op1 .+ 1)
 
-sta_zw :: AddressRef -> Word16 -> Asm() -- op1 <- op2
-sta_zw op1 value = do
-    lda $ Imm $ lsb value
-    sta $ OpZP op1
-    lda $ Imm $ msb value
-    sta $ OpZP (op1 .+ 1)
+-- sta_zw :: AddressRef -> Word16 -> Asm() -- op1 <- op2
+-- sta_zw op1 value = do
+--     lda# lsb value
+--     sta op1
+--     lda# msb value
+--     sta (op1 .+ 1)
 
-add_zrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
-add_zrw op1 op2 = do
-    lda $ OpZP op1
-    clc
-    adc $ OpAbs op2
-    sta $ OpZP op1
-    lda $ OpZP (op1 .+ 1)
-    adc $ OpAbs (op2 .+ 1)
-    sta $ OpZP (op1 .+ 1)
+-- add_zrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+-- add_zrw op1 op2 = do
+--     lda op1
+--     clc
+--     adc op2
+--     sta op1
+--     lda (op1 .+ 1)
+--     adc (op2 .+ 1)
+--     sta (op1 .+ 1)
 
-sta_zrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op2
-sta_zrw op1 op2 = do
-    lda $ OpAbs op2
-    sta $ OpZP op1
-    lda $ OpAbs (op2 .+ 1)
-    sta $ OpZP (op1 .+ 1)
+sta_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op2
+sta_rrw op1 op2 = do
+    lda op2
+    sta op1
+    lda (op2 .+ 1)
+    sta (op1 .+ 1)
 
-add_zzw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
-add_zzw op1 op2 = do
-    lda $ OpZP op1
-    clc
-    adc $ OpZP op2
-    sta $ OpZP op1
-    lda $ OpZP (op1 .+ 1)
-    adc $ OpZP (op2 .+ 1)
-    sta $ OpZP (op1 .+ 1)
+-- add_zzw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+-- add_zzw op1 op2 = do
+--     lda op1
+--     clc
+--     adc op2
+--     sta op1
+--     lda (op1 .+ 1)
+--     adc (op2 .+ 1)
+--     sta (op1 .+ 1)
 
 -- | Kopiuje blok pamięci używając pętli while_.
 -- | Używa rejestrów A, X, Y.
@@ -605,14 +627,14 @@ copyBlock :: AddressRef -- Cel
 copyBlock dest src count = do
 
     -- Inicjalizacja wskaźników (tak jak poprzednio)
-    sta_zrw srcTemp src   -- srcTemp = src
-    sta_zrw dstTemp dest  -- dstTemp = dest
+    sta_rrw srcTemp src   -- srcTemp = src
+    sta_rrw dstTemp dest  -- dstTemp = dest
 
     -- Inicjalizacja licznika (X) i indeksu (Y)
-    lda $ Imm count
+    lda# count
     tax         -- Przenieś liczbę bajtów do X. WAŻNE: TAX ustawia flagę Z!
                 -- Jeśli count=0, Z=1. Jeśli count!=0, Z=0.
-    ldy $ Imm 0      -- Inicjalizuj indeks Y
+    ldy# 0      -- Inicjalizuj indeks Y
 
     -- Pętla WHILE: kontynuuj, dopóki X jest RÓŻNY od zera (Z=0)
     -- Makro while_ sprawdza warunek *przed* wykonaniem bloku 'do'
@@ -620,8 +642,8 @@ copyBlock dest src count = do
     -- oraz przez DEX na końcu każdej iteracji dla następnego sprawdzenia
     while_ IsNonZero $ do
         -- Ciało pętli:
-        lda $ OpIndY srcTemp  -- Załaduj bajt ze źródła
-        sta $ OpIndY dstTemp   -- Zapisz bajt do celu
+        lda $ IY srcTemp  -- Załaduj bajt ze źródła
+        sta $ IY dstTemp   -- Zapisz bajt do celu
         iny                           -- Zwiększ indeks
 
         -- Zmniejsz licznik X - to ustawi flagę Z dla sprawdzenia
@@ -642,14 +664,14 @@ waitRaster = do
 
 fillScreen :: AddressRef  -> Word8 -> Asm ()
 fillScreen screenAddr fillB = do
-    lda $ Imm fillB
-    ldx $ Imm 250
+    lda# fillB
+    ldx# 250
     while_ IsNonZero $ do
         dex
-        sta $ OpAbsX screenAddr
-        sta $ OpAbsX $ screenAddr .+ 250
-        sta $ OpAbsX $ screenAddr .+ 500
-        sta $ OpAbsX $ screenAddr .+ 750
+        sta $ X screenAddr
+        sta $ X (screenAddr .+ 250)
+        sta $ X (screenAddr .+ 500)
+        sta $ X (screenAddr .+ 750)
 
 
 decsum = do  
@@ -657,9 +679,9 @@ decsum = do
         clc                              -- clear carry
         doWhile_ IsNonZero $ do          -- while Y != 0
             dey                          -- Y--
-            lda $ OpIndY $ AddrLit8 0x40 -- Get 2 decimal digits from string 1
-            adc $ OpIndY $ AddrLit8 0x42 -- Add pair of digits from string 2
-            sta $ OpIndY $ AddrLit8 0x40 -- Store result in string 1
+            lda $ IY (AddrLit8 0x40) -- Get 2 decimal digits from string 1
+            adc $ IY (AddrLit8 0x42) -- Add pair of digits from string 2
+            sta $ IY (AddrLit8 0x40) -- Store result in string 1
             tya                          -- Y -> A (set Zero flag if Y=0)
         cld                              -- Back to binary arithmetic mode
         rts
@@ -675,9 +697,9 @@ binsum = do
         clc                              -- clear carry
         doWhile_ IsNonZero $ do          -- while Y != 0
             dey                          -- Y--
-            lda $ OpIndY $ AddrLit8 0x40 -- Get 2 decimal digits from string 1
-            adc $ OpIndY $ AddrLit8 0x42 -- Add pair of digits from string 2
-            sta $ OpIndY $ AddrLit8 0x40 -- Store result in string 1
+            lda $ IY (AddrLit8 0x40) -- Get 2 decimal digits from string 1
+            adc $ IY (AddrLit8 0x42) -- Add pair of digits from string 2
+            sta $ IY (AddrLit8 0x40) -- Store result in string 1
             tya                          -- Y -> A (set Zero flag if Y=0)
         rts
 
@@ -692,29 +714,30 @@ configureVectors addrRef = do
 
     -- IRQ Vector -> Use symbolic LSB/MSB operands
     -- lda $ ImmLsbLabel labelName
-    -- sta $ OpAbs $ AddrLit16 0x0314
+    -- sta $ AddrLit16 0x0314
     -- lda $ ImmMsbLabel labelName
-    -- sta $ OpAbs $ AddrLit16 0x0315
-
+    -- sta $ AddrLit16 0x0315
+    -- let addr = resolveAddressMaybe $ Just addrRef
     --NMI Vector -> Use symbolic LSB/MSB operands
     -- $0318/$0319 is the RAM NMI vector, mirroring $FFFA/$FFFB.
-    lda $ ImmLsbLabel labelName
-    sta $ OpAbs $ AddrLit16 0x0318
-    lda $ ImmMsbLabel labelName
-    sta $ OpAbs $ AddrLit16 0x0319
+    -- lda#  lsb (resolveAddressMaybe labelName)
+    lda #< labelName
+    sta $ AddrLit16 0x0318
+    lda #> labelName
+    sta $ AddrLit16 0x0319
 
     -- BRK Vector -> Use symbolic LSB/MSB operands
     -- lda $ ImmLsbLabel labelName
-    -- sta $ OpAbs $ AddrLit16 0x0316
+    -- sta $ AddrLit16 0x0316
     -- lda $ ImmMsbLabel labelName
-    -- sta $ OpAbs $ AddrLit16 0x0317
+    -- sta $ AddrLit16 0x0317
 
 printChar :: Word16 -> Word8 -> Asm()
 printChar textPos color = do
     
-    sta $ OpAbsX (screenRam .+ textPos)    -- Store the character at the screen memory location
-    lda $ Imm color
-    sta $ OpAbsX (colorRam .+ textPos)    -- Store the color at the screen color memory location
+    sta $ X (screenRam .+ textPos)    -- Store the character at the screen memory location
+    lda# color
+    sta $ X (colorRam .+ textPos)    -- Store the color at the screen color memory location
 
 
 macrosLib = do
@@ -727,22 +750,22 @@ macrosLib = do
 -- returns rest of value in 0xf8
 hundreds2Petscii = do 
 
-    let count = ZPAddr 0xf7
-    let rest = ZPAddr 0xf8
+    let count = AddrLit8 0xf7
+    let rest = AddrLit8 0xf8
 
     -- sta rest
-    sta_ob count 0
+    sta_rb count 0
     lda rest
     sec
-    sbc (Imm 100)
+    sbc# 100
     while_ IsCarry $ do
         inc count
-        sbc (Imm 100)
-    adc (Imm 100) -- undo last dec
+        sbc# 100
+    adc# 100 -- undo last dec
     sta rest
     lda count 
     clc
-    adc (Imm 0x30)        -- Convert the count to ASCII     
+    adc# 0x30        -- Convert the count to ASCII     
     rts
 
 -- return petscii character of tens of accumulator, (max value of accumulator have to be < 99)
@@ -750,22 +773,22 @@ hundreds2Petscii = do
 
 tens2Petscii = do 
 
-    let count = ZPAddr 0xf7
-    let rest = ZPAddr 0xf8
+    let count = AddrLit8 0xf7
+    let rest = AddrLit8 0xf8
     
     -- sta rest
-    sta_ob count 0
+    sta_rb count 0
     lda rest
     sec
-    sbc (Imm 10)
+    sbc# 10
     while_ IsCarry $ do
         inc count
-        sbc (Imm 10)
-    adc (Imm 10) -- undo last dec
+        sbc# 10
+    adc# 10 -- undo last dec
     sta rest
     lda count 
     clc
-    adc (Imm 0x30)        -- Convert the count to ASCII     
+    adc# 0x30        -- Convert the count to ASCII     
     rts
 
 
@@ -775,19 +798,19 @@ tens2Petscii = do
 printByte :: Word16 -> Word16 -> Word8 -> Asm()
 printByte x y color = do
 
-    let rest = ZPAddr 0xf8
+    let rest = AddrLit8 0xf8
     let screenAddress = y * 0x40 P.+ x
-    jsr $ AbsLabel "hundreds2Petscii"
+    jsr "hundreds2Petscii"
 
-    ldx (Imm 0)
+    ldx# 0
     printChar screenAddress color  --Print a character from the hellotext string at the specified position
-    jsr $ AbsLabel "tens2Petscii"
+    jsr "tens2Petscii"
     inx
     printChar screenAddress color  --Print a character from the hellotext string at the specified position
 
-    lda rest   
+    lda rest 
     clc
-    adc (Imm 0x30)  
+    adc# 0x30
     inx
     printChar screenAddress color  --Print a character from the hellotext string at the specified position
     rts

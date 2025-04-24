@@ -11,16 +11,16 @@ helloWorld :: Asm ()
 helloWorld = do
     org 0x0801 -- Ustawienie adresu początkowego
     db startSequence-- Initialization bytes
-    lda $ Imm 0x00  -- Wyczyść ekran
-    sta $ OpAbs $ AddrLit16 0xD020       -- Ustaw kolor tła
-    sta $ OpAbs $ AddrLit16 0xD021       -- Ustaw kolor ramki
+    lda# 0x00  -- Wyczyść ekran
+    sta $ AddrLit16 0xD020       -- Ustaw kolor tła
+    sta $ AddrLit16 0xD021       -- Ustaw kolor ramki
 
-    ldx $ Imm 0x00   -- Licznik/index
-    lda $ AbsXLabel "text" -- Załaduj pierwszy znak z tekstu
+    ldx# 0x00   -- Licznik/index
+    lda $ X "text" -- Załaduj pierwszy znak z tekstu
     while_ IsNonZero $ do
-        sta $ OpAbsX $ AddrLit16 0x0400 -- Zapisz znak na ekranie (pozycja 1024)    
+        sta $ X (AddrLit16 0x0400) -- Zapisz znak na ekranie (pozycja 1024)    
         inx
-        lda $ AbsXLabel "text"
+        lda $ X "text"
     rts         -- Powrót do BASIC
 
     l_ "text"

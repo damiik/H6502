@@ -288,38 +288,38 @@ cia1DDRB  = AddrLit16 0xDC03 -- Rejestr kierunku dla Portu B
 scanKeyboard :: Asm()
 scanKeyboard = do
 
-    let dataPortB = ZPAddr 0xf7  -- ZPAddr makes operand directly from Word8
-    let scanKeycode = ZPAddr 0xf8
+    let dataPortB = AddrLit8 0xf7  -- ZPAddr makes operand directly from Word8
+    let scanKeycode = AddrLit8 0xf8
 
     --; set columns (Port A) as output and rows (Port B) as input
-    lda $ Imm 0xff
-    sta $ OpAbs cia1DDRA 
-    lda $ Imm 0x00
-    sta $ OpAbs cia1DDRB
+    lda# 0xff
+    sta cia1DDRA 
+    lda# 0x00
+    sta cia1DDRB
 
-    lda (Imm 0x40)
+    lda# 0x40
     sta scanKeycode -- default keycode
 
-    ldy (Imm 0)                         --; Y = 0 (column index)
+    ldy# 0                         --; Y = 0 (column index)
     clc
     while_ IsNonCarry $ do              --; Y < 8
-        lda $ AbsYLabel "colMaskData"   --; colMaskData[Y] -> A
-        sta $ OpAbs cia1DataPortA       --; cia1DataPortA = mask 11111110, for column 0
+        lda $ Y "colMaskData"   --; colMaskData[Y] -> A
+        sta cia1DataPortA       --; cia1DataPortA = mask 11111110, for column 0
         nop                             --; wait for signals to settle
         nop
-        lda $ OpAbs cia1DataPortB       --; cia1DataPortB -> A (keys in column Y)
+        lda cia1DataPortB       --; cia1DataPortB -> A (keys in column Y)
         sta dataPortB                   --; cia1DataPortB -> dataPortB (for testing each bit/row in loop)
-        ldx $ Imm 0x00                  --; X = 0  (row index)
+        ldx# 0x00                  --; X = 0  (row index)
         clc
         while_ IsNonCarry $  do         --; X < 8
 
             lda dataPortB
-            and $ Imm 0x01 -- Use 'and' directly from EDSLInstr
+            and# 0x01 -- Use 'and' directly from EDSLInstr
             if_ IsZero $ do             --; found keycode = Y*8 + X
                 tya
-                asl Nothing
-                asl Nothing
-                asl Nothing             --; column * 8
+                asl A_
+                asl A_
+                asl A_             --; column * 8
                 stx scanKeycode
                 clc
                 adc scanKeycode         --; column * 8 + row
@@ -327,13 +327,13 @@ scanKeyboard = do
                 rts                     --; break from while_ by setting Y=8 i X=8 or return
             
             lda dataPortB
-            lsr Nothing
+            lsr A_
             sta dataPortB    -- ;  rotating right dataPortB, testing bits 0-1-2-3-4-5-6-7 of dataPortB
             inx          -- ; next row index
-            cpx (Imm 0x08)
+            cpx# 0x08
         
         iny
-        cpy (Imm 0x08)
+        cpy# 0x08
     rts
     l_ "colMaskData"
     db [0b11111110, 

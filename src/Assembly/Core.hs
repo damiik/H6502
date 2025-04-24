@@ -12,6 +12,7 @@ module Assembly.Core (
     AddressRef(..),
     AddressingMode(..),
     Operand(..),
+    pattern A_,
     pattern Imm,
     pattern AbsLit,
     pattern AbsAddress,
@@ -30,6 +31,8 @@ module Assembly.Core (
     pattern AbsYLit,
     pattern ImmLsbLabel, -- Export new pattern synonym
     pattern ImmMsbLabel, -- Export new pattern synonym
+    pattern LsbImm, 
+    pattern MsbImm,
     BranchMnemonic(..),
     Mnemonic(..),
     SymbolicInstruction(..),
@@ -174,9 +177,15 @@ data Operand
     -- NEW: Operands for immediate LSB/MSB of a label's address
     | OpImmLsbLabel Label  -- Immediate LSB of label address, e.g., LDA #<label
     | OpImmMsbLabel Label  -- Immediate MSB of label address, e.g., LDA #>label
+    -- NEW: Replace OpImmLsbLabel/OpImmMsbLabel with these:
+    | OpLsbImm Label       -- Immediate LSB of label address, e.g., LDA #<label
+    | OpMsbImm Label       -- Immediate MSB of label address, e.g., LDA #>label
+
+    | OpNull
     -- Brak konstruktora dla Implicit, Accumulator, Relative - są obsługiwane inaczej
     deriving (Show, Eq)
 
+pattern A_ :: Maybe Word8; pattern A_ = Nothing -- Dummy value, as A is implicit
 -- Pattern Synonyms (aktualizacja i dodanie nowych)
 pattern Imm :: Word8 -> Operand; pattern Imm v = OpImm v
 -- pattern ImmChar :: Char -> Operand; pattern ImmChar v = OpImm (fromIntegral (ord v))
@@ -198,6 +207,8 @@ pattern IndY :: AddressRef -> Operand; pattern IndY r = OpIndY r
 -- NEW: Pattern synonyms for immediate LSB/MSB operands
 pattern ImmLsbLabel :: Label -> Operand; pattern ImmLsbLabel l = OpImmLsbLabel l
 pattern ImmMsbLabel :: Label -> Operand; pattern ImmMsbLabel l = OpImmMsbLabel l
+pattern LsbImm :: Label -> Operand; pattern LsbImm l = OpLsbImm l
+pattern MsbImm :: Label -> Operand; pattern MsbImm l = OpMsbImm l
 
 -- NEW: Represents directives that don't directly generate code but affect assembly
 newtype Directive = DOrg Address deriving (Show, Eq) -- HLint: Use newtype
@@ -286,6 +297,16 @@ getOperandAddressingMode _ (Just (OpIndY _))  = Right IndirectY
 -- NEW: Handle LSB/MSB label operands as Immediate mode
 getOperandAddressingMode _ (Just (OpImmLsbLabel _)) = Right Immediate
 getOperandAddressingMode _ (Just (OpImmMsbLabel _)) = Right Immediate
+getOperandAddressingMode _ (Just (OpLsbImm _))= Right Immediate -- NEW: Treat as Immediate
+getOperandAddressingMode _ (Just (OpMsbImm _))= Right Immediate -- NEW: Treat as Immediate
+getOperandAddressingMode m (Just (OpNull)) = case m of
+    -- Sprawdzanie czy mnemonic obsługuje tryb Accumulator
+    ASL -> Right Accumulator
+    LSR -> Right Accumulator
+    ROL -> Right Accumulator
+    ROR -> Right Accumulator
+    -- Dodaj inne mnemoniki, które obsługują tryb Accumulator
+    _ -> Left $ "Mnemonic " ++ show m ++ " does not support Accumulator mode"
 getOperandAddressingMode m Nothing = case m of
     -- Sprawdzanie czy mnemonic obsługuje tryb Accumulator
     ASL -> Right Accumulator
@@ -433,9 +454,26 @@ makeLabelWithPrefix = makeUniqueLabel_
 generateInstructionBytes :: Mnemonic -> Maybe Operand -> AsmState -> Either String [Word8]
 generateInstructionBytes m maybeOp asmState = do
     (opcode, size) <- getInstructionInfo m maybeOp
+    -- Helper to get the immediate opcode for the given mnemonic
+    let getImmOpcode = case Map.lookup m instructionTable >>= Map.lookup Immediate of
+                           Just (op, _) -> Right op
+                           Nothing -> Left $ "Mnemonic '" ++ show m ++ "' does not support Immediate addressing mode (needed for LSB/MSB)."
 
     -- Handle specific operand types
     case maybeOp of
+
+        Just (OpLsbImm l) -> do -- NEW CASE
+            immOpcode <- getImmOpcode
+            case Map.lookup l (asmLabels asmState) of
+                Just addr -> Right [immOpcode, lsb addr]
+                Nothing   -> Left $ "Failed to resolve label '" ++ l ++ "' for LSB immediate operand"
+        Just (OpMsbImm l) -> do -- NEW CASE
+            immOpcode <- getImmOpcode
+            case Map.lookup l (asmLabels asmState) of
+                Just addr -> Right [immOpcode, msb addr]
+                Nothing   -> Left $ "Failed to resolve label '" ++ l ++ "' for MSB immediate operand"
+
+
         Just (OpImmLsbLabel l) ->
             case Map.lookup l (asmLabels asmState) of
                 Just addr -> Right [opcode, lsb addr]
@@ -445,7 +483,13 @@ generateInstructionBytes m maybeOp asmState = do
                 Just addr -> Right [opcode, msb addr]
                 Nothing   -> Left $ "Failed to resolve label '" ++ l ++ "' for MSB operand"
         Just (OpImm v) -> Right [opcode, v] -- Standard Immediate
-        _ -> do -- Handle address-based operands
+      
+        _ -> do -- Handle other address-based operands and implied/accumulator
+            --(opcode, size) <- getInstructionInfo m maybeOp -- Get opcode and size for non-immediate LSB/MSB
+            -- Handle Implicit/Accumulator (size 1)
+            --when (size == 1) $ Right [opcode]
+
+            -- Handle address-based operands (size 2 or 3)
             addressRef <- Right $ getOperandAddressRef maybeOp
             resolvedAddrMaybe <- Right $ resolveAddressMaybe addressRef asmState
             case resolvedAddrMaybe of

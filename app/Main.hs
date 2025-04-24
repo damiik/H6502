@@ -49,7 +49,7 @@ mySimpleProgram01 :: Asm ()
 mySimpleProgram01 = do
 
     org 0xc000
-    jmp $ AbsLabel "start" -- Skok do początku programu
+    jmp "start" -- Skok do początku programu
 
     l_ "lista2"
     db [0x00] -- Length of the list
@@ -77,21 +77,21 @@ mySimpleProgram01 = do
     l_ "start"
 
     -- Test addAto16bit
-    lda $ Imm 0x05       -- Load value 5 into A
-    sta $ OpAbs $ AddrLabel "test16bit"  -- Store low byte
-    lda $ Imm 0x00
-    sta $ OpAbs $ AddrLabel "test16bit" .+ 1  -- Store high byte (0x0005) - Use C.add
-    lda $ Imm 0x03       -- Load value 3 into A
+    lda# 0x05       -- Load value 5 into A
+    sta $ AddrLabel "test16bit"  -- Store low byte
+    lda# 0x00
+    sta $ AddrLabel "test16bit" .+ 1  -- Store high byte (0x0005) - Use C.add
+    lda# 0x03       -- Load value 3 into A
     addAto16bit $ AddrLabel "test16bit"  -- Add 3 to 0x0005, result should be 0x0008
 
     -- Expected result: test16bit = 0x08, test16bit+1 = 0x00
     -- Test label arithmetic with parentheses
     l_ "label_arith_test"
     -- Use standard (Prelude.+) for numeric arithmetic within the offset
-    lda $ OpAbs $ AddrLabel "label_arith_test" .+ (2 - (2*3))
-    sta $ OpAbs $ AddrLabel "label_arith_result"
+    lda $ AddrLabel "label_arith_test" .+ (2 - (2*3))
+    sta $ AddrLabel "label_arith_result"
 
-    jmp $ AbsLabel "l_cont"  -- Skok do testu
+    jmp "l_cont"  -- Skok do testu
 
     l_ "test16bit"
     db [0x00, 0x00]  -- 16-bit storage for test
@@ -129,9 +129,9 @@ mySimpleProgram01 = do
     sumList myList5 sumResult
 
     -- Inny kod...
-    lda $ Imm 0x00
+    lda# 0x00
     l_ "loop_forever"
-    jmp $ AbsLabel "loop_forever"
+    jmp "loop_forever"
 
 
 
