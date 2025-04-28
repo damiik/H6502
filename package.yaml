@@ -23,11 +23,16 @@ dependencies:
 - base >= 4.7 && < 5
 - mtl
 - containers
+- transformers
+- text
 - split # Added for Data.List.Split
 - optparse-applicative # Added for command-line options
 - bytestring # Added for ByteString support
 - binary
 - filepath
+- vector
+- primitive
+
 
 ghc-options:
 - -Wall
@@ -51,6 +56,11 @@ library:
   - Assembly.List
   - C64
   - C64.Examples
+  - MOS6502Emulator
+  - MOS6502Emulator.Machine
+  - MOS6502Emulator.Registers
+  - MOS6502Emulator.Memory
+  - MOS6502Emulator.Instructions
   other-modules:
   - C64.HelloWorld  # reexported by C64.Examples
   - C64.HorizontalBars # reexported by C64.Examples

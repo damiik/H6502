@@ -455,21 +455,23 @@ horizontalBars = do
     initGame
     configureVectors (AddrLabelExpr $ LabelRef "dummyVector")
 
+
     l_ "main_loop"
 
+    let helloText = ("helloText"::String)
+    -- brk
+
     ldx # 0x00 -- Initialize x register to -1
-    lda (X ("helloText"::String))   -- set zero flag
+    lda $ X helloText   -- set zero flag
     while_ IsNonZero $ do
         printChar 10 _BLACK  --Print a character from the hellotext string at the specified position
         inx
-        lda (X ("helloText"::String))   -- set zero flag
-
+        lda $ X helloText   -- set zero flag
 
     l_ "scan_keyboard"
-    let scanKeycode = AddrLit8 0xf8 -- AddLit8 makes ZP address operand directly from Word8
     jsr ("scanKeyboard"::Label)
-    
-    lda scanKeycode
+    let scanKeycode = AddrLit8 0xf8 -- AddLit8 makes ZP address operand directly from Word8
+    sta scanKeycode
     cmp# _KEY_S
     if_ IsZero $ do
         add_rb scrollY 1
@@ -478,6 +480,16 @@ horizontalBars = do
     cmp# _KEY_D
     if_ IsZero $ do
         add_rb scrollX 1
+
+    lda scanKeycode
+    cmp# _KEY_W
+    if_ IsZero $ do 
+        sub_rb scrollY 1
+
+    lda scanKeycode
+    cmp# _KEY_A
+    if_ IsZero $ do
+        sub_rb scrollX 1
 
     lda scanKeycode
     jsr ("printByte"::Label)
@@ -569,37 +581,37 @@ horizontalBars = do
     --         inc  $ OpZP scrollX         --   Zwiększ X
     waitRaster -- Sync with raster
 
-    sta_rb delayCounter 80
+    sta_rb delayCounter 10
     doWhile_ IsNonZero $ do
          jsr ("delay"::Label) -- Delay loop
          dec delayCounter 
 
     jsr ("copyVisibleMap"::Label) -- Fill screen with initial bars
-    scrollColors colorRam
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0028)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0050)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0078)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00a0)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00c8)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00f0)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0118)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0140)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0168)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0190)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x01b8)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x01e0)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0208)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0230)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0258)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0280)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02a8)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02d0)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02f8)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0320)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0348)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0370)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0398)
-    scrollColors $ AddrLit16 (addr2word16 colorRam + 0x03c0)
+    -- scrollColors colorRam
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0028)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0050)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0078)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00a0)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00c8)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x00f0)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0118)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0140)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0168)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0190)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x01b8)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x01e0)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0208)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0230)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0258)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0280)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02a8)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02d0)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x02f8)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0320)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0348)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0370)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0398)
+    -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x03c0)
 
     inc lastColor
     lda lastColor
@@ -632,7 +644,7 @@ horizontalBars = do
     rts
 
     l_ "delay"
-    replicateM_ 400 $ and# 0xef -- Use EDSL 'and'
+    replicateM_ 200 $ and# 0xef -- Use EDSL 'and'
     rts
 
 
@@ -684,6 +696,7 @@ horizontalBars = do
         -- Kopiowanie kolumn - użycie pętli doWhile_
         ldy# 0
         clc                             -- Ustaw Carry na 0
+        brk
         doWhile_ IsNonCarry $ do        -- Pętla wykonuje się, dopóki Y < screenWidthChars
             -- Kopiuj znak
             lda $ IY mapSrcPtr          -- Czytaj z mapy źródłowej [mapSrcPtr],Y

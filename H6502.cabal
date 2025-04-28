@@ -33,6 +33,11 @@ library
       Assembly.List
       C64
       C64.Examples
+      MOS6502Emulator
+      MOS6502Emulator.Machine
+      MOS6502Emulator.Registers
+      MOS6502Emulator.Memory
+      MOS6502Emulator.Instructions
   other-modules:
       C64.HelloWorld
       C64.HorizontalBars
@@ -49,7 +54,11 @@ library
     , filepath
     , mtl
     , optparse-applicative
+    , primitive
     , split
+    , text
+    , transformers
+    , vector
   default-language: Haskell2010
 
 executable H6502-exe
@@ -70,7 +79,11 @@ executable H6502-exe
     , filepath
     , mtl
     , optparse-applicative
+    , primitive
     , split
+    , text
+    , transformers
+    , vector
   default-language: Haskell2010
 
 test-suite H6502-test
@@ -93,5 +106,9 @@ test-suite H6502-test
     , hspec
     , mtl
     , optparse-applicative
+    , primitive
     , split
+    , text
+    , transformers
+    , vector
   default-language: Haskell2010

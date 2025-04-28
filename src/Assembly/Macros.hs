@@ -23,13 +23,17 @@ module Assembly.Macros (
     -- Helper (potentially hide later)
     makeUniqueLabel,
     waitRaster,
-    cmp_r, cmp_y, cmp_x, sta_rb, sta_rw, adc_rrw, add_rrw, adc_rb, add_rb, sta_rrw, 
+    cmp_r, cmp_y, cmp_x, 
+    adc_rb, add_rb, sub_rb, sub_br,
+    sta_rb, sta_rw, 
+    adc_rrw, add_rrw, sta_rrw, 
     copyBlock,
     fillScreen,
     decsum, binsum,
     configureVectors,
     printChar,
     printByte,
+    skipNext2B,
     macrosLib
 ) where
 
@@ -39,6 +43,7 @@ import Data.Word (Word8, Word16)
 import Assembly.Core
     ( l_,
       makeUniqueLabel,
+      makeLabelWithPrefix,
       zpLit,
       addr2word16,
       lsb,
@@ -61,7 +66,8 @@ import Assembly.Core
       LabelExpression(LabelRef),
       pattern IsNonZero,
       pattern IsCarry,
-      Conditions(..) -- Ensure Conditions type is imported if needed by macros like while_
+      Conditions(..), -- Ensure Conditions type is imported if needed by macros like while_
+      db
       )
 import Assembly.EDSLInstr 
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
@@ -535,17 +541,35 @@ sta_rb op value = do
     lda# value
     sta op
 
+-- adding value to op with carry (op = op + value + carry)
 adc_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
 adc_rb op value = do
     lda# value
     adc op
     sta op
 
+-- adding value to op (op = op + value)
 add_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
 add_rb op value = do
-    clc
     lda# value
+    clc
     adc op
+    sta op
+
+
+-- substract op from value! (A = value - op)
+sub_br:: Word8 -> AddressRef -> Asm() -- op -= value :: Word8
+sub_br value op = do
+    lda# value
+    sec
+    sbc op
+
+-- substract value from op (op = op - value)
+sub_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
+sub_rb op value = do
+    lda op
+    sec
+    sbc# value
     sta op
 
 sta_rw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
@@ -560,7 +584,7 @@ sta_rw op value = do
     lda# msb value-- Upper byte
     sta (op .+ 1) -- Store upper byte in next address    
 
-adc_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2
+adc_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2 + carry
 adc_rrw op1 op2 = do
     lda op1
     adc op2
@@ -658,7 +682,7 @@ copyBlock dest src count = do
 waitRaster :: Asm ()
 waitRaster = do 
     while_ IsNonZero $ do
-        cmp_r vicRaster 100  
+        cmp_r vicRaster 250  
 
 
 
@@ -725,6 +749,10 @@ configureVectors addrRef = do
     sta $ AddrLit16 0x0318
     lda #> labelName
     sta $ AddrLit16 0x0319
+
+    -- lda# 0xFF
+    -- sta$ AddrLit16 0xFFFE
+    -- sta$ AddrLit16 0xFFFF
 
     -- BRK Vector -> Use symbolic LSB/MSB operands
     -- lda $ ImmLsbLabel labelName
@@ -814,3 +842,24 @@ printByte x y color = do
     inx
     printChar screenAddress color  --Print a character from the hellotext string at the specified position
     rts
+
+skipNext2B = do
+    db [0x2C] -- Instruction BIT $address (direct addr. mode)
+
+fillMemory:: AddressRef -> Word8 -> Int -> Asm ()
+fillMemory memAddr value sizeKb = do
+
+    sfmd <- makeLabelWithPrefix "sfmd"
+    ldx# fromIntegral (4 * sizeKb)  -- 256 * 4 bytes
+    ldy# 0 -- 0..255 counter
+    cpx# 0
+    while_ IsNonZero $ do
+        doWhile_ IsNonZero $ do
+            lda# value
+            l_  sfmd
+            sta$ Y memAddr -- MSB of *memAddr* will be incremented when Y==0, LSB of *memAddr* is 0! (is replaced by Y index)
+            iny
+        inc$ AddrLabel sfmd .+ 2  -- this will increment *STA* instruction second byte operand (at "sfmd")
+        dex
+
+
