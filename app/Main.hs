@@ -13,7 +13,7 @@ import Data.Binary.Put (runPut, putWord16le, putWord8)
 import System.FilePath (takeExtension)
 import Prelude -- Explicitly import Prelude to qualify (+)
 import Options.Applicative
-import MOS6502Emulator (Machine(..), newMachine, setupMachine, runEmulator, instructionCount)
+import MOS6502Emulator (Machine(..), newMachine, setupMachine, runEmulator, runTest, instructionCount)
 import MOS6502Emulator.Registers (mkRegisters, rPC)
 
 --stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
@@ -143,25 +143,6 @@ mySimpleProgram01 = do
 
 
 
-runTest :: Word16 -> Word16 -> [Word8] -> IO ()
-runTest startAddress actualLoadAddress byteCode = do
-  putStrLn $ "Running emulation test starting at $" ++ showHex startAddress ""
-  putStrLn $ "Loading bytecode at $" ++ showHex actualLoadAddress ""
-  initialMachine <- newMachine
-  
-  -- Prepare memory writes - load bytecode at its actual load address
-  let memoryWrites = zip [actualLoadAddress..] byteCode
-  
-  -- Setup the machine (PC is set by runEmulator now)
-  setupMachine initialMachine memoryWrites >>= \setupResult -> do
-    putStrLn "Emulator machine setup complete."
-    
-    -- Run the emulator with the specified start address
-    (_, finalMachine) <- runEmulator startAddress setupResult
-    
-    putStrLn "\n--- Emulation Finished ---"
-    putStrLn $ "Final Registers: " ++ show (mRegs finalMachine)
-    putStrLn $ "Instructions Executed: " ++ show (instructionCount finalMachine)
 
 
 main :: IO ()
@@ -199,4 +180,3 @@ main = do
                   else do
                     Prelude.writeFile filePath output
                     putStrLn $ "\nBytecode written to: " ++ filePath
-            

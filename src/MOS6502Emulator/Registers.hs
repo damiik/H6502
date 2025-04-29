@@ -1,3 +1,5 @@
+{-# LANGUAGE StrictData #-}
+
 module MOS6502Emulator.Registers (
   Registers(..)
   , SRFlag(..)
@@ -13,12 +15,12 @@ import Data.Maybe ( catMaybes )
 
 -- | http://www.masswerk.at/6502/6502_instruction_set.html
 data Registers = Registers
-  { rPC :: !Word16 -- ^ Program Counter
-  , rAC :: !Word8  -- ^ Accumulator
-  , rX  :: !Word8  -- ^ X register
-  , rY  :: !Word8  -- ^ Y register
-  , rSR :: !Word8  -- ^ Status register [NV-BDIZC]
-  , rSP :: !Word8  -- ^ Stack pointer
+  { rPC :: Word16 -- ^ Program Counter
+  , rAC :: Word8  -- ^ Accumulator
+  , rX  :: Word8  -- ^ X register
+  , rY  :: Word8  -- ^ Y register
+  , rSR :: Word8  -- ^ Status register [NV-BDIZC]
+  , rSP :: Word8  -- ^ Stack pointer
   } deriving (Read, Show, Eq, Ord)
 
 data SRFlag = Carry      -- ^ bit 0

@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE StrictData #-}
 module MOS6502Emulator.Instructions where
 
 import qualified MOS6502Emulator.Memory as Mem
@@ -7,7 +8,7 @@ import MOS6502Emulator.Machine
 
 import Control.Applicative ( (<$>) )
 import Control.Monad ( when )
-import Control.Monad.State (get, modify) -- Import get and modify
+import Control.Monad.State ( modify, modify') -- Import get and modify
 import Control.Monad.IO.Class (liftIO) -- Import liftIO
 
 import Data.Word
@@ -17,59 +18,34 @@ import Data.Maybe ( isJust )
 import Numeric (showHex) -- Import showHex for debugging output
 
 getReg :: (Registers -> a) -> FDX a
-getReg f = do
-  rs <- getRegisters
-  return $! f rs
+getReg f = f <$> getRegisters
 
+-- setPC is a function that takes a Word16 and returns an action within the FDX monad. The () indicates the action doesn't produce a meaningful result value, but it performs some effect (like modifying state).
+-- modify' works inside any monad m that is also an instance of MonadState managing state s. It takes a function (s -> s) that transforms the state. It returns an action m () within that specific monad m
+-- within the body of setPC, the specific type of modify' becomes (Machine -> Machine) -> FDX ().
 setPC :: Word16 -> FDX ()
-setPC !pc = do
-  rs <- getRegisters
-  setRegisters $! rs { rPC = pc }
-
+setPC !pc = modify' $ \m -> m { mRegs = (mRegs m) { rPC = pc } } --new value for *mRegs* field is created by taking the original registers (mRegs m) and updating their *rPC* field
 setAC :: Word8 -> FDX ()
-setAC !w = do
-  rs <- getRegisters
-  setRegisters $! rs { rAC = w }
-
-setSP :: Word8 -> FDX ()
-setSP !w = do
-  rs <- getRegisters
-  setRegisters $! rs { rSP = w }
-
-setSR :: Word8 -> FDX ()
-setSR !w = do
-  rs <- getRegisters
-  setRegisters $! rs { rSR = w }
-
+setAC !ac = modify' $ \m -> m { mRegs = (mRegs m) { rAC = ac } }
 setX :: Word8 -> FDX ()
-setX !w = do
-  rs <- getRegisters
-  setRegisters $! rs { rX = w }
-
+setX !x = modify' $ \m -> m { mRegs = (mRegs m) { rX = x } }
 setY :: Word8 -> FDX ()
-setY !w = do
-  rs <- getRegisters
-  setRegisters $! rs { rY = w }
-
--- addAC :: AddressMode -> FDX ()
--- TODO: update status register
--- -- TODO: add carry bit
--- addAC mode = do
---   b <- fetchOperand mode
---   modifyOperand Accumulator $ \ac -> do
---     return $! ac + b
+setY !y = modify' $ \m -> m { mRegs = (mRegs m) { rY = y } }
+setSR :: Word8 -> FDX ()
+setSR !sr = modify' $ \m -> m { mRegs = (mRegs m) { rSR = sr } }
+setSP :: Word8 -> FDX ()
+setSP !sp = modify' $ \m -> m { mRegs = (mRegs m) { rSP = sp } }
 
 addAC :: AddressMode -> FDX ()
 addAC mode = do
   b <- fetchOperand mode
   ac <- getReg rAC
   c <- isFlagSet Carry
-  let result = ac + b + (if c then 1 else 0)
+  let result =  (fromIntegral ac) + (fromIntegral b) + (if c then 1 else 0) :: Word16
   setFlag Carry (result > 0xFF) -- 9-bit overflow
-  setFlag Zero (result == 0)
+  setFlag Zero ((result .&. 0xFF) == 0)
   setFlag Negative (testBit result 7)
-  -- Overflow logic: (A^b7) && ~(ac^b7)
-  setFlag Overflow (not (testBit (ac `xor` b) 7) && testBit (ac `xor` result) 7)
+  setFlag Overflow (not (testBit (ac `xor` b) 7) && testBit (ac `xor` (fromIntegral result)) 7) -- Overflow logic: (A^b7) && ~(ac^b7)
   setAC (fromIntegral result)
 
 
@@ -77,75 +53,88 @@ sbc :: AddressMode -> FDX ()
 sbc mode = modifyOperand Accumulator $ \ac -> do
   b <- fetchOperand mode
   c <- isFlagSet Carry
-  -- TODO: update status register
-  return $! ac - b - (toBit c)
- where
- toBit True  = 1
- toBit False = 0
+  let result = (fromIntegral ac) - (fromIntegral b) - (if c then 0 else 1) :: Word16
+  setFlag Carry (result > 0xFF) -- 9-bit overflow
+  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Negative (testBit result 7)
+  setFlag Overflow (testBit (ac `xor` b) 7 && testBit (ac `xor` (fromIntegral result)) 7) -- Overflow logic: (A^b7) && (ac^b7)
+  setAC (fromIntegral result)   
+  return $! fromIntegral result
 
 andAC :: AddressMode -> FDX ()
--- TODO: update status register
 andAC mode = do
   b <- fetchOperand mode
   modifyOperand Accumulator $ \ac -> do
-    return $! ac .&. b
+    let result = ac .&. b
+    setFlag Zero ((result .&. 0xFF) == 0)
+    setFlag Negative (testBit result 7)
+    return result
 
 asl :: AddressMode -> FDX ()
--- TODO: update status register
 asl mode = modifyOperand mode $ \b -> do
   setFlag Carry (testBit b 7)
-  return $! (b `shiftL` 1)
+  let result = shiftL b 1
+  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Negative (testBit result 7)
+  return result
 
 lsr :: AddressMode -> FDX ()
--- TODO: update status register
 lsr mode = modifyOperand mode $ \b -> do
-  setFlag Carry (testBit b 7)
-  -- TODO: is this the right shiftR?
-  return $! (b `shiftR` 1)
+  setFlag Carry (testBit b 0)
+  setFlag Negative False
+  let result = shiftR b 1
+  setFlag Zero ((result .&. 0xFF) == 0)
+  return result
 
 dec :: AddressMode -> FDX ()
 dec mode = modifyOperand mode $ \b -> do
-  let m = b - 1
-  setFlag Negative (testBit m 7)
-  setFlag Zero     (m == 0)
-  return m
+  let result = b - 1
+  setFlag Negative (testBit result 7)
+  setFlag Zero ((result .&. 0xFF) == 0)
+  return result
 
 eor :: AddressMode -> FDX ()
 eor mode = modifyOperand Accumulator $ \ac -> do
   b <- fetchOperand mode
-  let m = ac `xor` b
-  setFlag Negative (testBit m 7)
-  setFlag Zero     (m == 0)
-  return m
+  let result = ac `xor` b
+  setFlag Negative (testBit result 7)
+  setFlag Zero ((result .&. 0xFF) == 0)
+  return result
 
 ora :: AddressMode -> FDX ()
 ora mode = modifyOperand Accumulator $ \ac -> do
   b <- fetchOperand mode
-  let m = ac .|. b
-  setFlag Negative (testBit m 7)
-  setFlag Zero     (m == 0)
-  return m
+  let result = ac .|. b
+  setFlag Negative (testBit result 7)
+  setFlag Zero ((result .&. 0xFF) == 0)
+  return result
 
 rol :: AddressMode -> FDX ()
 rol mode = modifyOperand mode $ \m -> do
-  let m' = m `rotateL` 1
-  -- TODO: update status registers and check
-  -- that this is the right rotate
-  return m'
+  inputCarry <- isFlagSet Carry
+  let outputCarry = testBit m 7
+  let result = (m `shiftL` 1) .|. (if inputCarry then 0x01 else 0x00)
+  setFlag Negative (testBit result 7)
+  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Carry outputCarry
+  return result
 
 ror :: AddressMode -> FDX ()
 ror mode = modifyOperand mode $ \m -> do
-  let m' = m `rotateR` 1
-  -- TODO: update status registers and check
-  -- that this is the right rotate
-  return m'
+  inputCarry <- isFlagSet Carry 
+  let outputCarry = testBit m 0
+  let result = (m `shiftR` 1) .|. (if inputCarry then 0x80 else 0x00)
+  setFlag Negative (testBit result 7)
+  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Carry outputCarry
+  return result
 
 inc :: AddressMode -> FDX ()
 inc mode = modifyOperand mode $ \b -> do
-  let m = b + 1
-  setFlag Negative (testBit m 7)
-  setFlag Zero     (m == 0)
-  return m
+  let result = b + 1
+  setFlag Negative (testBit result 7)
+  setFlag Zero ((result .&. 0xFF) == 0)
+  return result
 
 data JMPType = AbsoluteJmp
              | IndirectJmp
@@ -174,7 +163,7 @@ jsr = do
   currentPC <- getReg rPC
   liftIO $ putStrLn $ "Jsr return address: " ++ (showHex currentPC "")
 
-  pushWord currentPC -- Push the return address
+  pushWord currentPC -- Push the return address (PC + 2)
   setPC targetAddress -- Set PC to the target address
 
 load :: AddressMode -> AddressMode -> FDX ()
@@ -269,29 +258,6 @@ setFlag f b = do
  setFlagBit rs True  = setSRFlag rs f
  setFlagBit rs False = clearSRFlag rs f
 
--- | Fetches a byte from the provided
--- address.
-fetchByteMem :: Word16 -> FDX Word8
-fetchByteMem addr = do
-  mem <- getMemory
-  Mem.fetchByte addr mem
-
--- | Fetches a word located at an address
--- stored in the zero page. That means
--- we only need an 8bit address, but we
--- also read address+1
-fetchWordMem :: Word8 -> FDX Word16
-fetchWordMem addr = do
-  mem <- getMemory
-  lo  <- Mem.fetchByte (toWord addr)     mem
-  hi  <- Mem.fetchByte (toWord (addr+1)) mem
-  return $! mkWord lo hi
-
-writeByteMem :: Word16 -> Word8 -> FDX ()
-writeByteMem addr b = do
-  mem <- getMemory
-  Mem.writeByte addr b mem
-
 -- fetchByteAtPC :: FDX Word8
 -- fetchByteAtPC = do
 --   pc <- getReg rPC
@@ -316,36 +282,7 @@ writeByteMem addr b = do
 --   -- REMOVE PC increment here
 --   return $! mkWord low high
 
--- In this context, "Word" in an identifier name
--- means a machine word on the 6502 which is 16 bits.
--- Not to be confused with the Haskell Word type
-mkWord :: Word8  -- ^ low byte
-       -> Word8  -- ^ high byte
-       -> Word16
-mkWord !lb !hb = (hw `shiftL` 8) + lw
-  where
-  lw = toWord lb
-  hw = toWord hb
 
-toWord :: Word8 -> Word16
-toWord = fromIntegral
-
-fdxSingleCycle :: FDX Bool -- Returns True if emulation should continue, False if halted
-fdxSingleCycle = do
-  -- liftIO $ putStrLn ""
-  machineState <- get
-  -- liftIO $ putStrLn $ "Current PC at start of fdxSingleCycle: $" ++ showHex (rPC (mRegs machineState)) ""
-  if halted machineState
-    then return False -- Machine is halted, stop emulation
-    else do
-      -- liftIO $ putStrLn "Fetching instruction..."
-      pc <- getReg rPC  -- Get current PC
-      b <- fetchByteMem pc -- Fetch opcode byte at PC
-      setPC (pc + 1)   -- Move PC to next byte (like a real 6502)
-      modify (\s -> s { instructionCount = instructionCount s + 1 })
-      execute b
-      machineState' <- get
-      return (not (halted machineState'))
 
 -- Original fetchByteAtPC - replaced inline in fdxSingleCycle
 -- fetchByteAtPC :: FDX Word8
@@ -405,6 +342,13 @@ fetchOperand X           = getReg rX
 fetchOperand Y           = getReg rY
 fetchOperand SP          = getReg rSP
 
+-- modifyOperand :: AddressMode -> (Word8 -> FDX Word8) -> FDX ()
+--Takes an AddressMode (like Accumulator, Zeropage, Absolute, etc.) and a function.
+--Then write value returned by function back to the correct location (memory or a register) based on the AddressMode.
+--Function (Word8 -> FDX Word8) 
+--  * takes the current value of the operand (fetched according to the AddressMode) as input.
+--  * perform the desired operation (like shifting) and update status flags.
+--  * must return the new value for the operand within the FDX monad.
 modifyOperand :: AddressMode -> (Word8 -> FDX Word8) -> FDX ()
 modifyOperand Immediate _ = return () -- Cannot write to immediate
 
@@ -490,133 +434,55 @@ modifyOperand SP          op = do
   sp' <- op sp
   setSP sp'
 
+-- opcodes without WDC (Western Design Center) W65C02 Extensions
 execute :: Word8 -> FDX ()
 execute opc = do
   pc' <- getReg rPC
   liftIO $ putStrLn $ "Executing opcode $" ++ showHex opc "" ++ " at PC $" ++ showHex pc' ""
   case opc of
-    -- ADC, Add Memory to Accumulator with Carry
-    -- A + M + C -> A, C
+
     -- N Z C I D V
     -- + + + - - +
-    --
-    0x69 -> do addAC Immediate
-    0x65 -> do
-      addAC Zeropage
-    0x75 -> do
-      addAC ZeropageX
-    0x6D -> do
-      addAC Absolute
-    0x7D -> do
-      addAC AbsoluteX
-    0x79 -> do
-      addAC AbsoluteY
-    0x61 -> do
-      addAC IndirectX
-    0x71 -> do
-      addAC IndirectY
+    0x69 -> addAC Immediate    -- ADC, Add Memory to Accumulator with Carry    -- A + M + C -> A, C
+    0x65 -> addAC Zeropage
+    0x75 -> addAC ZeropageX
+    0x6D -> addAC Absolute
+    0x7D -> addAC AbsoluteX
+    0x79 -> addAC AbsoluteY
+    0x61 -> addAC IndirectX
+    0x71 -> addAC IndirectY
 
-    -- AND, AND Memory with Accumulator
-    -- A AND M -> A
     -- N Z C I D V
     -- + + - - - -
-    0x29 -> do
-      andAC Immediate
+    0x29 -> andAC Immediate    -- AND, AND Memory with Accumulator    -- A AND M -> A
+    0x25 -> andAC Zeropage
+    0x35 -> andAC ZeropageX
+    0x2D -> andAC Absolute
+    0x3D -> andAC AbsoluteX
+    0x39 -> andAC AbsoluteY
+    0x21 -> andAC IndirectX
+    0x31 -> andAC IndirectY
 
-    0x25 -> do
-      andAC Zeropage
-
-    0x35 -> do
-      andAC ZeropageX
-
-    0x2D -> do
-      andAC Absolute
-
-    0x3D -> do
-      andAC AbsoluteX
-
-    0x39 -> do
-      andAC AbsoluteY
-
-    0x21 -> do
-      andAC IndirectX
-
-    0x31 -> do
-      andAC IndirectY
-
-    -- ASL, Shift Left One Bit (Memory of Accumulator)
-    -- C <- [76543210] <- 0
     -- N Z C I D V
     -- + + + - - -
-    0x0A -> do
-      asl Accumulator
+    0x0A -> asl Accumulator    -- ASL, Shift Left One Bit (Memory of Accumulator)    -- C <- [76543210] <- 0
+    0x06 -> asl Zeropage
+    0x16 -> asl ZeropageX
+    0x0E -> asl Absolute
+    0x1E -> asl AbsoluteX
 
-    0x06 -> do
-      asl Zeropage
+    0x90 -> branchOn (not <$> isFlagSet Carry)    -- BCC, Branch on Carry Clear
+    0xB0 -> branchOn (isFlagSet Carry)    -- BCS, Branch On Carry Set
+    0xF0 -> branchOn (isFlagSet Zero)    -- BEQ, Branch on Result Zero
 
-    0x16 -> do
-      asl ZeropageX
-
-    0x0E -> do
-      asl Absolute
-
-    0x1E -> do
-      asl AbsoluteX
-
-    -- BCC, Branch on Carry Clear
-    -- branch if C = 0
-    -- N Z C I D V
-    -- - - - - - -
-    0x90 -> do
-      branchOn (not <$> isFlagSet Carry)
-
-    -- BCS, Branch On Carry Set
-    -- branch if C = 1
-    -- N Z C I D V
-    -- - - - - - -
-    0xB0 -> do
-      branchOn (isFlagSet Carry)
-
-    -- BEQ, Branch on Result Zero
-    -- branch if Z = 1
-    -- N Z C I D V
-    -- - - - - - -
-    0xF0 -> do
-      branchOn (isFlagSet Zero)
-
-    -- BIT, Test Bits in Memory with Accumulator
-    -- A AND M, M7 -> N, M6 -> V
     --  N Z C I D V
     -- M7 + - - - M6
-    -- TODO: wikibooks listed a 3rd op code for BIT
-    -- why is that?
-    0x24 -> do
-      testBits Zeropage
+    0x24 -> testBits Zeropage    -- BIT, Test Bits in Memory with Accumulator   -- A AND M, M7 -> N, M6 -> V
+    0x2C -> testBits Absolute
 
-    0x2C -> do
-      testBits Absolute
-
-    -- BMI, Branch on Result Minus
-    -- branch if N = 1
-    -- N Z C I D V
-    -- - - - - - -
-    0x30 -> do
-      branchOn (isFlagSet Negative)
-
-    -- BNE, Branch on Result not Zero
-    -- branch if Z = 0
-    -- N Z C I D V
-    -- - - - - - -
-    0xD0 -> do
-      branchOn (not <$> isFlagSet Zero)
-
-
-    -- BPL, Branch on Resutl Plus
-    -- branch if N = 0
-    -- N Z C I D V
-    -- - - - - - -
-    0x10 -> do
-      branchOn (not <$> isFlagSet Negative)
+    0x30 -> branchOn (isFlagSet Negative)    -- BMI, Branch on Result Minus
+    0xD0 -> branchOn (not <$> isFlagSet Zero)    -- BNE, Branch on Result not Zero
+    0x10 -> branchOn (not <$> isFlagSet Negative)    -- BPL, Branch on Resutl Plus
 
 
     -- BRK, Force Break
@@ -633,565 +499,207 @@ execute opc = do
       -- Signal that the machine should halt
       modify (\s -> s { halted = True })
 
-    -- BVC, Break on Overflow Clear
-    -- branch if V = 0
-    -- N Z C I D V
-    -- - - - - - -
-    0x50 -> do
-      branchOn (not <$> isFlagSet Overflow)
+    0x50 -> branchOn (not <$> isFlagSet Overflow)    -- BVC, Break on Overflow Clear
+    0x70 -> branchOn (isFlagSet Overflow)    -- BVS, Branch on Overflow Set
+    --  addAC IndirectY
 
-    -- BVS, Branch on Overflow Set
-    -- branch if V = 1
-    -- N Z C I D V
-    -- - - - - - -
-    0x70 -> do
-      branchOn (isFlagSet Overflow)
-
-    -- CLC, Clear Carry flag
-    -- 0 -> C
     -- N Z C I D V
     -- - - 0 - - -
-      addAC IndirectY
-    0x18 -> do
-      setFlag Carry False
+    0x18 -> setFlag Carry False    -- CLC, Clear Carry flag    -- 0 -> C
 
-    -- CLD, Clear Decimal Mode
-    -- 0 -> D
     -- N Z C I D V
     -- - - - - 0 -
-    0xD8 -> do
-      setFlag Decimal False
+    0xD8 -> setFlag Decimal False    -- CLD, Clear Decimal Mode    -- 0 -> D
 
-    -- CLI, Clear Interrupt Disable Bit
-    -- 0 -> I
     -- N Z C I D V
     -- - - - 0 - -
-    0x58 -> do
-      setFlag Interrupt False
+    0x58 -> setFlag Interrupt False    -- CLI, Clear Interrupt Disable Bit    -- 0 -> I
 
-    -- CLV, Clear Overflow Flag
-    -- 0 -> V
     -- N Z C I D V
     -- - - - - - 0
-    0xB8 -> do
-      setFlag Overflow False
+    0xB8 -> setFlag Overflow False    -- CLV, Clear Overflow Flag    -- 0 -> V
 
-    -- CMP, Compare Memory with Accumulator
-    -- A - M
     -- N Z C I D V
     -- + + + - - -
-    0xC9 -> do
-      cmp rAC Immediate
+    0xC9 -> cmp rAC Immediate    -- CMP, Compare Memory with Accumulator    -- A - M
+    0xC5 -> cmp rAC Zeropage
+    0xD5 -> cmp rAC ZeropageX
+    0xCD -> cmp rAC Absolute
+    0xDD -> cmp rAC AbsoluteX
+    0xD9 -> cmp rAC AbsoluteY
+    0xC1 -> cmp rAC IndirectX
+    0xD1 -> cmp rAC IndirectY
+    0xE0 -> cmp rX Immediate    -- CPX, Compare Memory and Index X    -- X - M
+    0xE4 -> cmp rX Zeropage
+    0xEC -> cmp rX Absolute
+    0xC0 -> cmp rY Immediate    -- CPY, Compare Memory and Index Y    -- Y - M
+    0xC4 -> cmp rY Zeropage
+    0xCC -> cmp rY Absolute
 
-    0xC5 -> do
-      cmp rAC Zeropage
-
-    0xD5 -> do
-      cmp rAC ZeropageX
-
-    0xCD -> do
-      cmp rAC Absolute
-
-    0xDD -> do
-      cmp rAC AbsoluteX
-
-    0xD9 -> do
-      cmp rAC AbsoluteY
-
-    0xC1 -> do
-      cmp rAC IndirectX
-
-    0xD1 -> do
-      cmp rAC IndirectY
-
-    -- CPX, Compare Memory and Index X
-    -- X - M
-    -- N Z C I D V
-    -- + + + - - -
-    0xE0 -> do
-      cmp rX Immediate
-
-    0xE4 -> do
-      cmp rX Zeropage
-
-    0xEC -> do
-      cmp rX Absolute
-
-    -- CPY, Compare Memory and Index Y
-    -- Y - M
-    -- N Z C I D V
-    -- + + + - - -
-    0xC0 -> do
-      cmp rY Immediate
-
-    0xC4 -> do
-      cmp rY Zeropage
-
-    0xCC -> do
-      cmp rY Absolute
-
-    -- DEC, Decrement Memory by One
-    -- M - 1 -> M
     -- N Z C I D V
     -- + + - - - -
-    0xC6 -> do
-      dec Zeropage
+    0xC6 -> dec Zeropage    -- DEC, Decrement Memory by One    -- M - 1 -> M
+    0xD6 -> dec ZeropageX
+    0xCE -> dec Absolute
+    0xDE -> dec AbsoluteX
 
-    0xD6 -> do
-      dec ZeropageX
-
-    0xCE -> do
-      dec Absolute
-
-    0xDE -> do
-      dec AbsoluteX
-
-    -- DEX, Decrement Index X by One
-    -- X - 1 -> X
     -- N Z C I D V
     -- + + - - - -
-    0xCA -> do
-      dec X
+    0xCA -> dec X    -- DEX, Decrement Index X by One    -- X - 1 -> X
+    0x88 -> dec Y    -- DEY, Decrement Index Y by One    -- Y - 1 -> Y
 
-    -- DEY, Decrement Index Y by One
-    -- Y - 1 -> Y
     -- N Z C I D V
     -- + + - - - -
-    0x88 -> do
-      dec Y
+    0x49 -> eor Immediate    -- EOR, Exclusive-OR Memory with Accumulator    -- A EOR M -> A
+    0x45 -> eor Zeropage
+    0x55 -> eor ZeropageX
+    0x4D -> eor Absolute
+    0x5D -> eor AbsoluteX
+    0x59 -> eor AbsoluteY
+    0x41 -> eor IndirectX
+    0x51 -> eor IndirectY
 
-    -- EOR, Exclusive-OR Memory with Accumulator
-    -- A EOR M -> A
     -- N Z C I D V
     -- + + - - - -
-    0x49 -> do
-      eor Immediate
+    0xE6 -> inc Zeropage    -- INC, Increment Memory by One    -- M + 1 -> M
+    0xF6 -> inc ZeropageX
+    0xEE -> inc Absolute
+    0xFE -> inc AbsoluteX
 
-    0x45 -> do
-      eor Zeropage
-
-    0x55 -> do
-      eor ZeropageX
-
-    0x4D -> do
-      eor Absolute
-
-    0x5D -> do
-      eor AbsoluteX
-
-    0x59 -> do
-      eor AbsoluteY
-
-    0x41 -> do
-      eor IndirectX
-
-    0x51 -> do
-      eor IndirectY
-
-    -- INC, Increment Memory by One
-    -- M + 1 -> M
     -- N Z C I D V
     -- + + - - - -
-    0xE6 -> do
-      inc Zeropage
+    0xE8 -> inc X    -- INX, Increment Index X by One    -- X + 1 -> X
+    0xC8 -> inc Y    -- INY, Increment Index Y by One    -- Y + 1 -> Y
 
-    0xF6 -> do
-      inc ZeropageX
+    0x4C -> jmp AbsoluteJmp    -- JMP, Jump to New Location   -- (PC + 1) -> PCL, (PC + 2) -> PCH
+    0x6C -> jmp IndirectJmp
 
-    0xEE -> do
-      inc Absolute
+    0x20 -> jsr    -- JSR, Jump to New Location Saving Return Address   -- push (PC + 2), (PC + 1) -> PCL, (PC + 2) -> PCH
 
-    0xFE -> do
-      inc AbsoluteX
-
-    -- INX, Increment Index X by One
-    -- X + 1 -> X
     -- N Z C I D V
     -- + + - - - -
-    0xE8 -> do
-      inc X
+    0xA9 -> load Immediate Accumulator    -- LDA, Load Accumulator with Memory    -- M -> A
+    0xA5 -> load Zeropage  Accumulator
+    0xB5 -> load ZeropageX Accumulator
+    0xAD -> load Absolute  Accumulator
+    0xBD -> load AbsoluteX Accumulator
+    0xB9 -> load AbsoluteY Accumulator
+    0xA1 -> load IndirectX Accumulator
+    0xB1 -> load IndirectY Accumulator
+    0xA2 -> load Immediate X    -- LDX, Load Index X with Memory    -- M -> X
+    0xA6 -> load Zeropage  X
+    0xB6 -> load ZeropageY X
+    0xAE -> load Absolute  X
+    0xBE -> load AbsoluteY X
+    0xA0 -> load Immediate Y    -- LDY, Load Index Y with Memory    -- M -> Y
+    0xA4 -> load Zeropage  Y
+    0xB4 -> load ZeropageX Y
+    0xAC -> load Absolute  Y
+    0xBC -> load AbsoluteX Y
 
-    -- INY, Increment Index Y by One
-    -- Y + 1 -> Y
-    -- N Z C I D V
-    -- + + - - - -
-    0xC8 -> do
-      inc Y
-
-    -- JMP, Jump to New Location
-    -- (PC + 1) -> PCL
-    -- (PC + 2) -> PCH
-    -- N Z C I D V
-    -- - - - - - -
-    0x4C -> do
-      jmp AbsoluteJmp
-
-    0x6C -> do
-      jmp IndirectJmp
-
-    -- JSR, Jump to New Location Saving Return Address
-    -- push (PC + 2)
-    -- (PC + 1) -> PCL
-    -- (PC + 2) -> PCH
-    -- N Z C I D V
-    -- - - - - - -
-    0x20 -> do
-      jsr
-
-    -- LDA, Load Accumulator with Memory
-    -- M -> A
-    -- N Z C I D V
-    -- + + - - - -
-    0xA9 -> do
-      load Immediate Accumulator
-
-    0xA5 -> do
-      load Zeropage  Accumulator
-
-    0xB5 -> do
-      load ZeropageX Accumulator
-
-    0xAD -> do
-      load Absolute  Accumulator
-
-    0xBD -> do
-      load AbsoluteX Accumulator
-
-    0xB9 -> do
-      load AbsoluteY Accumulator
-
-    0xA1 -> do
-      load IndirectX Accumulator
-
-    0xB1 -> do
-      load IndirectY Accumulator
-
-    -- LDX, Load Index X with Memory
-    -- M -> X
-    -- N Z C I D V
-    -- + + - - - -
-    0xA2 -> do
-      load Immediate X
-
-    0xA6 -> do
-      load Zeropage  X
-
-    0xB6 -> do
-      load ZeropageY X
-
-    0xAE -> do
-      load Absolute  X
-
-    0xBE -> do
-      load AbsoluteY X
-
-    -- LDY, Load Index Y with Memory
-    -- M -> Y
-    -- N Z C I D V
-    -- + + - - - -
-    0xA0 -> do
-      load Immediate Y
-
-    0xA4 -> do
-      load Zeropage  Y
-
-    0xB4 -> do
-      load ZeropageX Y
-
-    0xAC -> do
-      load Absolute  Y
-
-    0xBC -> do
-      load AbsoluteX Y
-
-    -- LSR, Shift One Bit Right (Memory or Accumulator)
-    -- 0 -> [76543210] -> C
     -- N Z C I D V
     -- - + + - - -
-    0x4A -> do
-      lsr Accumulator
+    0x4A -> lsr Accumulator    -- LSR, Shift One Bit Right (Memory or Accumulator)    -- 0 -> [76543210] -> C
+    0x46 -> lsr Zeropage
+    0x56 -> lsr ZeropageX
+    0x4E -> lsr Absolute
+    0x5E -> lsr AbsoluteX
 
-    0x46 -> do
-      lsr Zeropage
-
-    0x56 -> do
-      lsr ZeropageX
-
-    0x4E -> do
-      lsr Absolute
-
-    0x5E -> do
-      lsr AbsoluteX
-
-    -- NOP, No Operation
     -- TODO: I believe this still needs to fetch the PC
     -- to get the cycle count right and not loop
-    0xEA -> return ()
+    0xEA -> return ()    -- NOP, No Operation
 
-    -- ORA, OR Memory with Accumulator
-    -- A OR M -> A
     -- N Z C I D V
     -- + + - - - -
-    0x09 -> do
-      ora Immediate
+    0x09 -> ora Immediate    -- ORA, OR Memory with Accumulator    -- A OR M -> A
+    0x05 -> ora Zeropage
+    0x15 -> ora ZeropageX
+    0x0D -> ora Absolute
+    0x1D -> ora AbsoluteX
+    0x19 -> ora AbsoluteY
+    0x01 -> ora IndirectX
+    0x11 -> ora IndirectY
 
-    0x05 -> do
-      ora Zeropage
-      
-    0x15 -> do
-      ora ZeropageX
+    0x48 -> pushReg rAC    -- PHA, Push Accumulator on Stack    -- push A
+    0x08 -> pushReg rSR    -- PHP, Push Processor Status on Stack    -- push SR
 
-    0x0D -> do
-      ora Absolute
-
-    0x1D -> do
-      ora AbsoluteX
-
-    0x19 -> do
-      ora AbsoluteY
-
-    0x01 -> do
-      ora IndirectX
-
-    0x11 -> do
-      ora IndirectY
-
-    -- PHA, Push Accumulator on Stack
-    -- push A
-    -- N V C I D V
-    -- - - - - - -
-    0x48 -> do
-      pushReg rAC
-  -- +p
-    -- PHP, Push Processor Status on Stack
-    -- push SR
-    -- N Z C I D V
-    -- + + + + + +
-    0x08 -> do
-      pushReg rSR -- +p
-
-    -- PLA, Pull Accumulator from Stack
-    -- pull A
     -- N Z C I D V
     -- + + - - - -
-    0x68 -> do
+    0x68 -> do    -- PLA, Pull Accumulator from Stack    -- pull A
       b <- pull
       setFlag Negative (testBit b 7)
       setFlag Zero     (b == 0)
       setAC b
 
-    -- PLP, Pull Processor Status from Stack
-    -- pull SR
-    -- N Z C I D V
-    -- + + + + + +
-    0x28 -> do
+
+    0x28 -> do    -- PLP, Pull Processor Status from Stack    -- pull SR
       b <- pull
-      setFlag Negative (testBit b 7)
-      setFlag Zero     (b == 0)
       setSR b
 
-    -- ROL, Rotate One Bit Left (Memory or Accumulator)
-    -- C <- [76543210] <- C
     -- N Z C I D V
     -- + + + - - -
-    0x2A -> do
-      rol Accumulator
+    0x2A -> rol Accumulator    -- ROL, Rotate One Bit Left (Memory or Accumulator)    -- C <- [76543210] <- C
+    0x26 -> rol Zeropage
+    0x36 -> rol ZeropageX
+    0x2E -> rol Absolute
+    0x3E -> rol AbsoluteX
+    0x6A -> ror Accumulator    -- ROR, Rotate One Bit Right (Memory or Accumulator)    -- C -> [76543210] -> C
+    0x66 -> ror Zeropage
+    0x76 -> ror ZeropageX
+    0x6E -> ror Absolute
+    0x7E -> ror AbsoluteX
 
-    0x26 -> do
-      rol Zeropage
-
-    0x36 -> do
-      rol ZeropageX
-
-    0x2E -> do
-      rol Absolute
-
-    0x3E -> do
-      rol AbsoluteX
-
-    -- ROR, Rotate One Bit Right (Memory or Accumulator)
-    -- C -> [76543210] -> C
-    -- N Z C I D V
-    -- + + + - - -
-    0x6A -> do
-      ror Accumulator
-
-    0x66 -> do
-      ror Zeropage
-
-    0x76 -> do
-      ror ZeropageX
-
-    0x6E -> do
-      ror Absolute
-
-    0x7E -> do
-      ror AbsoluteX
-
-    -- RTI, Return from Interrupt
-    -- pull SR, pull PC
-    -- N Z C I D V
-    -- - - - - - -
-    0x40 -> do
-    -- TODO: is the PC set correctly at the end?
+    0x40 -> do    -- RTI, Return from Interrupt    -- pull SR, pull PC
       sr  <- pull
       setSR sr
       pch <- pull
       pcl <- pull
       setPC (mkWord pcl pch)
 
-    -- RTS, Return from Subroutine
-    -- pull PC, PC + 1 -> PC
-    -- N Z C I D V
-    -- - - - - - -
-    0x60 -> do
-    -- TODO: is the PC set correctly at the end?
+    0x60 -> do    -- RTS, Return from Subroutine    -- pull PC, PC + 1 -> PC
       pch <- pull
       pcl <- pull
       setPC ((mkWord pcl pch) + 1)
-      
-    -- SBC, Subtract Memory from Accumulator with Borrow
-    -- A - M - C -> A
+
     -- N Z C I D V
     -- + + + - - +
-    0xE9 -> do
-      sbc Immediate
+    0xE9 -> sbc Immediate    -- SBC, Subtract Memory from Accumulator with Borrow    -- A - M - C -> A
+    0xE5 -> sbc Zeropage
+    0xF5 -> sbc ZeropageX
+    0xED -> sbc Absolute
+    0xFD -> sbc AbsoluteX
+    0xF9 -> sbc AbsoluteY
+    0xE1 -> sbc IndirectX
+    0xF1 -> sbc IndirectY
 
-    0xE5 -> do
-      sbc Zeropage
+    0x38 -> setFlag Carry True        -- SEC, Set Carry Flag       -- 1 -> C
+    0xF8 -> setFlag Decimal True      -- SED, Set Decimal Flag     -- 1 -> D
+    0x78 -> setFlag Interrupt True    -- SEI, Set Interrupt Disable Status    -- 1 -> I
 
-    0xF5 -> do
-      sbc ZeropageX
+    0x85 -> store Accumulator Zeropage    -- STA, Store Accumulator in Memory    -- A -> M
+    0x95 -> store Accumulator ZeropageX
+    0x8D -> store Accumulator Absolute
+    0x9D -> store Accumulator AbsoluteX
+    0x99 -> store Accumulator AbsoluteY
+    0x81 -> store Accumulator IndirectX
+    0x91 -> store Accumulator IndirectY
+    0x86 -> store X Zeropage    -- STX, Store Index X in Memory    -- X -> M
+    0x96 -> store X ZeropageY
+    0x8E -> store X Absolute
+    0x84 -> store Y Zeropage    -- STY, Store Index Y in Memory    -- Y -> M
+    0x94 -> store Y ZeropageX
+    0x8C -> store Y Absolute
 
-    0xED -> do
-      sbc Absolute
-
-    0xFD -> do
-      sbc AbsoluteX
-
-    0xF9 -> do
-      sbc AbsoluteY
-
-    0xE1 -> do
-      sbc IndirectX
-
-    0xF1 -> do
-      sbc IndirectY
-
-    -- SEC, Set Carry Flag
-    -- 1 -> C
-    -- N Z C I D V
-    -- - - 1 - - -
-    0x38 -> do
-      setFlag Carry True
-
-    -- SED, Set Decimal Flag
-    -- 1 -> D
-    -- N Z C I D V
-    -- - - - - 1 -
-    0xF8 -> do
-      setFlag Decimal True
-
-    -- SEI, Set Interrupt Disable Status
-    -- 1 -> I
-    -- N Z C I D V
-    -- - - - 1 - -
-    0x78 -> do
-      setFlag Interrupt True
-
-    -- STA, Store Accumulator in Memory
-    -- A -> M
-    -- N Z C I D V
-    -- - - - - - -
-    0x85 -> do
-      store Accumulator Zeropage
-
-    0x95 -> do
-      store Accumulator ZeropageX
-
-    0x8D -> do
-      store Accumulator Absolute
-
-    0x9D -> do
-      store Accumulator AbsoluteX
-
-    0x99 -> do
-      store Accumulator AbsoluteY
-
-    0x81 -> do
-      store Accumulator IndirectX
-
-    0x91 -> do
-      store Accumulator IndirectY
-
-    -- STX, Store Index X in Memory
-    -- X -> M
-    -- N Z C I D V
-    -- - - - - - -
-    0x86 -> do
-      store X Zeropage
-
-    0x96 -> do
-      store X ZeropageY
-
-    0x8E -> do
-      store X Absolute
-
-    -- STY, Store Index Y in Memory
-    -- Y -> M
-    -- N Z C I D V
-    -- - - - - - -
-    0x84 -> do
-      store Y Zeropage
-
-    0x94 -> do
-      store Y ZeropageX
-
-    0x8C -> do
-      store Y Absolute
-
-    -- TAX, Transfer Accumulator to Index X
-    -- A -> X
     -- N Z C I D V
     -- + + - - - -
-    0xAA -> do
-      load Accumulator X
+    0xAA -> load Accumulator X    -- TAX, Transfer Accumulator to Index X    -- A -> X
+    0xA8 -> load Accumulator Y    -- TAY, Transfer Accumulator to Index Yodes are nop    -- A -> Y
+    0xBA -> load SP X             -- TSX, Transfer Stack Pointer to Index x    -- SP -> X
+    0x8A -> load X Accumulator    -- TXA, Transfer Index X to Accumulator    -- X -> A
+    0x9A -> load X SP    -- TXS, Transfer Index X to Stack Register    -- X -> SP
+    0x98 -> load Y Accumulator    -- TYA -> Transfer Index Y to Accumulator    -- Y -> A
 
-    -- TAY, Transfer Accumulator to Index Y
-    -- A -> Y
-    -- N Z C I D V
-    -- + + - - - -
-    0xA8 -> do
-      load Accumulator Y
-
-    -- TSX, Transfer Stack Pointer to Index x
-    -- SP -> X
-    -- N Z C I D V
-    -- + + - - - -
-    0xBA -> do
-      load SP X
-
-    -- TXA, Transfer Index X to Accumulator
-    -- X -> A
-    -- N Z C I D V
-    -- + + - - - -
-    0x8A -> do
-      load X Accumulator
-
-    -- TXS, Transfer Index X to Stack Register
-    -- X -> SP
-    -- N Z C I D V
-    0x9A -> do
-      load X SP
-
-    -- TYA -> Transfer Index Y to Accumulator
-    -- Y -> A
-    -- N Z C I D V
-    0x98 -> do
-      load Y Accumulator
-
-    -- TODO: all unimplemented opcodes are nop
+    -- TODO: all unimplemented opc    
     -- the correct thing would be to check
     -- their cycle counts
-    _ -> do
-      return () -- Instruction size in bytes
+    _ -> do return () -- Instruction size in bytes

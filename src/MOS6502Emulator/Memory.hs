@@ -21,3 +21,4 @@ fetchByte addr m = liftIO $ read m (fromIntegral addr)
 
 writeByte :: MonadIO m => Word16 -> Word8 -> Memory -> m ()
 writeByte addr b m = liftIO $ write m (fromIntegral addr) b
+
