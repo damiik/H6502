@@ -1,0 +1,127 @@
+--- a/src/MOS6502Emulator/Instructions.hs
++++ b/src/MOS6502Emulator/Instructions.hs
+@@ ... @@
+-  pc <- getReg rPC  -- Get current PC
+-  b <- fetchByteMem pc -- Fetch byte at current PC
+-  -- REMOVE setPC (pc + 1) here
+-
+-  -- Increment instruction count
+-  modify (\s -> s { instructionCount = instructionCount s + 1 })
+-  -- liftIO $ putStrLn $ "Executing opcode: " ++ show b
+-  -- TODO: Add cycle count increment based on opcode execution
+-  instructionSize <- execute b -- execute now returns instruction size
+-  -- liftIO $ putStrLn "Instruction executed."
+-  -- Increment PC by the instruction size after execution
+-  pcAfterExecution <- getReg rPC -- Get PC after execute might have changed it (e.g. JMP, JSR)
+-  setPC (pcAfterExecution + fromIntegral instructionSize)
+-
+-  machineState' <- get
+-  return (not (halted machineState')) -- Continue if not halted after execution
++  pc <- getReg rPC  -- Get current PC
++  b <- fetchByteMem pc -- Fetch opcode byte at PC
++  setPC (pc + 1)   -- Move PC to next byte (like a real 6502)
++  modify (\s -> s { instructionCount = instructionCount s + 1 })
++  execute b
++  machineState' <- get
++  return (not (halted machineState'))
+@@ ... @@
+-
+-fetchOperand :: AddressMode -> FDX Word8
+--- Immediate mode fetches the byte at the current PC and increments the PC.
+--- This is handled by fdxSingleCycle for the opcode fetch.
+--- For immediate operands after the opcode, we need a way to fetch the *next* byte.
+--- Let's create a helper for fetching the next byte and incrementing PC.
+-fetchOperand Immediate = do
+-    pc <- getReg rPC
+-    b <- fetchByteMem pc
+-    -- REMOVE setPC (pc + 1)
+-    return b
+-
+-fetchOperand Zeropage  = do
+-  addrByte <- fetchByteAtPC
+-  -- REMOVE setPC (pc + 1)
+-  fetchByteMem (toWord addrByte)
+-fetchOperand ZeropageX = do
+-  addrByte <- fetchByteAtPC
+-  -- REMOVE setPC (pc + 1)
+-  x <- getReg rX
+-  fetchByteMem (toWord (addrByte + x)) -- stay on the zeropage but add x
+-fetchOperand ZeropageY = do
+-  addrByte <- fetchByteAtPC
+-  -- REMOVE setPC (pc + 1)
+-  y <- getReg rY
+-  fetchByteMem (toWord (addrByte + y)) -- stay on the zeropage but add y
+-fetchOperand Absolute  = fetchWordAtPC >>= fetchByteMem
+-fetchOperand AbsoluteX = do
+-  w <- fetchWordAtPC
+-  x <- getReg rX
+-  fetchByteMem (w + (toWord x))
+-fetchOperand AbsoluteY = do
+-  w <- fetchWordAtPC
+-  y <- getReg rY
+-  fetchByteMem (w + (toWord y))
+-fetchOperand IndirectX = do
+-  b    <- fetchOperand Immediate
+-  x    <- getReg rX
+-  addr <- fetchWordMem (b + x) -- zeropage index plus x
+-  fetchByteMem addr
+-fetchOperand IndirectY = do
+-  -- In this case, we add the value in Y to the address pointed
+-  -- to by the zeropage address, and then fetch the byte there.
+-  b    <- fetchOperand Immediate
+-  addr <- fetchWordMem b
+-  y    <- getReg rY
+-  fetchByteMem (addr + toWord y)
+-fetchOperand Accumulator = getReg rAC
+-fetchOperand X           = getReg rX
+-fetchOperand Y           = getReg rY
+-fetchOperand SP          = getReg rSP
++-- | Fetches the next byte from memory at PC, incrementing PC
++fetchAndIncPC :: FDX Word8
++fetchAndIncPC = do
++  pc <- getReg rPC
++  b <- fetchByteMem pc
++  setPC (pc + 1)
++  return b
++
++-- | Fetches the next two bytes from memory at PC (little-endian), incrementing PC twice
++fetchWordAndIncPC :: FDX Word16
++fetchWordAndIncPC = do
++  lo <- fetchAndIncPC
++  hi <- fetchAndIncPC
++  return $ mkWord lo hi
++
++fetchOperand :: AddressMode -> FDX Word8
++fetchOperand Immediate = fetchAndIncPC
++fetchOperand Zeropage  = fetchAndIncPC >>= fetchByteMem . toWord
++fetchOperand ZeropageX = do
++  addrByte <- fetchAndIncPC
++  x <- getReg rX
++  fetchByteMem (toWord (addrByte + x))
++fetchOperand ZeropageY = do
++  addrByte <- fetchAndIncPC
++  y <- getReg rY
++  fetchByteMem (toWord (addrByte + y))
++fetchOperand Absolute  = fetchWordAndIncPC >>= fetchByteMem
++fetchOperand AbsoluteX = do
++  w <- fetchWordAndIncPC
++  x <- getReg rX
++  fetchByteMem (w + toWord x)
++fetchOperand AbsoluteY = do
++  w <- fetchWordAndIncPC
++  y <- getReg rY
++  fetchByteMem (w + toWord y)
++fetchOperand IndirectX = do
++  b    <- fetchAndIncPC
++  x    <- getReg rX
++  addr <- fetchWordMem (b + x)
++  fetchByteMem addr
++fetchOperand IndirectY = do
++  b    <- fetchAndIncPC
++  addr <- fetchWordMem b
++  y    <- getReg rY
++  fetchByteMem (addr + toWord y)
++fetchOperand Accumulator = getReg rAC
++fetchOperand X           = getReg rX
++fetchOperand Y           = getReg rY
++fetchOperand SP          = getReg rSP

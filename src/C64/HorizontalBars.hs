@@ -696,7 +696,6 @@ horizontalBars = do
         -- Kopiowanie kolumn - użycie pętli doWhile_
         ldy# 0
         clc                             -- Ustaw Carry na 0
-        brk
         doWhile_ IsNonCarry $ do        -- Pętla wykonuje się, dopóki Y < screenWidthChars
             -- Kopiuj znak
             lda $ IY mapSrcPtr          -- Czytaj z mapy źródłowej [mapSrcPtr],Y
@@ -719,6 +718,7 @@ horizontalBars = do
 
         -- Zmniejsz licznik wierszy
         dec rowCounter                  -- dec ustawia flagę Z, gdy licznik osiągnie 0
+        brk
     rts
 
     l_ "scanKeyboard"

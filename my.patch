@@ -1,0 +1,118 @@
+--- a/src/MOS6502Emulator/Instructions.hs
++++ b/src/MOS6502Emulator/Instructions.hs
+@@ -393,59 +393,55 @@
+-modifyOperand :: AddressMode -> (Word8 -> FDX Word8) -> FDX ()
+-modifyOperand Immediate _ = return () -- TODO: should this be an error?
+-modifyOperand Zeropage op = do
+-  b  <- fetchByteAtPC
+-  b' <- op b
+-  writeByteMem (toWord b) b'
+-modifyOperand ZeropageX op = do
+-  b <- fetchByteAtPC
+-  x <- getReg rX
+-  let addr = toWord (b + x) -- stay on the zeropage but add x
+-  v <- fetchByteMem addr
+-  v' <- op v
+-  writeByteMem addr v'
+-modifyOperand ZeropageY op = do
+-  b <- fetchByteAtPC
+-  y <- getReg rY
+-  let addr = toWord (b + y) -- stay on the zeropage but add y
+-  v <- fetchByteMem addr
+-  v' <- op v
+-  writeByteMem addr v'
+-modifyOperand Absolute  op = do
+-  addr <- fetchWordAtPC
+-  b  <- fetchByteMem addr
+-  b' <- op b
+-  writeByteMem addr b'
+-modifyOperand AbsoluteX op = do
+-  w <- fetchWordAtPC
+-  x <- getReg rX
+-  -- TODO: what does it mean to increment the address with carry?
+-  -- I think it means that you convert x to 16 bit and then add
+-  let addr = w + toWord x
+-  b  <- fetchByteMem addr
+-  b' <- op b
+-  writeByteMem addr b'
+-modifyOperand AbsoluteY op = do
+-  w <- fetchWordAtPC
+-  y <- getReg rY
+-  -- TODO: what does it mean to increment the address with carry?
+-  -- I think it means that you convert y to 16 bit and then add
+-  let addr = w + toWord y
+-  b  <- fetchByteMem addr
+-  b' <- op b
+-  writeByteMem addr b' -- Corrected typo here (was v')
+-modifyOperand IndirectX op = do
+-  b <- fetchByteAtPC
+-  x <- getReg rX
+-  let zeroPageAddr = b + x -- zeropage indexed by b + x
+-  addr <- fetchWordMem zeroPageAddr
+-  v    <- fetchByteMem addr
+-  v'   <- op v
+-  writeByteMem addr v'
+-modifyOperand IndirectY op = do
+-  b <- fetchByteAtPC
+-  y <- getReg rY
+-  v1 <- fetchWordMem b -- zeropage indexed by b, add y to result
+-  let addr = v1 + toWord y
+-  v  <- fetchByteMem addr
+-  v' <- op v
+-  writeByteMem addr v'
++modifyOperand :: AddressMode -> (Word8 -> FDX Word8) -> FDX ()
++modifyOperand Immediate _ = return () -- Cannot write to immediate
++modifyOperand Zeropage op = do
++  zpAddr <- fetchAndIncPC
++  v <- fetchByteMem (toWord zpAddr)
++  v' <- op v
++  writeByteMem (toWord zpAddr) v'
++modifyOperand ZeropageX op = do
++  zpAddr <- fetchAndIncPC
++  x <- getReg rX
++  let addr = toWord (zpAddr + x)
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
++modifyOperand ZeropageY op = do
++  zpAddr <- fetchAndIncPC
++  y <- getReg rY
++  let addr = toWord (zpAddr + y)
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
++modifyOperand Absolute op = do
++  addr <- fetchWordAndIncPC
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
++modifyOperand AbsoluteX op = do
++  base <- fetchWordAndIncPC
++  x <- getReg rX
++  let addr = base + toWord x
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
++modifyOperand AbsoluteY op = do
++  base <- fetchWordAndIncPC
++  y <- getReg rY
++  let addr = base + toWord y
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
++modifyOperand IndirectX op = do
++  zpAddr <- fetchAndIncPC
++  x <- getReg rX
++  addr <- fetchWordMem (zpAddr + x)
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
++modifyOperand IndirectY op = do
++  zpAddr <- fetchAndIncPC
++  y <- getReg rY
++  base <- fetchWordMem zpAddr
++  let addr = base + toWord y
++  v <- fetchByteMem addr
++  v' <- op v
++  writeByteMem addr v'
+@@
