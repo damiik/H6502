@@ -15,12 +15,13 @@ import MOS6502Emulator.Instructions
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import MOS6502Emulator.Debugger
-import Control.Monad.State (get, modify) -- Import get and modify
+import Control.Monad.State (get, modify, put) -- Import get, modify, and put
 import Control.Monad (when, unless) -- Import the 'when' function
 import Control.Monad.IO.Class (liftIO)
 import Data.Word ( Word8, Word16 )
-import Numeric (showHex)
+import Numeric (showHex, readHex) -- Import showHex and readHex
 import System.IO (hFlush, stdout)
+import Data.List (stripPrefix) -- Import stripPrefix
 
 
 fdxSingleCycle :: FDX Bool -- Returns True if emulation should continue, False if halted
@@ -29,7 +30,7 @@ fdxSingleCycle = do
   machineState <- get
   when (enableTrace machineState) $ do
     logRegisters =<< getRegisters
-    logMemoryRange 0xC000 0xC010 -- Or any other range  
+    logMemoryRange (traceMemoryStart machineState) (traceMemoryEnd machineState)
   -- liftIO $ putStrLn $ "Current PC at start of fdxSingleCycle: $" ++ showHex (rPC (mRegs machineState)) ""
   if halted machineState
     then return False -- Machine is halted, stop emulation
@@ -49,7 +50,7 @@ newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = False }
+  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = False, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF }
 
 -- | The main fetch-decode-execute loop
 runFDXLoop :: FDX ()
@@ -58,11 +59,6 @@ runFDXLoop = do
   when continue runFDXLoop
 
 -- | Runs the emulator until the machine is halted
-runUntilHalted :: FDX ()
-runUntilHalted = do
-  continue <- fdxSingleCycle
-  when continue runUntilHalted
-
 -- | Runs the emulator with the given machine state and starting PC
 runEmulator :: Word16 -> Machine -> IO ((), Machine)
 runEmulator startPC initialMachine = do
@@ -98,7 +94,7 @@ runTest startAddress actualLoadAddress byteCode = do
     putStrLn $ "Instructions Executed: " ++ show (instructionCount finalMachine)
 
 
--- | Runs the emulator with the given starting address and bytecode, then enters debugger mode
+-- | Initializes the emulator with the given starting address and bytecode, then enters interactive debugger mode
 runDebugger :: Word16 -> Word16 -> [Word8] -> IO ()
 runDebugger startAddress actualLoadAddress byteCode = do
   putStrLn $ "Initializing debugger with code starting at $" ++ showHex startAddress ""
@@ -110,32 +106,77 @@ runDebugger startAddress actualLoadAddress byteCode = do
 
   -- Setup the machine
   setupMachine initialMachine memoryWrites >>= \setupResult -> do
-    putStrLn "Emulator machine setup complete. Running emulation until BRK..."
+    putStrLn "Emulator machine setup complete."
 
-    -- Run the emulator until halted
-    (_, machineAfterEmulation) <- runMachine runUntilHalted setupResult { mRegs = (mRegs setupResult) { rPC = startAddress } }
-
-    putStrLn "\n--- Emulation Halted ---"
-    putStrLn $ "Final Registers: " ++ show (mRegs machineAfterEmulation)
-    putStrLn $ "Instructions Executed: " ++ show (instructionCount machineAfterEmulation)
-
+    -- Set the starting PC and enter interactive debugger loop
+    let machineWithStartPC = setupResult { mRegs = (mRegs setupResult) { rPC = startAddress } }
     putStrLn "\nEntering interactive debugger."
-    -- Enter interactive debugger loop with the final machine state
-    _ <- runMachine interactiveDebuggerLoop machineAfterEmulation
+    _ <- runMachine (interactiveLoopHelper "") machineWithStartPC
     return ()
 
 
 interactiveDebuggerLoop :: FDX ()
-interactiveDebuggerLoop = do
+interactiveDebuggerLoop = interactiveLoopHelper "" -- Start with no last command
+
+interactiveLoopHelper :: String -> FDX ()
+interactiveLoopHelper lastCommand = do
   machine <- get
   unless (halted machine) $ do
     cmd <- liftIO $ prompt "> "
-    case cmd of
-      "step" -> fdxSingleCycle >> interactiveDebuggerLoop
-      "regs" -> (logRegisters =<< getRegisters) >> interactiveDebuggerLoop
-      "mem"  -> logMemoryRange 0x0000 0x00FF >> interactiveDebuggerLoop
-      "quit" -> return ()
-      _      -> interactiveDebuggerLoop
+    let commandToExecute = if null cmd then lastCommand else cmd
+    let handleStep = fdxSingleCycle >> interactiveLoopHelper commandToExecute
+    let handleRegs = (logRegisters =<< getRegisters) >> interactiveLoopHelper commandToExecute
+    let handleMem addrStr addrEnd = do
+          if null addrStr && null addrEnd then
+            do 
+            logMemoryRange (traceMemoryStart machine) (traceMemoryEnd machine)
+            interactiveLoopHelper commandToExecute
+          else
+            case (readHex addrStr, readHex addrEnd) of
+              ([(addrStr', "")], [(addrEnd', "")]) -> do
+                put (machine { traceMemoryStart = addrStr', traceMemoryEnd = addrEnd'})
+                logMemoryRange addrStr' addrEnd'
+                interactiveLoopHelper commandToExecute
+              ([(addrStr', "")], _) -> do
+                put (machine { traceMemoryStart = addrStr', traceMemoryEnd = addrStr' + 15})
+                logMemoryRange addrStr' (addrStr' + 15)
+                interactiveLoopHelper commandToExecute
+              _ -> do
+                liftIO $ putStrLn "Invalid address format."
+                interactiveLoopHelper commandToExecute
+    case words commandToExecute of
+      ["step"] -> handleStep
+      ["s"] -> handleStep
+      ["regs"] -> handleRegs
+      ["r"] -> handleRegs
+      ["mem", addrStr, addrEnd] -> handleMem addrStr addrEnd
+      ["m", addrStr, addrEnd] -> handleMem addrStr addrEnd
+      ["mem", addrStr] -> handleMem addrStr "" 
+      ["m", addrStr] -> handleMem addrStr "" 
+      ["mem"]  -> handleMem "" "" 
+      ["m"] -> handleMem "" "" 
+      ["log"] -> do
+        logMemoryRange (traceMemoryStart machine) (traceMemoryEnd machine)
+        interactiveLoopHelper commandToExecute
+      ["q"] -> return ()
+      ["quit"] -> return ()
+      ["trace"] -> do
+        let newTraceState = not (enableTrace machine)
+        put (machine { enableTrace = newTraceState })
+        liftIO $ putStrLn $ "Tracing " ++ if newTraceState then "enabled." else "disabled."
+        interactiveLoopHelper commandToExecute
+      ["addr-range", startAddrStr, endAddrStr] -> do
+        case (readHex startAddrStr, readHex endAddrStr) of
+          ([(startAddr, "")], [(endAddr, "")]) -> do
+            put (machine { traceMemoryStart = fromIntegral startAddr, traceMemoryEnd = fromIntegral endAddr })
+            liftIO $ putStrLn $ "Memory trace range set to $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
+            interactiveLoopHelper commandToExecute
+          _ -> do
+            liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0x0200 0x0300)."
+            interactiveLoopHelper lastCommand
+      _      -> do
+        liftIO $ putStrLn "Invalid command."
+        interactiveLoopHelper lastCommand -- Don't update last command on invalid input
 
 prompt :: String -> IO String
 prompt msg = putStr msg >> hFlush stdout >> getLine

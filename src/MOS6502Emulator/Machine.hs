@@ -62,6 +62,8 @@ data Machine = Machine
   , instructionCount :: Int
   , cycleCount       :: Int
   , enableTrace      :: Bool
+  , traceMemoryStart :: Word16
+  , traceMemoryEnd   :: Word16
   }
 
 -- | FDX is fetch-decode-execute
