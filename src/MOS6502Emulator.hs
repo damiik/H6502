@@ -57,6 +57,12 @@ runFDXLoop = do
   continue <- fdxSingleCycle
   when continue runFDXLoop
 
+-- | Runs the emulator until the machine is halted
+runUntilHalted :: FDX ()
+runUntilHalted = do
+  continue <- fdxSingleCycle
+  when continue runUntilHalted
+
 -- | Runs the emulator with the given machine state and starting PC
 runEmulator :: Word16 -> Machine -> IO ((), Machine)
 runEmulator startPC initialMachine = do
@@ -92,17 +98,44 @@ runTest startAddress actualLoadAddress byteCode = do
     putStrLn $ "Instructions Executed: " ++ show (instructionCount finalMachine)
 
 
-runDebugger :: FDX ()
-runDebugger = do
+-- | Runs the emulator with the given starting address and bytecode, then enters debugger mode
+runDebugger :: Word16 -> Word16 -> [Word8] -> IO ()
+runDebugger startAddress actualLoadAddress byteCode = do
+  putStrLn $ "Initializing debugger with code starting at $" ++ showHex startAddress ""
+  putStrLn $ "Loading bytecode at $" ++ showHex actualLoadAddress ""
+  initialMachine <- newMachine
+
+  -- Prepare memory writes - load bytecode at its actual load address
+  let memoryWrites = zip [actualLoadAddress..] byteCode
+
+  -- Setup the machine
+  setupMachine initialMachine memoryWrites >>= \setupResult -> do
+    putStrLn "Emulator machine setup complete. Running emulation until BRK..."
+
+    -- Run the emulator until halted
+    (_, machineAfterEmulation) <- runMachine runUntilHalted setupResult { mRegs = (mRegs setupResult) { rPC = startAddress } }
+
+    putStrLn "\n--- Emulation Halted ---"
+    putStrLn $ "Final Registers: " ++ show (mRegs machineAfterEmulation)
+    putStrLn $ "Instructions Executed: " ++ show (instructionCount machineAfterEmulation)
+
+    putStrLn "\nEntering interactive debugger."
+    -- Enter interactive debugger loop with the final machine state
+    _ <- runMachine interactiveDebuggerLoop machineAfterEmulation
+    return ()
+
+
+interactiveDebuggerLoop :: FDX ()
+interactiveDebuggerLoop = do
   machine <- get
   unless (halted machine) $ do
     cmd <- liftIO $ prompt "> "
     case cmd of
-      "step" -> fdxSingleCycle >> runDebugger
-      "regs" -> (logRegisters =<< getRegisters) >> runDebugger
-      "mem"  -> logMemoryRange 0x0000 0x00FF >> runDebugger
+      "step" -> fdxSingleCycle >> interactiveDebuggerLoop
+      "regs" -> (logRegisters =<< getRegisters) >> interactiveDebuggerLoop
+      "mem"  -> logMemoryRange 0x0000 0x00FF >> interactiveDebuggerLoop
       "quit" -> return ()
-      _      -> runDebugger
+      _      -> interactiveDebuggerLoop
 
 prompt :: String -> IO String
 prompt msg = putStr msg >> hFlush stdout >> getLine

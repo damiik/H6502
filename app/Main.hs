@@ -13,7 +13,7 @@ import Data.Binary.Put (runPut, putWord16le, putWord8)
 import System.FilePath (takeExtension)
 import Prelude -- Explicitly import Prelude to qualify (+)
 import Options.Applicative
-import MOS6502Emulator (Machine(..), newMachine, setupMachine, runEmulator, runTest, instructionCount)
+import MOS6502Emulator (Machine(..), newMachine, setupMachine, runDebugger, instructionCount)
 import MOS6502Emulator.Registers (mkRegisters, rPC)
 
 --stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
@@ -159,7 +159,7 @@ main = do
         mapM_ (\(lbl, addr) -> putStrLn $ "  " ++ lbl ++ "= $" ++ showHex addr "") (Map.toList labels)
         
         case testAddress opts of
-          Just addr -> runTest addr actualStartAddress byteCode -- If testAddress is provided, run the test with the specified start address and actual load address
+          Just addr -> runDebugger addr actualStartAddress byteCode -- If testAddress is provided, run the test with the specified start address and actual load address
           Nothing -> do -- Otherwise, proceed with file output
             let output = if c64BasicOutput opts
                             then formatBasic actualStartAddress byteCode
