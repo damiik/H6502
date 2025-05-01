@@ -16,14 +16,15 @@ import Options.Applicative
 import MOS6502Emulator (Machine(..), newMachine, setupMachine, runDebugger, instructionCount)
 import MOS6502Emulator.Registers (mkRegisters, rPC)
 
---stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
-
+-- stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
+-- *brk* instruction to stop
+-- stack run -- --debug-address 4096
 
 -- --- Command Line Options ---
 data Options = Options
   { c64BasicOutput :: Bool
   , outputFile :: Maybe FilePath
-  , testAddress :: Maybe Word16
+  , debugAddress :: Maybe Word16
   }
 
 optionsParser :: Parser Options
@@ -39,7 +40,7 @@ optionsParser = Options
      <> help "Output file name for binary data"
       ))
  <*> optional (option auto
-      ( long "test-address"
+      ( long "debug-address"
       <> metavar "ADDRESS"
       <> help "Run assembled code in emulator starting at ADDRESS"
       ))
@@ -158,7 +159,7 @@ main = do
         putStrLn "\nLabels Defined:"
         mapM_ (\(lbl, addr) -> putStrLn $ "  " ++ lbl ++ "= $" ++ showHex addr "") (Map.toList labels)
         
-        case testAddress opts of
+        case debugAddress opts of
           Just addr -> runDebugger addr actualStartAddress byteCode -- If testAddress is provided, run the test with the specified start address and actual load address
           Nothing -> do -- Otherwise, proceed with file output
             let output = if c64BasicOutput opts

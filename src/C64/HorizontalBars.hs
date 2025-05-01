@@ -458,6 +458,8 @@ horizontalBars = do
 
     l_ "main_loop"
 
+    jsr ("fillMemory"::Label)
+
     let helloText = ("helloText"::String)
     -- brk
 
@@ -622,7 +624,8 @@ horizontalBars = do
     -- jsr $ AbsLabel "copyVisibleMap" -- Fill screen with initial bars
     jmp ("main_loop"::Label)
     macrosLib
-
+    l_ "fillMemory"
+    fillMemory (AddrLit16  0x4000) 0xcd 1 -- 1kb filled with 0xcd
 
     -- Subroutine: Fill Screen with Bars
     l_ "fill_screen"
@@ -718,7 +721,6 @@ horizontalBars = do
 
         -- Zmniejsz licznik wierszy
         dec rowCounter                  -- dec ustawia flagę Z, gdy licznik osiągnie 0
-        brk
     rts
 
     l_ "scanKeyboard"

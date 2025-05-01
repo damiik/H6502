@@ -34,6 +34,7 @@ module Assembly.Macros (
     printChar,
     printByte,
     skipNext2B,
+    fillMemory,
     macrosLib
 ) where
 
@@ -861,5 +862,6 @@ fillMemory memAddr value sizeKb = do
             iny
         inc$ AddrLabel sfmd .+ 2  -- this will increment *STA* instruction second byte operand (at "sfmd")
         dex
+    rts
 
 

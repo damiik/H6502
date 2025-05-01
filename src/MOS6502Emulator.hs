@@ -144,9 +144,42 @@ interactiveLoopHelper lastCommand = do
               _ -> do
                 liftIO $ putStrLn "Invalid address format."
                 interactiveLoopHelper commandToExecute
+    let handleTrace = do
+          let newTraceState = not (enableTrace machine)
+          put (machine { enableTrace = newTraceState })
+          liftIO $ putStrLn $ "Tracing " ++ if newTraceState then "enabled." else "disabled."
+          interactiveLoopHelper commandToExecute
+
+    let handleGoto addrStr = do
+          machine <- get
+          if null addrStr then do
+            liftIO $ putStrLn "Address required for goto command."
+            interactiveLoopHelper commandToExecute
+          else case readHex addrStr of
+            [(addr, "")] -> do
+              put (machine { mRegs = (mRegs machine) { rPC = addr } })
+              liftIO $ putStrLn $ "PC set to $" ++ showHex addr ""
+              interactiveLoopHelper commandToExecute
+            _ -> do
+              liftIO $ putStrLn "Invalid address format."
+              interactiveLoopHelper commandToExecute
+
+    let handleHelp = liftIO $ putStrLn "Available commands:\n\
+\step/s: Execute one instruction cycle\n\
+\regs/r: Show current register values\n\
+\mem/m [addr] [end]: Show memory range (default: current trace range)\n\
+\log: Log current memory range\n\
+\q/quit: Exit debugger\n\
+\trace: Toggle instruction tracing\n\
+\addr-range <start> <end>: Set memory trace range\n\
+\goto/g <addr>: Set program counter to address"
     case words commandToExecute of
+      ["help"] -> handleHelp >> interactiveLoopHelper commandToExecute
+      ["h"] -> handleHelp >> interactiveLoopHelper commandToExecute
+      ["goto", addrStr] -> handleGoto addrStr
+      ["g", addrStr] -> handleGoto addrStr
       ["step"] -> handleStep
-      ["s"] -> handleStep
+      ["z"] -> handleStep
       ["regs"] -> handleRegs
       ["r"] -> handleRegs
       ["mem", addrStr, addrEnd] -> handleMem addrStr addrEnd
@@ -160,11 +193,8 @@ interactiveLoopHelper lastCommand = do
         interactiveLoopHelper commandToExecute
       ["q"] -> return ()
       ["quit"] -> return ()
-      ["trace"] -> do
-        let newTraceState = not (enableTrace machine)
-        put (machine { enableTrace = newTraceState })
-        liftIO $ putStrLn $ "Tracing " ++ if newTraceState then "enabled." else "disabled."
-        interactiveLoopHelper commandToExecute
+      ["trace"] -> handleTrace
+      ["t"] -> handleTrace
       ["addr-range", startAddrStr, endAddrStr] -> do
         case (readHex startAddrStr, readHex endAddrStr) of
           ([(startAddr, "")], [(endAddr, "")]) -> do
