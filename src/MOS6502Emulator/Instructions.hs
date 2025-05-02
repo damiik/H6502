@@ -17,6 +17,8 @@ import Data.Bits
 import Data.Maybe ( isJust )
 import Numeric (showHex) -- Import showHex for debugging output
 
+import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembler
+
 getReg :: (Registers -> a) -> FDX a
 getReg f = f <$> getRegisters
 
@@ -437,8 +439,6 @@ modifyOperand SP          op = do
 -- opcodes without WDC (Western Design Center) W65C02 Extensions
 execute :: Word8 -> FDX ()
 execute opc = do
-  pc' <- getReg rPC
-  liftIO $ putStrLn $ "Executing opcode $" ++ showHex opc "" ++ " at PC $" ++ showHex pc' ""
   case opc of
 
     -- N Z C I D V

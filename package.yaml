@@ -62,6 +62,7 @@ library:
   - MOS6502Emulator.Memory
   - MOS6502Emulator.Instructions
   - MOS6502Emulator.Debugger
+  - MOS6502Emulator.DissAssembler
   other-modules:
   - C64.HelloWorld  # reexported by C64.Examples
   - C64.HorizontalBars # reexported by C64.Examples

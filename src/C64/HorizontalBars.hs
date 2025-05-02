@@ -407,6 +407,12 @@ initGame = do
     ora # 0b00000011
     sta vicBankSelect
 
+    -- Bank out Basic and Kernal ROM
+    lda$ AddrLit8 0x01
+    and # 0b11111000     
+    ora # 0b00000101
+    sta$ AddrLit8 0x01
+
     -- Skonfiguruj VIC dla pamięci ekranu i zestawu znaków
     -- Ekran @ $0400 => Bity 7-4 = %0001 (adres / 1024 = 1)
     -- Bit 0 = 0 (standard hires character mode)
@@ -426,6 +432,10 @@ initGame = do
     sta_rb vicBorderColor _DARK_GREY
     sta_rb vicBackgroundColor _BLACK
 
+    lda# 0x7f   -- disable CIA IRQ
+    sta cia1InterruptControl
+    sta cia2InterruptControl
+
     -- Zainicjuj pozycję przewijania
     lda # 0
     sta scrollX
@@ -435,6 +445,12 @@ initGame = do
     jsr ("copyVisibleMap"::String)
 
     cli
+
+--     * = $fff0 "IRQ Indirect vector"
+-- IRQ_Indirect:
+-- 	.label IRQ_LSB = $fff1
+-- 	.label IRQ_MSB = $fff2
+-- 	jmp $BEEF
 
 
 -- The main assembly programB
@@ -458,7 +474,7 @@ horizontalBars = do
 
     l_ "main_loop"
 
-    jsr ("fillMemory"::Label)
+
 
     let helloText = ("helloText"::String)
     -- brk
@@ -624,8 +640,7 @@ horizontalBars = do
     -- jsr $ AbsLabel "copyVisibleMap" -- Fill screen with initial bars
     jmp ("main_loop"::Label)
     macrosLib
-    l_ "fillMemory"
-    fillMemory (AddrLit16  0x4000) 0xcd 1 -- 1kb filled with 0xcd
+
 
     -- Subroutine: Fill Screen with Bars
     l_ "fill_screen"

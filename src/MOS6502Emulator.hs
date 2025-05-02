@@ -15,7 +15,8 @@ import MOS6502Emulator.Instructions
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import MOS6502Emulator.Debugger
-import Control.Monad.State (get, modify, put) -- Import get, modify, and put
+import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
+import Control.Monad.State (get, modify, put, gets) -- Import get, modify, put, and gets
 import Control.Monad (when, unless) -- Import the 'when' function
 import Control.Monad.IO.Class (liftIO)
 import Data.Word ( Word8, Word16 )
@@ -28,21 +29,22 @@ fdxSingleCycle :: FDX Bool -- Returns True if emulation should continue, False i
 fdxSingleCycle = do
   -- liftIO $ putStrLn ""
   machineState <- get
-  when (enableTrace machineState) $ do
-    logRegisters =<< getRegisters
-    logMemoryRange (traceMemoryStart machineState) (traceMemoryEnd machineState)
   -- liftIO $ putStrLn $ "Current PC at start of fdxSingleCycle: $" ++ showHex (rPC (mRegs machineState)) ""
   if halted machineState
     then return False -- Machine is halted, stop emulation
     else do
-      -- liftIO $ putStrLn "Fetching instruction..."
       pc <- getReg rPC  -- Get current PC
+      let currentPC = pc -- Store PC before incrementing
       b <- fetchByteMem pc -- Fetch opcode byte at PC
       setPC (pc + 1)   -- Move PC to next byte (like a real 6502)
       modify (\s -> s { instructionCount = instructionCount s + 1 })
       execute b
-      machineState' <- get
-      return (not (halted machineState'))
+      when (enableTrace machineState) $ do
+        disassembled <- disassembleInstruction currentPC -- Use the stored PC
+        liftIO $ putStrLn disassembled
+        logRegisters =<< getRegisters
+        logMemoryRange (traceMemoryStart machineState) (traceMemoryEnd machineState)
+      gets (not . halted)
 
 
 -- | Initializes a new 6502 machine state
@@ -50,7 +52,7 @@ newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = False, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF }
+  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF }
 
 -- | The main fetch-decode-execute loop
 runFDXLoop :: FDX ()
@@ -196,9 +198,9 @@ interactiveLoopHelper lastCommand = do
       ["trace"] -> handleTrace
       ["t"] -> handleTrace
       ["addr-range", startAddrStr, endAddrStr] -> do
-        case (readHex startAddrStr, readHex endAddrStr) of
+        case (readHex startAddrStr :: [(Word16, String)], readHex endAddrStr :: [(Word16, String)]) of
           ([(startAddr, "")], [(endAddr, "")]) -> do
-            put (machine { traceMemoryStart = fromIntegral startAddr, traceMemoryEnd = fromIntegral endAddr })
+            put (machine { traceMemoryStart = startAddr, traceMemoryEnd = endAddr })
             liftIO $ putStrLn $ "Memory trace range set to $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
             interactiveLoopHelper commandToExecute
           _ -> do

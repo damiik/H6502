@@ -1,10 +1,9 @@
 {-# LANGUAGE BinaryLiterals    #-}
 module C64 (
     screenRam, colorRam, 
-    vicBankSelect, 
-    vicMemoryControl,
-    vicBorderColor, vicBackgroundColor,
-    vicRaster, cia1DataPortA,
+    vicBankSelect, vicMemoryControl,
+    vicBorderColor, vicBackgroundColor, vicRaster, 
+    cia1DataPortA, cia1InterruptControl, cia2InterruptControl,
     kernalClrscr, kernalGetin,
     keyCursorDown, keyCursorRight,
     keyCursorUp, keyCursorLeft,
@@ -172,6 +171,9 @@ vicBackgroundColor = AddrLit16 0xD021
 vicRaster          = AddrLit16 0xD012
 cia1DataPortA      = AddrLit16 0xDC00 -- Joystick Port 2 (nieużywane)
 cia1DataPortB      = AddrLit16 0xDC01 -- Joystick Port 2 (nieużywane)
+
+cia1InterruptControl = AddrLit16 0xDC0D
+cia2InterruptControl = AddrLit16 0xDD0D
 
 -- Rutyny KERNAL
 kernalClrscr       = AddrLit16 0xE544
