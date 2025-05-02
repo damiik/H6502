@@ -36,12 +36,12 @@ data SRFlag = Carry      -- ^ bit 0
 -- | Construct the registers all with initial value of 0
 mkRegisters :: Registers
 mkRegisters = Registers
-  { rPC = 0
-  , rAC = 0
-  , rX  = 0
-  , rY  = 0
-  , rSR = 0
-  , rSP = 0
+  { rPC = 0x00
+  , rAC = 0x00
+  , rX  = 0x00
+  , rY  = 0x00
+  , rSR = 0x00
+  , rSP = 0xff
   }
 
 -- | all the status register flags in a handy list

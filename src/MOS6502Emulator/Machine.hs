@@ -6,7 +6,6 @@
 module MOS6502Emulator.Machine
 (Machine(..)
  ,AddressMode(..)
- ,runMachine
 
 ,FDX (..)
 
@@ -62,8 +61,11 @@ data Machine = Machine
   , instructionCount :: Int
   , cycleCount       :: Int
   , enableTrace      :: Bool
-  , traceMemoryStart :: Word16
-  , traceMemoryEnd   :: Word16
+  , traceMemoryStart :: Word16 -- Keep for backward compatibility or single range
+  , traceMemoryEnd   :: Word16   -- Keep for backward compatibility or single range
+  , breakpoints      :: [Word16] -- Added for debugger breakpoints
+  , debuggerActive   :: Bool     -- Added to indicate if debugger is active
+  , memoryTraceBlocks :: [(Word16, Word16)] -- Added for multiple memory trace blocks
   }
 
 -- | FDX is fetch-decode-execute
@@ -72,12 +74,6 @@ newtype FDX a = FDX { unFDX :: StateT Machine IO a }
 
 -- runMachine :: FDX a -> Machine -> IO (a, Machine)
 -- runMachine f m = runStateT m (unFDX f)
-
--- Run the FDX monad
-runMachine :: FDX a -> Machine -> IO (a, Machine)
-runMachine f initialMachine = do
-  liftIO $ putStrLn $ "Initial PC in runMachine: $" ++ showHex (rPC (mRegs initialMachine)) ""
-  runStateT (unFDX f) initialMachine
 
 -- isoFDX :: Iso (StateT Machine IO) FDX
 -- isoFDX = Iso FDX unFDX

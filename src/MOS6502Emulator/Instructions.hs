@@ -163,9 +163,13 @@ jsr = do
   liftIO $ putStrLn $ "Jsr address: " ++ (showHex targetAddress "")
 
   currentPC <- getReg rPC
-  liftIO $ putStrLn $ "Jsr return address: " ++ (showHex currentPC "")
 
-  pushWord currentPC -- Push the return address (PC + 2)
+  -- Return address is already PC+2 after two fetchAndIncPC calls but stored return address 
+  -- must be decremented because RTS will increment it: RTS -> pull PC, PC+1 -> PC
+  let returnAddress = currentPC - 1
+  liftIO $ putStrLn $ "Jsr return address: " ++ (showHex returnAddress "")
+
+  pushWord returnAddress -- Push the correct return address (PC+2)
   setPC targetAddress -- Set PC to the target address
 
 load :: AddressMode -> AddressMode -> FDX ()
@@ -652,13 +656,13 @@ execute opc = do
     0x40 -> do    -- RTI, Return from Interrupt    -- pull SR, pull PC
       sr  <- pull
       setSR sr
-      pch <- pull
       pcl <- pull
+      pch <- pull
       setPC (mkWord pcl pch)
 
     0x60 -> do    -- RTS, Return from Subroutine    -- pull PC, PC + 1 -> PC
-      pch <- pull
       pcl <- pull
+      pch <- pull
       setPC ((mkWord pcl pch) + 1)
 
     -- N Z C I D V
