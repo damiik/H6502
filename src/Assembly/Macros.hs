@@ -23,6 +23,7 @@ module Assembly.Macros (
     -- Helper (potentially hide later)
     makeUniqueLabel,
     waitRaster,
+    vicWaitLine,
     cmp_r, cmp_y, cmp_x, 
     adc_rb, add_rb, sub_rb, sub_br,
     sta_rb, sta_rw, 
@@ -41,6 +42,7 @@ module Assembly.Macros (
 --import Assembly.List (forEach, forEachListWithIndex, mapListInPlace, mapListToNew, filterList, foldList, filterMoreThan, sumList)
 import Control.Monad.IO.Class (liftIO)
 import Data.Word (Word8, Word16)
+import Data.Bits((.&.), (.|.), shiftL, shiftR, testBit, complement, xor, (.<<.), (.>>.))
 import Assembly.Core
     ( l_,
       makeUniqueLabel,
@@ -74,7 +76,8 @@ import Assembly.Core
 import Assembly.EDSLInstr 
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
-import C64 (vicRaster, screenRam, colorRam)
+import C64 (vicRaster, screenRam, colorRam, vicControl1)
+
 
 -- zmienne lokalne na stronie zerowej 
 -- te adresy mogą się pokrywać z innmi zmiennymi lokalnymi
@@ -527,6 +530,11 @@ cmp_r address value = do
     lda# value
     cmp address
 
+and_r :: AddressRef -> Word8 -> Asm()
+and_r address value = do
+    lda# value
+    and address
+
 
 cmp_y :: Word8  -> Asm()
 cmp_y value = do
@@ -558,6 +566,18 @@ add_rb op value = do
     adc op
     sta op
 
+
+-- adding value to op (op = op + value)
+and_rb :: AddressRef -> Word8 -> Asm() -- op <- value :: Word8
+and_rb op value = do
+    lda# value
+    and op
+    sta op
+
+cmp_rz :: AddressRef -> AddressRef -> Asm()
+cmp_rz op1 op2 = do
+    lda op1
+    cmp op2
 
 -- substract op from value! (A = value - op)
 sub_br:: Word8 -> AddressRef -> Asm() -- op -= value :: Word8
@@ -681,11 +701,41 @@ copyBlock dest src count = do
     -- Nie jest potrzebna etykieta końca, makro while_ zarządza skokami
 
 
-waitRaster :: Asm ()
-waitRaster = do 
-    while_ IsNonZero $ do
-        cmp_r vicRaster 250  
+-- waitRaster :: Asm ()
+-- waitRaster = do 
+--     while_ IsNonZero $ do
+--         cmp_r vicRaster 250  
+vicWaitBottom :: Asm ()
+vicWaitBottom = do
+    while_ IsZero $ do
+        and_r vicControl1 0x80
 
+
+vicWaitTop :: Asm ()
+vicWaitTop = do
+    while_ IsNonZero $ do
+        and_r vicControl1 0x80
+
+
+waitRaster :: Asm()
+waitRaster = do
+    -- vicWaitTop
+    vicWaitBottom
+
+-- On a PAL C64 (common in Europe/Australia), the raster beam counts from line 0 up to line 311.
+-- On an NTSC C64 (common in North America/Japan), it counts from line 0 up to line 262.
+vicWaitLine :: Word16 -> Asm()
+vicWaitLine line = do
+
+    let lineLsb = lsb line
+    let msbBitFlag = lsb ((line `shiftR` 1) .&. 0x80) -- "compile time" precalculate Word8 msb bit 9 of line (Word16)
+    doWhile_ IsNonZero $ do         -- Repeat the whole process if the 9th bit check fails.
+        doWhile_ IsNonZero $ do
+            cmp_r vicRaster lineLsb -- Wait until VIC raster register ($D012) matches the target line.
+                                    -- $D012 == line (Z=1 from last CMP). Now check the 9th bit (bit 7 of $D011)
+        lda vicControl1             -- Load VIC control register 1 ($D011)
+        and# 0x80                   -- Isolate bit 7. Sets Z flag (Z=1 if bit 7 is 0).
+        cmp# msbBitFlag                -- The outer doWhile_ IsNonZero will loop if Z=0 (bit 7 is 1).
 
 
 fillScreen :: AddressRef  -> Word8 -> Asm ()

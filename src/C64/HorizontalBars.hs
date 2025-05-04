@@ -426,12 +426,15 @@ horizontalBars = do
     --     cmp $ OpImm (fromIntegral mapWidthChars - screenWidthChars) -- Porównaj z max X
     --     if_ IsCarryClear $ do   -- Jeśli (X < max_X), CMP nie ustawiło Carry
     --         inc  $ OpZP scrollX         --   Zwiększ X
-    waitRaster -- Sync with raster
+    -- waitRaster -- Sync with raster
 
-    sta_rb delayCounter 10
-    doWhile_ IsNonZero $ do
-         jsr ("delay"::Label) -- Delay loop
-         dec delayCounter 
+    vicWaitLine 255
+    -- jsr ("scrollColors"::Label) -- Scroll colors
+
+    -- sta_rb delayCounter 10
+    -- doWhile_ IsNonZero $ do
+    --      jsr ("delay"::Label) -- Delay loop
+    --      dec delayCounter 
 
     jsr ("copyVisibleMap"::Label) -- Fill screen with initial bars
     -- scrollColors colorRam

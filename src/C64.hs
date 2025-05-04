@@ -428,59 +428,113 @@ vicSprite6Y :: AddressRef; vicSprite6Y = AddrLit16 0xd00d -- 53261
 vicSprite7X :: AddressRef; vicSprite7X = AddrLit16 0xd00e -- 53262
 vicSprite7Y :: AddressRef; vicSprite7Y = AddrLit16 0xd00f -- 53263
 
---; Most significant bits of sprites 0-7 horizontal positions
+--; Most significant bit of sprites 0-7 horizontal positions, bit #x: Sprite #x (X-coord. bit #8 of spirte #x)
 vicSpriteMSBX :: AddressRef; vicSpriteMSBX =  AddrLit16 0xd010 -- 53264
 
 
 -- 0xD011 Control Register #1
--- - Bit#0-#2: YSCROLL Screen Soft Scroll Vertical
--- - Bit#3: RSEL Switch betweem 25 or 24 visible rows
---          RSEL|  Display window height   | First line  | Last line
+-- Bits #0-#2: Vertical raster scroll.
+-- Bit#3: Screen height; 0 = 24 rows; 1 = 25 rows.
+--              |  Display window height   | First line  | Last line
 --          ----+--------------------------+-------------+----------
 --            0 | 24 text lines/192 pixels |   55 (0x37)  | 246 (0xf6)
 --            1 | 25 text lines/200 pixels |   51 (0x33)  | 250 (0xfa)
--- - Bit#4: DEN Switch VIC-II output on/off
--- - Bit#5: BMM Turn Bitmap Mode on/off
--- - Bit#6: ECM Turn Extended Color Mode on/off
--- - Bit#7: RST8 9th Bit for 0xD012 Rasterline counter
--- Initial Value: %10011011
+-- Bit #4: 0 = Screen off, complete screen is covered by border; 1 = Screen on, normal screen contents are visible.
+-- Bit #5: 0 = Text mode; 1 = Bitmap mode.
+-- Bit #6: 1 = Extended background mode on.
+-- Bit #7:  Read: Current raster line (bit #8).
+--         Write: Raster line to generate interrupt at (bit #8).
 vicControl1 :: AddressRef
 vicControl1 = AddrLit16 0xd011
 
+-- Read: Current raster line (bits #0-#7).
+-- Write: Raster line to generate interrupt at (bits #0-#7).
 vicRaster :: AddressRef
 vicRaster = AddrLit16 0xd012
 --; Sprite enable register
 vicSpriteEnable :: AddressRef; vicSpriteEnable = AddrLit16 0xd015 -- 53269
 
 
--- 0xD016 Control register 2
--- -  Bit#0-#2: XSCROLL Screen Soft Scroll Horizontal
--- -  Bit#3: CSEL Switch betweem 40 or 38 visible columns
---           CSEL|   Display window width   | First X coo. | Last X coo.
+-- Bits #0-#2: Horizontal raster scroll.
+-- Bit #3: Screen width; 0 = 38 columns; 1 = 40 columns.
+--               |   Display window width   | First X coo. | Last X coo.
 --           ----+--------------------------+--------------+------------
 --             0 | 38 characters/304 pixels |   31 (0x1f)   |  334 (0x14e)
 --             1 | 40 characters/320 pixels |   24 (0x18)   |  343 (0x157)
--- -  Bit#4: MCM Turn Multicolor Mode on/off
--- -  Bit#5-#7: not used
--- Initial Value: %00001000
+-- Bit #4: 1 = Multicolor mode on.
 vicControl2 :: AddressRef
 vicControl2 = AddrLit16 0xd016
 
 
 -- 0xD018 VIC-II base addresses
 -- - Bit#0: not used
--- - Bit#1-#3: CB Address Bits 11-13 of the Character Set (*2048)
--- - Bit#4-#7: VM Address Bits 10-13 of the Screen RAM (*1024)
--- Initial Value: %00010100
+-- Bits #1-#3: In text mode, pointer to character memory (bits #11-#13), relative to VIC bank, memory address $DD00. Values:
+-- CB Address Bits 11-13 of the Character Set (*2048)
+-- %000, 0: $0000-$07FF, 0-2047.
+-- %001, 1: $0800-$0FFF, 2048-4095.
+-- %010, 2: $1000-$17FF, 4096-6143.
+-- %011, 3: $1800-$1FFF, 6144-8191.
+-- %100, 4: $2000-$27FF, 8192-10239.
+-- %101, 5: $2800-$2FFF, 10240-12287.
+-- %110, 6: $3000-$37FF, 12288-14335.
+-- %111, 7: $3800-$3FFF, 14336-16383.
 
+-- Values %010 and %011 in VIC bank #0 and #2 select Character ROM instead.
+-- In bitmap mode, pointer to bitmap memory (bit #13), relative to VIC bank, memory address $DD00. Values:
+-- %0xx, 0: $0000-$1FFF, 0-8191.
+-- %1xx, 4: $2000-$3FFF, 8192-16383.
+
+-- Bits #4-#7: Pointer to screen memory (bits #10-#13), relative to VIC bank, memory address $DD00. Values:
+-- VM Address Bits 10-13 of the Screen RAM (*1024)
+-- %0000, 0: $0000-$03FF, 0-1023.
+-- %0001, 1: $0400-$07FF, 1024-2047.
+-- %0010, 2: $0800-$0BFF, 2048-3071.
+-- %0011, 3: $0C00-$0FFF, 3072-4095.
+-- %0100, 4: $1000-$13FF, 4096-5119.
+-- %0101, 5: $1400-$17FF, 5120-6143.
+-- %0110, 6: $1800-$1BFF, 6144-7167.
+-- %0111, 7: $1C00-$1FFF, 7168-8191.
+-- %1000, 8: $2000-$23FF, 8192-9215.
+-- %1001, 9: $2400-$27FF, 9216-10239.
+-- %1010, 10: $2800-$2BFF, 10240-11263.
+-- %1011, 11: $2C00-$2FFF, 11264-12287.
+-- %1100, 12: $3000-$33FF, 12288-13311.
+-- %1101, 13: $3400-$37FF, 13312-14335.
+-- %1110, 14: $3800-$3BFF, 14336-15359.
+-- %1111, 15: $3C00-$3FFF, 15360-16383.
 vicMemoryControl :: AddressRef
 vicMemoryControl = AddrLit16 0xd018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
 
 
+-- Bit #0: 1 = Current raster line is equal to the raster line to generate interrupt at.
+-- Bit #1: 1 = Sprite-background collision occurred.
+-- Bit #2: 1 = Sprite-sprite collision occurred.
+-- Bit #3: 1 = Light pen signal arrived.
+-- Bit #7: 1 = An event (or more events), that may generate an interrupt, occurred and it has not been (not all of them have been) acknowledged yet.
+-- Write bits:
+-- Bit #0: 1 = Acknowledge raster interrupt.
+-- Bit #1: 1 = Acknowledge sprite-background collision interrupt.
+-- Bit #2: 1 = Acknowledge sprite-sprite collision interrupt.
+-- Bit #3: 1 = Acknowledge light pen interrupt.
+vicInterruptStatus :: AddressRef
+vicInterruptStatus = AddrLit16 0xd019 -- Bit 7: 1 = IRQ occurred; 0 = No IRQ occurred.
+
+
+-- Bit #0: 1 = Raster interrupt enabled.
+-- Bit #1: 1 = Sprite-background collision interrupt enabled.
+-- Bit #2: 1 = Sprite-sprite collision interrupt enabled.
+-- Bit #3: 1 = Light pen interrupt enabled.
+vicInterruptEnable :: AddressRef
+vicInterruptEnable = AddrLit16 0xd01a -- Bit 7: 1 = Enable raster IRQ; 0 = Disable raster IRQ.
+
+vicSpritePriority :: AddressRef
+vicSpritePriority = AddrLit16 0xd01b -- Bit #x: 0 = Sprite #x is drawn in front of screen contents; 1 = Sprite #x is behind screen contents.
+vicSpriteMulticolor :: AddressRef
+vicSpriteMulticolor = AddrLit16 0xd01c -- Bit #x: 1 = Sprite #x is multicolored.
 vicSpriteDoubleWidth :: AddressRef
-vicSpriteDoubleWidth = AddrLit16 0xd01d
+vicSpriteDoubleWidth = AddrLit16 0xd01d  --Bit #x: 1 = Sprite #x is stretched to double width.
 vicSpriteDoubleHeight :: AddressRef
-vicSpriteDoubleHeight = AddrLit16 0xd017
+vicSpriteDoubleHeight = AddrLit16 0xd017 -- Bit #x: 1 = Sprite #x is stretched to double height.
 
 vicSpriteSpriteColision :: AddressRef
 vicSpriteSpriteColision = AddrLit16 0xd01e
@@ -499,8 +553,6 @@ vicBackgroundColor3 :: AddressRef
 vicBackgroundColor3 = AddrLit16 0xd024
 
 
---; Multicolor registers
-vicSpriteMulticolor :: AddressRef; vicSpriteMulticolor =  AddrLit16 0xd01c -- 53276
 --; Sprite Multicolor
 vicSpriteMc0 :: AddressRef; vicSpriteMc0 =  AddrLit16 0xd025 -- 53285
 vicSpriteMc1 :: AddressRef; vicSpriteMc1 =  AddrLit16 0xd026 -- 53286
