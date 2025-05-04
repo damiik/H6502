@@ -1,13 +1,13 @@
 {-# LANGUAGE BinaryLiterals    #-}
 module C64 (
     screenRam, colorRam, 
-    vicBankSelect, vicMemoryControl,
-    vicBorderColor, vicBackgroundColor, vicRaster, 
+    vicBankSelect, vicMemoryControl,vicRaster,
+    vicBorderColor, vicBackgroundColor, vicBackgroundColor1, vicBackgroundColor2,
     cia1DataPortA, cia1InterruptControl, cia2InterruptControl,
     kernalClrscr, kernalGetin,
     keyCursorDown, keyCursorRight,
     keyCursorUp, keyCursorLeft,
-    control1, control2, memory,
+    vicControl1, vicControl2, memory,
     color0, color1, color2, color3,
     _BLACK, _WHITE, _RED, _CYAN, _PURPLE,
     _GREEN, _BLUE, _YELLOW, _ORANGE, _BROWN,
@@ -113,9 +113,13 @@ import Assembly.EDSLInstr
 
 
 -- C64 Constants
+color0 :: AddressRef
 color0 = AddrLit16 0xd020
+color1 :: AddressRef
 color1 = AddrLit16 0xd021
+color2 :: AddressRef
 color2 = AddrLit16 0xd022
+color3 :: AddressRef
 color3 = AddrLit16 0xd023
 
 
@@ -139,7 +143,8 @@ colorRam = AddrLit16 0xd800
 -- - Bit#6: ECM Turn Extended Color Mode on/off
 -- - Bit#7: RST8 9th Bit for 0xD012 Rasterline counter
 -- Initial Value: %10011011
-control1 = AddrLit16 0xd011
+vicControl1 :: AddressRef
+vicControl1 = AddrLit16 0xd011
 -- 0xD012 RASTER Raster counter
 
 -- 0xD016 Control register 2
@@ -152,7 +157,8 @@ control1 = AddrLit16 0xd011
 -- -  Bit#4: MCM Turn Multicolor Mode on/off
 -- -  Bit#5-#7: not used
 -- Initial Value: %00001000
-control2 = AddrLit16 0xd016 
+vicControl2 :: AddressRef
+vicControl2 = AddrLit16 0xd016
 
 
 -- 0xD018 VIC-II base addresses
@@ -160,24 +166,40 @@ control2 = AddrLit16 0xd016
 -- - Bit#1-#3: CB Address Bits 11-13 of the Character Set (*2048)
 -- - Bit#4-#7: VM Address Bits 10-13 of the Screen RAM (*1024)
 -- Initial Value: %00010100
+memory :: AddressRef
 memory = AddrLit16 0xd018
 
 
 
-vicBankSelect      = AddrLit16 0xDD00
-vicMemoryControl   = AddrLit16 0xD018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
-vicBorderColor     = AddrLit16 0xD020
+vicBankSelect :: AddressRef
+vicBankSelect = AddrLit16 0xDD00
+vicMemoryControl :: AddressRef
+vicMemoryControl = AddrLit16 0xD018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
+vicBorderColor :: AddressRef
+vicBorderColor = AddrLit16 0xD020
+vicBackgroundColor :: AddressRef
 vicBackgroundColor = AddrLit16 0xD021
-vicRaster          = AddrLit16 0xD012
-cia1DataPortA      = AddrLit16 0xDC00 -- Joystick Port 2 (nieużywane)
-cia1DataPortB      = AddrLit16 0xDC01 -- Joystick Port 2 (nieużywane)
+vicBackgroundColor1 :: AddressRef
+vicBackgroundColor1 = AddrLit16 0xD022
+vicBackgroundColor2 :: AddressRef
+vicBackgroundColor2 = AddrLit16 0xD023
+vicRaster :: AddressRef
+vicRaster = AddrLit16 0xD012
+cia1DataPortA :: AddressRef
+cia1DataPortA = AddrLit16 0xDC00 -- Joystick Port 2 (nieużywane)
+cia1DataPortB :: AddressRef
+cia1DataPortB = AddrLit16 0xDC01 -- Joystick Port 2 (nieużywane)
 
+cia1InterruptControl :: AddressRef
 cia1InterruptControl = AddrLit16 0xDC0D
+cia2InterruptControl :: AddressRef
 cia2InterruptControl = AddrLit16 0xDD0D
 
 -- Rutyny KERNAL
-kernalClrscr       = AddrLit16 0xE544
-kernalGetin        = AddrLit16 0xFFE4 -- Odczytuje znak z klawiatury (blokujące)
+kernalClrscr :: AddressRef
+kernalClrscr = AddrLit16 0xE544
+kernalGetin :: AddressRef
+kernalGetin = AddrLit16 0xFFE4 -- Odczytuje znak z klawiatury (blokujące)
 
 -- Kody PETSCII dla klawiszy kursorów
 keyCursorDown :: Word8;  keyCursorDown  = 17
@@ -188,22 +210,23 @@ keyCursorLeft  :: Word8; keyCursorLeft  = 157
 
 
 -- The colors of the C64
-_BLACK = 0x00 :: Word8
-_WHITE = 0x01 :: Word8
-_RED = 0x02 :: Word8
-_CYAN = 0x03 :: Word8
-_PURPLE = 0x04 :: Word8
-_GREEN = 0x05 :: Word8
-_BLUE = 0x06 :: Word8
-_YELLOW = 0x07 :: Word8
-_ORANGE = 0x08 :: Word8
-_BROWN = 0x09 :: Word8
-_PINK = 0x0a :: Word8 -- _LT_RED
-_DARK_GREY= 0x0b :: Word8
-_GREY = 0x0c :: Word8
-_LIGHT_GREEN = 0x0d :: Word8
-_LIGHT_BLUE = 0x0e :: Word8
-_LIGHT_GREY = 0x0f :: Word8
+_BLACK :: Word8; _BLACK = 0x00
+_WHITE :: Word8; _WHITE = 0x01
+_RED :: Word8; _RED = 0x02
+_CYAN :: Word8; _CYAN = 0x03
+_PURPLE :: Word8; _PURPLE = 0x04
+_GREEN :: Word8; _GREEN = 0x05
+_BLUE :: Word8; _BLUE = 0x06
+_YELLOW :: Word8; _YELLOW = 0x07
+_ORANGE :: Word8; _ORANGE = 0x08
+_BROWN :: Word8; _BROWN = 0x09
+_PINK :: Word8; _PINK = 0x0a
+_LIGHT_RED :: Word8; _LIGHT_RED = 0x0a
+_DARK_GREY :: Word8; _DARK_GREY= 0x0b
+_GREY :: Word8; _GREY = 0x0c
+_LIGHT_GREEN :: Word8; _LIGHT_GREEN = 0x0d
+_LIGHT_BLUE :: Word8; _LIGHT_BLUE = 0x0e
+_LIGHT_GREY :: Word8; _LIGHT_GREY = 0x0f
 
 
 

@@ -11,6 +11,15 @@ import Data.Word (Word8, Word16) -- Added Word16
 import Data.Bits ((.|.), (.<<.), (.>>.), (.&.), shiftL, shiftR)
 import C64
 import Control.Monad
+import System.IO (readFile)
+import Data.Char (isHexDigit)
+import Numeric (readHex)
+import Data.List (dropWhile, isPrefixOf, takeWhile, words)
+import Data.Maybe (mapMaybe)
+import System.IO (hFlush, stdout)
+import System.IO.Unsafe (unsafePerformIO) -- For loading data at top level
+import Control.Exception (evaluate) -- For forcing evaluation
+import Control.DeepSeq (rnf) -- For deep evaluation
 
 
 
@@ -47,7 +56,7 @@ screenHeightChars  = 25
 mapWidthChars :: Word16
 mapWidthChars      = 64 -- Używamy potęgi 2 dla łatwiejszych obliczeń offsetu
 mapHeightChars :: Word16
-mapHeightChars     = 50
+mapHeightChars     = 64
 
 mapTotalSize :: Word16
 mapTotalSize       = mapWidthChars * mapHeightChars
@@ -114,271 +123,88 @@ dstTemp :: AddressRef; dstTemp = AddrLit8 zpBase4 .+ 0x06 -- 2
 -- --- Definicja zestawu znaków (UDG) ---
 -- Znak 0
 udgData :: [Word8]
-udgData = [ 0b00000000  -- 0
-           , 0b00000000 
-           , 0b00000000 
-           , 0b00000000 
-           , 0b00000000 
-           , 0b00000000 
-           , 0b00000000 
-           , 0b00000000 
-           ] ++
+udgData = unsafePerformIO $ loadCharsetDataFromFile "c64/world1.asm"
 
-           [ 0b00011000 -- 1
-           , 0b00011000
-           , 0b00111100
-           , 0b01111110
-           , 0b11111111
-           , 0b11111111
-           , 0b01100110
-           , 0b01100110
-           ] ++
-           
-           [ 0b00110000 -- 2
-           , 0b11111000
-           , 0b11111100
-           , 0b00111111
-           , 0b00111111
-           , 0b11111100
-           , 0b11111000
-           , 0b00110000
-           ] ++
 
-           [ 0b00000000 -- 3
-           , 0b00001110
-           , 0b00011110
-           , 0b00111111
-           , 0b01111111
-           , 0b01111110
-           , 0b01100110
-           , 0b01100110
-           ] ++
+loadColorDataFromFile :: FilePath -> IO [Word8]
+loadColorDataFromFile filePath = do
+    content <- readFile filePath
+    let fileLines = lines content
+    -- Find lines after "map_data" label, ignoring comments and empty lines
+    let mapDataLines = dropWhile (not . isPrefixOf "map_data") fileLines
+    -- Take lines starting with ".byte" until another label or empty line
+    let byteLines = takeWhile (isPrefixOf ".byte") $ drop 2 mapDataLines -- drop the "map_data" line itself
+    -- Extract hex values from byte lines
+    putStrLn $ "Processing byte lines for map data..." ++ (show byteLines)
+    System.IO.hFlush System.IO.stdout -- Force flush
+    let hexValues = concatMap extractHexValues byteLines
+    putStrLn $ "Map data loaded from " ++ filePath
+    evaluate $ rnf hexValues -- Force full evaluation
+    return hexValues
+-- --- Function to load charset data from file ---
+loadCharsetDataFromFile :: FilePath -> IO [Word8]
+loadCharsetDataFromFile filePath = do
+    content <- readFile filePath
+    let fileLines = lines content
+    -- Find lines after "charset_data" label, ignoring comments and empty lines
+    let charsetDataLines = dropWhile (not . isPrefixOf "charset_data") fileLines
+    -- Take lines starting with ".byte" until another label or empty line
+    let byteLines = takeWhile (isPrefixOf ".byte") $ drop 2 charsetDataLines -- drop the "charset_data" line itself
+    -- Extract hex values from byte lines
+    putStrLn $ "Processing byte lines for charset data..." ++ show byteLines
+    System.IO.hFlush System.IO.stdout -- Force flush
+    let hexValues = concatMap extractHexValues byteLines
+    putStrLn $ "Charset data loaded from " ++ filePath
+    evaluate $ rnf hexValues -- Force full evaluation
+    return hexValues
 
-           [ 0b00000000 -- 4
-           , 0b00000000
-           , 0b00000000
-           , 0b00001000
-           , 0b00111110
-           , 0b00001000
-           , 0b00000000
-           , 0b00000000
-           ] ++
+-- --- Function to load map data from file ---
+loadMapDataFromFile :: FilePath -> IO [Word8]
+loadMapDataFromFile filePath = do
+    content <- readFile filePath
+    let fileLines = lines content
+    -- Find lines after "map_data" label, ignoring comments and empty lines
+    let mapDataLines = dropWhile (not . isPrefixOf "map_data") fileLines
+    -- Take lines starting with ".byte" until another label or empty line
+    let byteLines = takeWhile (isPrefixOf ".byte") $ drop 2 mapDataLines -- drop the "map_data" line itself
+    -- Extract hex values from byte lines
+    putStrLn $ "Processing byte lines for map data..." ++ (show byteLines)
+    System.IO.hFlush System.IO.stdout -- Force flush
+    let hexValues = concatMap extractHexValues byteLines
+    putStrLn $ "Map data loaded from " ++ filePath
+    evaluate $ rnf hexValues -- Force full evaluation
+    return hexValues
 
-           [ 0b00000000 -- 5
-           , 0b00000000
-           , 0b00000100
-           , 0b00000000
-           , 0b01100000
-           , 0b01100000
-           , 0b00000000
-           , 0b00010000
-           ] ++
+-- Helper to extract hex values from a single ".byte" line, handling commas
+extractHexValues :: String -> [Word8]
+extractHexValues line
+    | ".byte" `isPrefixOf` line = unsafePerformIO $ do
+        let values = mapMaybe parseHexValue $ splitBytes $ drop 6 line -- drop ".byte "
+        putStrLn $ "Parsed line: " ++ line ++ " -> " ++ show values
+        System.IO.hFlush System.IO.stdout -- Force flush the output buffer
+        return values
+    | otherwise = []
+    where
+      splitBytes = words . map (\c -> if c == ',' then ' ' else c) -- Replace commas with spaces before splitting
 
-           [ 0b00000000 -- 6
-           , 0b00000000
-           , 0b00000000
-           , 0b00001000
-           , 0b00111110
-           , 0b00001000
-           , 0b00000000
-           , 0b00000000
-           ] ++
+-- Helper to parse a single hex value like "$FF"
+parseHexValue :: String -> Maybe Word8
+parseHexValue s = case s of
+    ('$':rest) -> case readHex rest of
+                      [(val, "")] -> Just val
+                      _           -> Nothing -- Parsing failed or leftover chars
+    _          -> Nothing -- Not a hex value starting with $
 
-           [ 0b00000000 -- 7
-           , 0b00000000
-           , 0b00000100
-           , 0b00000000
-           , 0b01100000
-           , 0b01100000
-           , 0b00000000
-           , 0b00010000
-           ] ++
 
-           [ 0b11111111 -- 8
-           , 0b11111111
-           , 0b10111101
-           , 0b11100111
-           , 0b11100111
-           , 0b10111101
-           , 0b11111111
-           , 0b11111111
-           ] ++
-           (replicate (8 * 39) 0xaa) ++
-           [ 0b00110110 -- 48 ("0")
-           , 0b01100011
-           , 0b01100011
-           , 0b01100011
-           , 0b01100011
-           , 0b00110110
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00001111 -- 49 ("1")
-           , 0b00000011
-           , 0b00000011
-           , 0b00000011
-           , 0b00000011
-           , 0b00000011
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00111110 -- 50 ("2")
-           , 0b01100011
-           , 0b00000111
-           , 0b00011100
-           , 0b01110000
-           , 0b01111111
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00111110 -- 51 ("3")
-           , 0b01100011
-           , 0b00001110
-           , 0b00000011
-           , 0b01100011
-           , 0b00111110
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00000011 -- 52 ("4")
-           , 0b00011011
-           , 0b00110011
-           , 0b01111111
-           , 0b00000011
-           , 0b00000011
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b01111111 -- 53 ("5")
-           , 0b01100000
-           , 0b01111110
-           , 0b00000011
-           , 0b01100011
-           , 0b00111110
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00011111 -- 54 ("6")
-           , 0b00110000
-           , 0b01110110
-           , 0b01100011
-           , 0b01100011
-           , 0b00110110
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b01111111 -- 55 ("7")
-           , 0b00000011
-           , 0b00000110
-           , 0b00001100
-           , 0b00011000
-           , 0b00011000
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00110110 -- 56 ("8")
-           , 0b01100011
-           , 0b00110110
-           , 0b01100011
-           , 0b01100011
-           , 0b00110110
-           , 0b00000000
-           , 0b00000000
-           ] ++
-           [ 0b00110110 -- 57 ("9")
-           , 0b01100011
-           , 0b01100011
-           , 0b00110111
-           , 0b00000110
-           , 0b00111100
-           , 0b00000000
-           , 0b00000000
-           ]
-
--- --- Definicja dużej mapy ---
--- Tworzymy mapę 64x50 wypełnioną naprzemiennie znakami 0 i 1
+-- --- Definicja dużej mapy (ładowana z pliku) ---
 largeMapPattern :: [Word8]
-largeMapPattern =  
+largeMapPattern = unsafePerformIO $ loadMapDataFromFile "c64/world1.asm"
 
-        [8, 8, 8, 8, 8, 8, 8, 8, 8, 0, 0, 0, 0, 0, 0, 0, 
-         48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 0, 0, 0, 0, 0, 0, 
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [8, 8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [8, 8, 8, 0, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [8, 8, 8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [8, 8, 8, 0, 1, 0, 0, 3, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [8, 8, 8, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [8, 8, 8, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 2, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] ++ 
-        [1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  
-
-      
 
 largeMapColors :: [Word8]
-largeMapColors = take (fromIntegral mapTotalSize) $ cycle [_CYAN, _YELLOW, _GREEN, _PURPLE] -- Kolory dla znaków  green, purple] -- Kolory dla znaków
+largeMapColors = unsafePerformIO $ loadColorDataFromFile "c64/world1.asm"    
+-- largeMapColors = take (fromIntegral mapTotalSize) $ cycle [_CYAN, _YELLOW, _GREEN, _PURPLE] -- Kolory dla znaków  green, purple] -- Kolory dla znaków
 
-
-
--- [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 
--- ...,...,
--- ...,15..., 
--- 0...,1...
--- ..., ...,
--- ,...,15...]
--- Helper for scroll table data
--- scrollTableData :: [Word8]
--- scrollTableData = concat $ replicate 2 $ concat
---     [ replicate 8 0,  replicate 8 1
---     , replicate 8 2,  replicate 8 3
---     , replicate 8 4,  replicate 8 5
---     , replicate 8 6,  replicate 8 7
---     , replicate 8 8,  replicate 8 9
---     , replicate 8 10, replicate 8 11
---     , replicate 8 12, replicate 8 13
---     , replicate 8 14, replicate 8 15
---     ] 
 
 scrollColors :: AddressRef -> Asm ()
 scrollColors addr = do
@@ -401,16 +227,16 @@ initGame = do
     sta_rb scrollOffset 0
     sta_rb lastColor 0
 
-    -- Ustaw bank VIC
+    -- Ustaw bank3 dla VIC
     lda vicBankSelect
-    and # 0b11111100 -- Use EDSL 'and'
-    ora # 0b00000011
+    and# 0b11111100 -- clear bits 0 and 1
+    ora# 0b00000011 -- set bits 0 and 1 to 1
     sta vicBankSelect
 
     -- Bank out Basic and Kernal ROM
     lda$ AddrLit8 0x01
-    and # 0b11111000     
-    ora # 0b00000101
+    and# 0b11111000    -- crear bits 0,1,2
+    ora# 0b00000101    -- set bits 0,2
     sta$ AddrLit8 0x01
 
     -- Skonfiguruj VIC dla pamięci ekranu i zestawu znaków
@@ -418,15 +244,21 @@ initGame = do
     -- Bit 0 = 0 (standard hires character mode)
     -- Całość: %00011000 = $18
     lda # (0b00010000 .|. (lsb ((addr2word16 charsetRam) .>>. 10)))
-    -- lda $ Imm 0x18
     sta vicMemoryControl -- vicMemoryControl = Addr 0xD018
 
+    -- set multicolor
+    lda vicControl2      -- Read current value
+    ora# 0b00010000 -- Set bit 4 ($10 hex)
+    sta vicControl2      --Write back
+
+    sta_rb vicBackgroundColor1 _LIGHT_BLUE     -- Ustaw Background Color 1 (np. dla bitów 01 znaku)
+    sta_rb vicBackgroundColor2 _BLUE     -- Ustaw Background Color 2 (np. dla bitów 10 znaku)
 
     -- Skopiuj dane UDG
     -- copyBlock charsetRam (AddrLabel "udgDataSource") (fromIntegral $ length udgData0 + length udgData1)
 
     -- Wyczyść ekran
-    --jsr kernalClrscr
+    --jsr kernalClrsc
 
     -- Ustaw kolory
     sta_rb vicBorderColor _DARK_GREY
@@ -719,20 +551,20 @@ horizontalBars = do
             lda $ IY mapSrcPtr          -- Czytaj z mapy źródłowej [mapSrcPtr],Y
             sta $ IY screenDstPtr       -- Pisz do pamięci ekranu [screenDstPtr],Y
             -- Kopiuj kolor
-            lda $ IY mapColorSrcPtr     -- Czytaj z mapy kolorów [mapColorSrcPtr],Y
-            sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
+            -- lda $ IY mapColorSrcPtr     -- Czytaj z mapy kolorów [mapColorSrcPtr],Y
+            -- sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
             iny
             cpy# screenWidthChars       -- Ustawia Carry, gdy Y >= screenWidthChars
 
         -- Przesuń wskaźniki źródłowe *mapSrcPtr* i *mapColorSrcPtr* o 1 wiersz
         sta_rw tmp16R1 mapWidthChars    -- temp16 = mapWidthChars (64)
         add_rrw mapSrcPtr tmp16R1       -- mapSrcPtr = mapSrcPtr + mapWidthChars
-        add_rrw mapColorSrcPtr tmp16R1  -- mapColorSrcPtr = mapColorSrcPtr + mapWidthChars
+        -- add_rrw mapColorSrcPtr tmp16R1  -- mapColorSrcPtr = mapColorSrcPtr + mapWidthChars
 
         -- Przesuń wskaźniki *screenDstPtr* i *colorDstPtr* na początek następnego wiersza ekranu
         sta_rw tmp16R1 screenWidthChars -- temp16 = screenWidthChars (40)
         add_rrw screenDstPtr tmp16R1    -- screenDstPtr = screenDstPtr + screenWidthChars
-        add_rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
+        -- add_rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
 
         -- Zmniejsz licznik wierszy
         dec rowCounter                  -- dec ustawia flagę Z, gdy licznik osiągnie 0

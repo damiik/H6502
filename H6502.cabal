@@ -53,6 +53,7 @@ library
     , binary
     , bytestring
     , containers
+    , deepseq
     , filepath
     , mtl
     , optparse-applicative
@@ -78,6 +79,7 @@ executable H6502-exe
     , binary
     , bytestring
     , containers
+    , deepseq
     , filepath
     , mtl
     , optparse-applicative
@@ -104,6 +106,7 @@ test-suite H6502-test
     , binary
     , bytestring
     , containers
+    , deepseq
     , filepath
     , hspec
     , mtl
