@@ -1,14 +1,23 @@
 {-# LANGUAGE BinaryLiterals    #-}
 module C64 (
     screenRam, colorRam, 
-    vicBankSelect, vicMemoryControl,vicRaster,
+    vicMemoryControl,vicRaster,
     vicBorderColor, vicBackgroundColor, vicBackgroundColor1, vicBackgroundColor2,
     cia1DataPortA, cia1InterruptControl, cia2InterruptControl,
+    cia2DataPortA, cia2DataPortB,
     kernalClrscr, kernalGetin,
     keyCursorDown, keyCursorRight,
     keyCursorUp, keyCursorLeft,
-    vicControl1, vicControl2, memory,
-    color0, color1, color2, color3,
+    vicControl1, vicControl2,
+    vicSprite0X, vicSprite0Y,
+    vicSprite1X, vicSprite1Y,
+    vicSprite2X, vicSprite2Y,
+    vicSprite3X, vicSprite3Y,
+    vicSprite4X, vicSprite4Y,
+    vicSprite5X, vicSprite5Y,
+    vicSprite6X, vicSprite6Y,
+    vicSprite7X, vicSprite7Y,
+    vicSpriteMSBX,  vicSpriteEnable,
     _BLACK, _WHITE, _RED, _CYAN, _PURPLE,
     _GREEN, _BLUE, _YELLOW, _ORANGE, _BROWN,
     _PINK, _DARK_GREY, _GREY, _LIGHT_GREEN,
@@ -71,34 +80,6 @@ module C64 (
     _KEY_F3,
     _KEY_F5,
     _KEY_F7,
-    _SPRITE_0_COLOR_REGISTER,
-    _SPRITE_1_COLOR_REGISTER,
-    _SPRITE_2_COLOR_REGISTER,
-    _SPRITE_3_COLOR_REGISTER,
-    _SPRITE_4_COLOR_REGISTER,
-    _SPRITE_5_COLOR_REGISTER,
-    _SPRITE_6_COLOR_REGISTER,
-    _SPRITE_7_COLOR_REGISTER,
-    _SPRITE_MULTICOLOR_REGISTERS,
-    _SPRITE_ENABLE_REGISTER,
-    _SPRITE_MC0,
-    _SPRITE_MC1,
-    _SP0X,
-    _SP0Y,
-    _SP1X,
-    _SP1Y,
-    _SP2X,
-    _SP2Y,
-    _SP3X,
-    _SP3Y,
-    _SP4X,
-    _SP4Y,
-    _SP5X,
-    _SP5Y,
-    _SP6X,
-    _SP6Y,
-    _SP7X,
-    _SP7Y,
 
 
 
@@ -112,16 +93,6 @@ import Assembly.EDSLInstr
 
 
 
--- C64 Constants
-color0 :: AddressRef
-color0 = AddrLit16 0xd020
-color1 :: AddressRef
-color1 = AddrLit16 0xd021
-color2 :: AddressRef
-color2 = AddrLit16 0xd022
-color3 :: AddressRef
-color3 = AddrLit16 0xd023
-
 
 screenRam :: AddressRef
 screenRam = AddrLit16 0x0400
@@ -130,70 +101,54 @@ colorRam :: AddressRef
 colorRam = AddrLit16 0xd800
 
 
-
--- 0xD011 Control Register #1
--- - Bit#0-#2: YSCROLL Screen Soft Scroll Vertical
--- - Bit#3: RSEL Switch betweem 25 or 24 visible rows
---          RSEL|  Display window height   | First line  | Last line
---          ----+--------------------------+-------------+----------
---            0 | 24 text lines/192 pixels |   55 (0x37)  | 246 (0xf6)
---            1 | 25 text lines/200 pixels |   51 (0x33)  | 250 (0xfa)
--- - Bit#4: DEN Switch VIC-II output on/off
--- - Bit#5: BMM Turn Bitmap Mode on/off
--- - Bit#6: ECM Turn Extended Color Mode on/off
--- - Bit#7: RST8 9th Bit for 0xD012 Rasterline counter
--- Initial Value: %10011011
-vicControl1 :: AddressRef
-vicControl1 = AddrLit16 0xd011
--- 0xD012 RASTER Raster counter
-
--- 0xD016 Control register 2
--- -  Bit#0-#2: XSCROLL Screen Soft Scroll Horizontal
--- -  Bit#3: CSEL Switch betweem 40 or 38 visible columns
---           CSEL|   Display window width   | First X coo. | Last X coo.
---           ----+--------------------------+--------------+------------
---             0 | 38 characters/304 pixels |   31 (0x1f)   |  334 (0x14e)
---             1 | 40 characters/320 pixels |   24 (0x18)   |  343 (0x157)
--- -  Bit#4: MCM Turn Multicolor Mode on/off
--- -  Bit#5-#7: not used
--- Initial Value: %00001000
-vicControl2 :: AddressRef
-vicControl2 = AddrLit16 0xd016
-
-
--- 0xD018 VIC-II base addresses
--- - Bit#0: not used
--- - Bit#1-#3: CB Address Bits 11-13 of the Character Set (*2048)
--- - Bit#4-#7: VM Address Bits 10-13 of the Screen RAM (*1024)
--- Initial Value: %00010100
-memory :: AddressRef
-memory = AddrLit16 0xd018
-
-
-
-vicBankSelect :: AddressRef
-vicBankSelect = AddrLit16 0xDD00
-vicMemoryControl :: AddressRef
-vicMemoryControl = AddrLit16 0xD018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
-vicBorderColor :: AddressRef
-vicBorderColor = AddrLit16 0xD020
-vicBackgroundColor :: AddressRef
-vicBackgroundColor = AddrLit16 0xD021
-vicBackgroundColor1 :: AddressRef
-vicBackgroundColor1 = AddrLit16 0xD022
-vicBackgroundColor2 :: AddressRef
-vicBackgroundColor2 = AddrLit16 0xD023
-vicRaster :: AddressRef
-vicRaster = AddrLit16 0xD012
 cia1DataPortA :: AddressRef
-cia1DataPortA = AddrLit16 0xDC00 -- Joystick Port 2 (nieużywane)
+cia1DataPortA = AddrLit16 0xdc00 -- Joystick Port 2 (nieużywane)
 cia1DataPortB :: AddressRef
-cia1DataPortB = AddrLit16 0xDC01 -- Joystick Port 2 (nieużywane)
+cia1DataPortB = AddrLit16 0xdc01 -- Joystick Port 2 (nieużywane)
 
 cia1InterruptControl :: AddressRef
-cia1InterruptControl = AddrLit16 0xDC0D
+cia1InterruptControl = AddrLit16 0xdc0d
 cia2InterruptControl :: AddressRef
-cia2InterruptControl = AddrLit16 0xDD0D
+cia2InterruptControl = AddrLit16 0xdd0d
+
+
+-- Port A, serial bus access. Bits:
+
+-- Bits #0-#1: VIC bank. Values:
+-- %00, 0: Bank #3, $C000-$FFFF, 49152-65535.
+-- %01, 1: Bank #2, $8000-$BFFF, 32768-49151.
+-- %10, 2: Bank #1, $4000-$7FFF, 16384-32767.
+-- %11, 3: Bank #0, $0000-$3FFF, 0-16383.
+
+-- Bit #2: RS232 TXD line, output bit.
+-- Bit #3: Serial bus ATN OUT; 0 = High; 1 = Low.
+-- Bit #4: Serial bus CLOCK OUT; 0 = High; 1 = Low.
+-- Bit #5: Serial bus DATA OUT; 0 = High; 1 = Low.
+-- Bit #6: Serial bus CLOCK IN; 0 = Low; 1 = High.
+-- Bit #7: Serial bus DATA IN; 0 = Low; 1 = High.
+cia2DataPortA :: AddressRef
+cia2DataPortA = AddrLit16 0xdd00    
+
+
+-- Port B, RS232 access. Read bits:
+-- Bit #0: RS232 RXD line, input bit.
+-- Bit #3: RS232 RI line.
+-- Bit #4: RS232 DCD line.
+-- Bit #5: User port H pin.
+-- Bit #6: RS232 CTS line; 1 = Sender is ready to send.
+-- Bit #7: RS232 DSR line; 1 = Receiver is ready to receive.
+
+-- Write bits:
+-- Bit #1: RS232 RTS line. 1 = Sender is ready to send.
+-- Bit #2: RS232 DTR line. 1 = Receiver is ready to receive.
+-- Bit #3: RS232 RI line.
+-- Bit #4: RS232 DCD line.
+-- Bit #5: User port H pin.
+cia2DataPortB :: AddressRef
+cia2DataPortB = AddrLit16 0xdd01
+
+
+
 
 -- Rutyny KERNAL
 kernalClrscr :: AddressRef
@@ -456,42 +411,109 @@ _SPRITE_POINTERS                     = 0x07f8 -- 2040
 --; ----------------------------------------------------------
 
 --; Sprite horizontal and vertical position registers
-_SP0X                                = 0xd000 -- 53248
-_SP0Y                                = 0xd001 -- 53249
-_SP1X                                = 0xd002 -- 53250
-_SP1Y                                = 0xd003 -- 53251
-_SP2X                                = 0xd004 -- 53252
-_SP2Y                                = 0xd005 -- 53253
-_SP3X                                = 0xd006 -- 53254
-_SP3Y                                = 0xd007 -- 53255
-_SP4X                                = 0xd008 -- 53256
-_SP4Y                                = 0xd009 -- 53257
-_SP5X                                = 0xd00A -- 53258
-_SP5Y                                = 0xd00B -- 53259
-_SP6X                                = 0xd00C -- 53260
-_SP6Y                                = 0xd00D -- 53261
-_SP7X                                = 0xd00E -- 53262
-_SP7Y                                = 0xd00F -- 53263
+vicSprite0X :: AddressRef; vicSprite0X = AddrLit16 0xd000 -- 53248
+vicSprite0Y :: AddressRef; vicSprite0Y = AddrLit16 0xd001 -- 53249
+vicSprite1X :: AddressRef; vicSprite1X = AddrLit16 0xd002 -- 53250
+vicSprite1Y :: AddressRef; vicSprite1Y = AddrLit16 0xd003 -- 53251
+vicSprite2X :: AddressRef; vicSprite2X = AddrLit16 0xd004 -- 53252
+vicSprite2Y :: AddressRef; vicSprite2Y = AddrLit16 0xd005 -- 53253
+vicSprite3X :: AddressRef; vicSprite3X = AddrLit16 0xd006 -- 53254
+vicSprite3Y :: AddressRef; vicSprite3Y = AddrLit16 0xd007 -- 53255
+vicSprite4X :: AddressRef; vicSprite4X = AddrLit16 0xd008 -- 53256
+vicSprite4Y :: AddressRef; vicSprite4Y = AddrLit16 0xd009 -- 53257
+vicSprite5X :: AddressRef; vicSprite5X = AddrLit16 0xd00a -- 53258
+vicSprite5Y :: AddressRef; vicSprite5Y = AddrLit16 0xd00b -- 53259
+vicSprite6X :: AddressRef; vicSprite6X = AddrLit16 0xd00c -- 53260
+vicSprite6Y :: AddressRef; vicSprite6Y = AddrLit16 0xd00d -- 53261
+vicSprite7X :: AddressRef; vicSprite7X = AddrLit16 0xd00e -- 53262
+vicSprite7Y :: AddressRef; vicSprite7Y = AddrLit16 0xd00f -- 53263
 
 --; Most significant bits of sprites 0-7 horizontal positions
-_MSIGX                               = 0xd010 -- 53264
+vicSpriteMSBX :: AddressRef; vicSpriteMSBX =  AddrLit16 0xd010 -- 53264
 
+
+-- 0xD011 Control Register #1
+-- - Bit#0-#2: YSCROLL Screen Soft Scroll Vertical
+-- - Bit#3: RSEL Switch betweem 25 or 24 visible rows
+--          RSEL|  Display window height   | First line  | Last line
+--          ----+--------------------------+-------------+----------
+--            0 | 24 text lines/192 pixels |   55 (0x37)  | 246 (0xf6)
+--            1 | 25 text lines/200 pixels |   51 (0x33)  | 250 (0xfa)
+-- - Bit#4: DEN Switch VIC-II output on/off
+-- - Bit#5: BMM Turn Bitmap Mode on/off
+-- - Bit#6: ECM Turn Extended Color Mode on/off
+-- - Bit#7: RST8 9th Bit for 0xD012 Rasterline counter
+-- Initial Value: %10011011
+vicControl1 :: AddressRef
+vicControl1 = AddrLit16 0xd011
+
+vicRaster :: AddressRef
+vicRaster = AddrLit16 0xd012
 --; Sprite enable register
-_SPRITE_ENABLE_REGISTER              = 0xd015 -- 53269
+vicSpriteEnable :: AddressRef; vicSpriteEnable = AddrLit16 0xd015 -- 53269
+
+
+-- 0xD016 Control register 2
+-- -  Bit#0-#2: XSCROLL Screen Soft Scroll Horizontal
+-- -  Bit#3: CSEL Switch betweem 40 or 38 visible columns
+--           CSEL|   Display window width   | First X coo. | Last X coo.
+--           ----+--------------------------+--------------+------------
+--             0 | 38 characters/304 pixels |   31 (0x1f)   |  334 (0x14e)
+--             1 | 40 characters/320 pixels |   24 (0x18)   |  343 (0x157)
+-- -  Bit#4: MCM Turn Multicolor Mode on/off
+-- -  Bit#5-#7: not used
+-- Initial Value: %00001000
+vicControl2 :: AddressRef
+vicControl2 = AddrLit16 0xd016
+
+
+-- 0xD018 VIC-II base addresses
+-- - Bit#0: not used
+-- - Bit#1-#3: CB Address Bits 11-13 of the Character Set (*2048)
+-- - Bit#4-#7: VM Address Bits 10-13 of the Screen RAM (*1024)
+-- Initial Value: %00010100
+
+vicMemoryControl :: AddressRef
+vicMemoryControl = AddrLit16 0xd018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
+
+
+vicSpriteDoubleWidth :: AddressRef
+vicSpriteDoubleWidth = AddrLit16 0xd01d
+vicSpriteDoubleHeight :: AddressRef
+vicSpriteDoubleHeight = AddrLit16 0xd017
+
+vicSpriteSpriteColision :: AddressRef
+vicSpriteSpriteColision = AddrLit16 0xd01e
+vicSpriteBackColision :: AddressRef
+vicSpriteBackColision = AddrLit16 0xd01f
+
+vicBorderColor :: AddressRef
+vicBorderColor = AddrLit16 0xd020
+vicBackgroundColor :: AddressRef
+vicBackgroundColor = AddrLit16 0xd021
+vicBackgroundColor1 :: AddressRef
+vicBackgroundColor1 = AddrLit16 0xd022
+vicBackgroundColor2 :: AddressRef
+vicBackgroundColor2 = AddrLit16 0xd023
+vicBackgroundColor3 :: AddressRef
+vicBackgroundColor3 = AddrLit16 0xd024
+
 
 --; Multicolor registers
-_SPRITE_MULTICOLOR_REGISTERS         = 0xd01c -- 53276
-
+vicSpriteMulticolor :: AddressRef; vicSpriteMulticolor =  AddrLit16 0xd01c -- 53276
 --; Sprite Multicolor
-_SPRITE_MC0                          = 0xd025 -- 53285
-_SPRITE_MC1                          = 0xd026 -- 53286
+vicSpriteMc0 :: AddressRef; vicSpriteMc0 =  AddrLit16 0xd025 -- 53285
+vicSpriteMc1 :: AddressRef; vicSpriteMc1 =  AddrLit16 0xd026 -- 53286
 
 --; Sprite color registers
-_SPRITE_0_COLOR_REGISTER             = 0xd027 -- 53287
-_SPRITE_1_COLOR_REGISTER             = 0xd028 -- 53288
-_SPRITE_2_COLOR_REGISTER             = 0xd029 -- 53289
-_SPRITE_3_COLOR_REGISTER             = 0xd02a -- 53290
-_SPRITE_4_COLOR_REGISTER             = 0xd02b -- 53291
-_SPRITE_5_COLOR_REGISTER             = 0xd02c -- 53292
-_SPRITE_6_COLOR_REGISTER             = 0xd02d -- 53293
-_SPRITE_7_COLOR_REGISTER             = 0xd02e -- 53294
+vicSprite0Color :: AddressRef; vicSprite0Color = AddrLit16 0xd027 -- 53287
+vicSprite1Color :: AddressRef; vicSprite1Color = AddrLit16 0xd028 -- 53288
+vicSprite2Color :: AddressRef; vicSprite2Color = AddrLit16 0xd029 -- 53289
+vicSprite3Color :: AddressRef; vicSprite3Color = AddrLit16 0xd02a -- 53290
+vicSprite4Color :: AddressRef; vicSprite4Color = AddrLit16 0xd02b -- 53291
+vicSprite5Color :: AddressRef; vicSprite5Color = AddrLit16 0xd02c -- 53292
+vicSprite6Color :: AddressRef; vicSprite6Color = AddrLit16 0xd02d -- 53293
+vicSprite7Color :: AddressRef; vicSprite7Color = AddrLit16 0xd02e -- 53294
+
+
+

@@ -73,8 +73,8 @@ charsetSize = fromIntegral $ length udgData
 -- Adresy danych mapy (muszą być gdzieś w pamięci CPU)
 largeMapDataAddr :: Address
 largeMapDataAddr   = 0x2000 + charsetSize --addr2word16 charsetRam + (fromIntegral (length udgData)) -- Adres danych mapy                              ---------> USTAWIĆ RĘCZNIE !!!
-largeMapColorAddr :: Address
-largeMapColorAddr  = largeMapDataAddr + mapTotalSize -- Kolory bezpośrednio po danych mapy
+charMapColorAddr :: Address
+charMapColorAddr  = largeMapDataAddr + mapTotalSize -- Kolory bezpośrednio po danych mapy
 
 -- Free zero page RAM includes locations 2-6 and $FB-$FE (251-254). 
 -- Assuming certain ML math calls and RS-232 communications aren't used, $F7-$FE (247-254) is free.
@@ -123,7 +123,7 @@ dstTemp :: AddressRef; dstTemp = AddrLit8 zpBase4 .+ 0x06 -- 2
 -- --- Definicja zestawu znaków (UDG) ---
 -- Znak 0
 udgData :: [Word8]
-udgData = unsafePerformIO $ loadCharsetDataFromFile "c64/world1.asm"
+udgData = unsafePerformIO $ loadCharsetDataFromFile "c64/world3.asm"
 
 
 loadColorDataFromFile :: FilePath -> IO [Word8]
@@ -131,14 +131,13 @@ loadColorDataFromFile filePath = do
     content <- readFile filePath
     let fileLines = lines content
     -- Find lines after "map_data" label, ignoring comments and empty lines
-    let mapDataLines = dropWhile (not . isPrefixOf "map_data") fileLines
+    let mapDataLines = dropWhile (not . isPrefixOf "charset_attrib_data") fileLines
     -- Take lines starting with ".byte" until another label or empty line
     let byteLines = takeWhile (isPrefixOf ".byte") $ drop 2 mapDataLines -- drop the "map_data" line itself
     -- Extract hex values from byte lines
-    putStrLn $ "Processing byte lines for map data..." ++ (show byteLines)
     System.IO.hFlush System.IO.stdout -- Force flush
     let hexValues = concatMap extractHexValues byteLines
-    putStrLn $ "Map data loaded from " ++ filePath
+    putStrLn $ "Color data loaded from " ++ filePath
     evaluate $ rnf hexValues -- Force full evaluation
     return hexValues
 -- --- Function to load charset data from file ---
@@ -151,10 +150,9 @@ loadCharsetDataFromFile filePath = do
     -- Take lines starting with ".byte" until another label or empty line
     let byteLines = takeWhile (isPrefixOf ".byte") $ drop 2 charsetDataLines -- drop the "charset_data" line itself
     -- Extract hex values from byte lines
-    putStrLn $ "Processing byte lines for charset data..." ++ show byteLines
     System.IO.hFlush System.IO.stdout -- Force flush
-    let hexValues = concatMap extractHexValues byteLines
     putStrLn $ "Charset data loaded from " ++ filePath
+    let hexValues = concatMap extractHexValues byteLines
     evaluate $ rnf hexValues -- Force full evaluation
     return hexValues
 
@@ -168,7 +166,6 @@ loadMapDataFromFile filePath = do
     -- Take lines starting with ".byte" until another label or empty line
     let byteLines = takeWhile (isPrefixOf ".byte") $ drop 2 mapDataLines -- drop the "map_data" line itself
     -- Extract hex values from byte lines
-    putStrLn $ "Processing byte lines for map data..." ++ (show byteLines)
     System.IO.hFlush System.IO.stdout -- Force flush
     let hexValues = concatMap extractHexValues byteLines
     putStrLn $ "Map data loaded from " ++ filePath
@@ -180,7 +177,7 @@ extractHexValues :: String -> [Word8]
 extractHexValues line
     | ".byte" `isPrefixOf` line = unsafePerformIO $ do
         let values = mapMaybe parseHexValue $ splitBytes $ drop 6 line -- drop ".byte "
-        putStrLn $ "Parsed line: " ++ line ++ " -> " ++ show values
+        putStrLn $ "db:" ++ show values
         System.IO.hFlush System.IO.stdout -- Force flush the output buffer
         return values
     | otherwise = []
@@ -198,11 +195,11 @@ parseHexValue s = case s of
 
 -- --- Definicja dużej mapy (ładowana z pliku) ---
 largeMapPattern :: [Word8]
-largeMapPattern = unsafePerformIO $ loadMapDataFromFile "c64/world1.asm"
+largeMapPattern = unsafePerformIO $ loadMapDataFromFile "c64/world3.asm"
 
 
-largeMapColors :: [Word8]
-largeMapColors = unsafePerformIO $ loadColorDataFromFile "c64/world1.asm"    
+charMapColors :: [Word8]
+charMapColors = unsafePerformIO $ loadColorDataFromFile "c64/world3.asm"    
 -- largeMapColors = take (fromIntegral mapTotalSize) $ cycle [_CYAN, _YELLOW, _GREEN, _PURPLE] -- Kolory dla znaków  green, purple] -- Kolory dla znaków
 
 
@@ -227,11 +224,11 @@ initGame = do
     sta_rb scrollOffset 0
     sta_rb lastColor 0
 
-    -- Ustaw bank3 dla VIC
-    lda vicBankSelect
+    -- Ustaw Bank #3 dla VIC, $C000-$FFFF,
+    lda cia2DataPortA
     and# 0b11111100 -- clear bits 0 and 1
     ora# 0b00000011 -- set bits 0 and 1 to 1
-    sta vicBankSelect
+    sta cia2DataPortA
 
     -- Bank out Basic and Kernal ROM
     lda$ AddrLit8 0x01
@@ -463,11 +460,11 @@ horizontalBars = do
     -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x0398)
     -- scrollColors $ AddrLit16 (addr2word16 colorRam + 0x03c0)
 
-    inc lastColor
-    lda lastColor
-    and# 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
-    sta lastColor
-    sta scrollOffset
+    -- inc lastColor
+    -- lda lastColor
+    -- and# 0x0f     -- Limit to 16 positions (0-15) -- Use EDSL 'and'
+    -- sta lastColor
+    -- sta scrollOffset
 
     -- jsr $ AbsLabel "copyVisibleMap" -- Fill screen with initial bars
     jmp ("main_loop"::Label)
@@ -536,7 +533,7 @@ horizontalBars = do
     sta_rw mapSrcPtr largeMapDataAddr
     add_rrw mapSrcPtr tmp16R1 
 
-    sta_rw mapColorSrcPtr largeMapColorAddr
+    sta_rw mapColorSrcPtr charMapColorAddr
     add_rrw mapColorSrcPtr tmp16R1
 
     -- Kopiowanie wiersz po wierszu - użycie pętli doWhile_
@@ -547,10 +544,14 @@ horizontalBars = do
         ldy# 0
         clc                             -- Ustaw Carry na 0
         doWhile_ IsNonCarry $ do        -- Pętla wykonuje się, dopóki Y < screenWidthChars
-            -- Kopiuj znak
+            -- copy char
             lda $ IY mapSrcPtr          -- Czytaj z mapy źródłowej [mapSrcPtr],Y
             sta $ IY screenDstPtr       -- Pisz do pamięci ekranu [screenDstPtr],Y
-            -- Kopiuj kolor
+
+            -- copy color
+            tax                         -- x = current character (index) 
+            lda $ X charMapColorAddr    -- get color from char color map
+            sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
             -- lda $ IY mapColorSrcPtr     -- Czytaj z mapy kolorów [mapColorSrcPtr],Y
             -- sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
             iny
@@ -564,7 +565,7 @@ horizontalBars = do
         -- Przesuń wskaźniki *screenDstPtr* i *colorDstPtr* na początek następnego wiersza ekranu
         sta_rw tmp16R1 screenWidthChars -- temp16 = screenWidthChars (40)
         add_rrw screenDstPtr tmp16R1    -- screenDstPtr = screenDstPtr + screenWidthChars
-        -- add_rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
+        add_rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
 
         -- Zmniejsz licznik wierszy
         dec rowCounter                  -- dec ustawia flagę Z, gdy licznik osiągnie 0
@@ -574,7 +575,7 @@ horizontalBars = do
     scanKeyboard
 
     l_ "printByte"
-    printByte 1 15 _YELLOW
+    printByte 1 15 charMapColorAddr
 
     --org 0x1800
     l_ "dummyVector"
@@ -601,5 +602,5 @@ horizontalBars = do
     l_ "largeMapData"
     db largeMapPattern
 
-    l_ "largeMapColorData"
-    db largeMapColors
+    l_ "charMapColorData"
+    db charMapColors

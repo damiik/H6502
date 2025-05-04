@@ -50,6 +50,7 @@ import Assembly.Core
       lsb,
       msb,
       Label,
+      Address,
       AddressRef(AddrLabel, AddrLit16, AddrLit8, AddrLabelExpr),
       Asm,
       Operand(..), -- Import all constructors
@@ -768,6 +769,14 @@ printChar textPos color = do
     lda# color
     sta $ X (colorRam .+ textPos)    -- Store the color at the screen color memory location
 
+printColorChar :: Word16 -> Address -> Asm()
+printColorChar textPos colorMap = do
+    sta$ X (screenRam .+ textPos)
+    tay 
+    lda (Y colorMap)
+    sta $ X (colorRam .+ textPos)
+
+
 
 macrosLib = do
     l_ "hundreds2Petscii"
@@ -824,7 +833,7 @@ tens2Petscii = do
 
 --- prints decimal byte at x y coords
 --- (needs *macrosLib*)
-printByte :: Word16 -> Word16 -> Word8 -> Asm()
+printByte :: Word16 -> Word16 -> Address -> Asm()
 printByte x y color = do
 
     let rest = AddrLit8 0xf8
@@ -832,16 +841,16 @@ printByte x y color = do
     jsr "hundreds2Petscii"
 
     ldx# 0
-    printChar screenAddress color  --Print a character from the hellotext string at the specified position
+    printColorChar screenAddress color  --Print a character from the hellotext string at the specified position
     jsr "tens2Petscii"
-    inx
-    printChar screenAddress color  --Print a character from the hellotext string at the specified position
+    ldx# 1
+    printColorChar screenAddress color  --Print a character from the hellotext string at the specified position
 
     lda rest 
     clc
     adc# 0x30
-    inx
-    printChar screenAddress color  --Print a character from the hellotext string at the specified position
+    ldx# 2
+    printColorChar screenAddress color  --Print a character from the hellotext string at the specified position
     rts
 
 skipNext2B = do

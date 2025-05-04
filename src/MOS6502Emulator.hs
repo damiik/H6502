@@ -226,7 +226,7 @@ interactiveLoopHelper lastCommand = do
             liftIO $ putStrLn $ "Memory trace range set to $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
             interactiveLoopHelper commandToExecute
           _ -> do
-            liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0x0200 0x0300)."
+            liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0200 0300)."
             interactiveLoopHelper lastCommand
       _      -> do
         liftIO $ putStrLn "Invalid command."
