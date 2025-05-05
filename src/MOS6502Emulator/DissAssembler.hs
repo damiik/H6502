@@ -27,11 +27,11 @@ opcodeMap :: Map Word8 InstructionInfo
 opcodeMap = Map.fromList $ map (\(m, am, op) -> (op, InstructionInfo m am (getModeSize am))) instructionData
 
 -- | Disassemble a single instruction at the given program counter
-disassembleInstruction :: Word16 -> FDX String
+disassembleInstruction :: Word16 -> FDX (String, Word8)
 disassembleInstruction pc = do
     opcode <- fetchByteMem pc
     case Map.lookup opcode opcodeMap of
-        Nothing -> return $ "Unknown opcode: $" ++ showHex opcode ""
+        Nothing -> return ("Unknown opcode: $" ++ showHex opcode "", 1)
         Just info -> do
             operands <- fetchOperands pc (size info)
             let bytes = opcode : operands
@@ -39,7 +39,8 @@ disassembleInstruction pc = do
             let paddedByteString = take 10 (byteString ++ replicate 10 ' ') -- Pad for alignment
             operandString <- formatOperand pc info operands
             let addressString = "\x1b[34m($\x1b[33m" ++ showHex pc "" ++ "\x1b[34m): \x1b[0m"
-            return $ addressString  ++ paddedByteString ++ " \x1b[36m\x1b[1m" ++ show (mnemonic info) ++ "\x1b[0m " ++ operandString
+            let instructionString = addressString  ++ paddedByteString ++ " \x1b[36m\x1b[1m" ++ show (mnemonic info) ++ "\x1b[0m " ++ operandString
+            return (instructionString, size info)
 
 -- | Fetch the operand bytes for an instruction
 fetchOperands :: Word16 -> Word8 -> FDX [Word8]

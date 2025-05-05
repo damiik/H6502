@@ -427,7 +427,7 @@ horizontalBars = do
     --     if_ IsCarryClear $ do   -- Jeśli (X < max_X), CMP nie ustawiło Carry
     --         inc  $ OpZP scrollX         --   Zwiększ X
     -- waitRaster -- Sync with raster
-
+    brk
     vicWaitLine 255
     -- jsr ("scrollColors"::Label) -- Scroll colors
 

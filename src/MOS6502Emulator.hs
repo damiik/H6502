@@ -43,7 +43,7 @@ fdxSingleCycle = do
       execute b
       when (enableTrace machineState) $ do
         disassembled <- disassembleInstruction currentPC -- Use the stored PC
-        liftIO $ putStrLn disassembled
+        liftIO $ putStrLn (fst disassembled)
         logRegisters =<< getRegisters
         -- Log all memory trace blocks
         mapM_ (uncurry logMemoryRange) (memoryTraceBlocks machineState)
@@ -55,7 +55,7 @@ newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [] } -- Initialize new fields
+  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000 } -- Initialize new fields
 
 -- | The main fetch-decode-execute loop
 runFDXLoop :: FDX ()
@@ -200,7 +200,8 @@ interactiveLoopHelper lastCommand = do
 \ry <val>:              set Y register to hex value\n\
 \rsp <val>:             set Stack Pointer to hex value\n\
 \rsr <val>:             set Status Register to hex value\n\
-\rpc <val>:             set Program Counter to hex value"
+\rpc <val>:             set Program Counter to hex value\n\
+\d:                     disassemble 32 instructions from current PC"
     case words commandToExecute of
       ["help"] -> handleHelp >> interactiveLoopHelper commandToExecute
       ["h"] -> handleHelp >> interactiveLoopHelper commandToExecute
@@ -246,6 +247,7 @@ interactiveLoopHelper lastCommand = do
       ["rsp", valStr] -> handleSetReg8 (\r val -> r { rSP = val }) valStr "Stack Pointer" commandToExecute
       ["rsr", valStr] -> handleSetReg8 (\r val -> r { rSR = val }) valStr "Status Register" commandToExecute
       ["rpc", valStr] -> handleSetPC valStr commandToExecute
+      "d":args -> handleDisassemble args commandToExecute
       _      -> do
         liftIO $ putStrLn "Invalid command."
         interactiveLoopHelper lastCommand -- Don't update last command on invalid input
@@ -381,3 +383,29 @@ handleSetPC valStr lastCommand = do
         Nothing -> do
             liftIO $ putStrLn "Invalid hex value for PC."
             interactiveLoopHelper lastCommand
+
+-- Handler for disassembling 32 instructions
+handleDisassemble :: [String] -> String -> FDX ()
+handleDisassemble args lastCommand = do
+    machine <- get
+    let startAddr = case args of
+                      [addrStr] -> case parseHexWord addrStr of
+                                     Just addr -> addr
+                                     Nothing -> lastDisassembledAddr machine -- Use last disassembled address on invalid input
+                      _         -> lastDisassembledAddr machine -- Use last disassembled address if no argument
+    liftIO $ putStrLn $ "Disassembling 32 instructions starting at $" ++ showHex startAddr ""
+    finalAddr <- disassembleInstructions startAddr 32
+    modify (\m -> m { lastDisassembledAddr = finalAddr }) -- Update last disassembled address
+    interactiveLoopHelper lastCommand
+
+-- Helper function to disassemble multiple instructions
+disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address after the last disassembled instruction
+disassembleInstructions currentPC 0 = return currentPC
+disassembleInstructions currentPC remaining = do
+    machine <- get
+    let mem = mMem machine
+    -- Disassemble the current instruction
+    (disassembled, instLen) <- disassembleInstruction currentPC
+    liftIO $ putStrLn disassembled
+    let nextPC = currentPC + (fromIntegral instLen)
+    disassembleInstructions nextPC (remaining - 1)

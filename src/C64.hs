@@ -570,3 +570,18 @@ vicSprite4Color :: AddressRef; vicSprite4Color = AddrLit16 0xd02b -- 53291
 vicSprite5Color :: AddressRef; vicSprite5Color = AddrLit16 0xd02c -- 53292
 vicSprite6Color :: AddressRef; vicSprite6Color = AddrLit16 0xd02d -- 53293
 vicSprite7Color :: AddressRef; vicSprite7Color = AddrLit16 0xd02e -- 53294
+
+
+-- Decimal         Hex           Uses
+-- 0     - 827     0000 - 033B   Operating system
+-- 828   - 1019    033C - 03FB   Cassette buffer
+-- 1024  - 2023    0400 - 07FF   Screen memory
+-- 2040  - 2047    07F8 - 07FF   Sprite data pointers
+-- 2048  - 40959   0800 - 9FFF   BASIC area
+-- 40960 - 49151   A000 - BFFF   BASIC ROM / 8k RAM
+-- 49152 - 53247   C000 - CFFF   4k RAM
+-- 53248 - 54271   D000 - D3FF   VIC chip (sprites, video display)
+-- 54272 - 55295   D400 – D7FF   SID chip (sound)
+-- 55296 - 56319   D800 – DBFF   Colour memory
+-- 56320 - 57343   DC00 – DEFF   Input/output etc.
+-- 57344 - 65535   E000 - FFFF   KERNAL ROM / 8k RAM

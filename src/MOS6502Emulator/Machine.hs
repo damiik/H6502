@@ -66,6 +66,7 @@ data Machine = Machine
   , breakpoints      :: [Word16] -- Added for debugger breakpoints
   , debuggerActive   :: Bool     -- Added to indicate if debugger is active
   , memoryTraceBlocks :: [(Word16, Word16)] -- Added for multiple memory trace blocks
+  , lastDisassembledAddr :: Word16 -- Added to store the address of the last disassembled instruction
   }
 
 -- | FDX is fetch-decode-execute
