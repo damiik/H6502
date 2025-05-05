@@ -11,7 +11,8 @@ module Assembly (
     formatBasic, -- NEW: Export the BASIC formatter
 
     -- Re-export List helpers
-    module Assembly.List
+    module Assembly.List,
+
 ) where
 
 

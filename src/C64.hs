@@ -2,9 +2,9 @@
 module C64 (
     screenRam, colorRam, 
     vicMemoryControl,vicRaster,
-    vicBorderColor, vicBackgroundColor, vicBackgroundColor1, vicBackgroundColor2,
+    vicBorderColor, vicBackgroundColor, vicBackgroundColor1, vicBackgroundColor2, vicBackgroundColor3,
     cia1DataPortA, cia1InterruptControl, cia2InterruptControl,
-    cia2DataPortA, cia2DataPortB,
+    cia2DataPortA, cia2DataPortB, cia2TimerALow, cia2TimerAHigh,
     kernalClrscr, kernalGetin,
     keyCursorDown, keyCursorRight,
     keyCursorUp, keyCursorLeft,
@@ -83,13 +83,13 @@ module C64 (
 
 
 
-
 ) where
 import Prelude hiding (and) -- Hide 'and' from Prelude
 import Control.Monad (replicateM_)
 import Data.Word
 import Assembly.Core
-import Assembly.EDSLInstr 
+import Assembly.EDSLInstr
+-- Removed cyclic import of C64.SerialPort
 
 
 
@@ -147,7 +147,10 @@ cia2DataPortA = AddrLit16 0xdd00
 cia2DataPortB :: AddressRef
 cia2DataPortB = AddrLit16 0xdd01
 
-
+cia2TimerALow :: AddressRef
+cia2TimerALow = AddrLit16 0xdd04
+cia2TimerAHigh :: AddressRef
+cia2TimerAHigh = AddrLit16 0xdd05
 
 
 -- Rutyny KERNAL
@@ -549,6 +552,7 @@ vicBackgroundColor1 :: AddressRef
 vicBackgroundColor1 = AddrLit16 0xd022
 vicBackgroundColor2 :: AddressRef
 vicBackgroundColor2 = AddrLit16 0xd023
+-- New comment added
 vicBackgroundColor3 :: AddressRef
 vicBackgroundColor3 = AddrLit16 0xd024
 
@@ -566,6 +570,3 @@ vicSprite4Color :: AddressRef; vicSprite4Color = AddrLit16 0xd02b -- 53291
 vicSprite5Color :: AddressRef; vicSprite5Color = AddrLit16 0xd02c -- 53292
 vicSprite6Color :: AddressRef; vicSprite6Color = AddrLit16 0xd02d -- 53293
 vicSprite7Color :: AddressRef; vicSprite7Color = AddrLit16 0xd02e -- 53294
-
-
-

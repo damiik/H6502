@@ -22,7 +22,9 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Word ( Word8, Word16 )
 import Numeric (showHex, readHex) -- Import showHex and readHex
 import System.IO (hFlush, stdout)
-import Data.List (stripPrefix) -- Import stripPrefix
+import Data.List (stripPrefix, cycle, take) -- Import stripPrefix, cycle, take
+import Data.Maybe (mapMaybe) -- Import mapMaybe
+import Data.Bits (Bits, (.&.)) -- Import Bits for status register manipulation if needed
 
 
 fdxSingleCycle :: FDX Bool -- Returns True if emulation should continue, False if halted
@@ -189,14 +191,23 @@ interactiveLoopHelper lastCommand = do
 \mem   / m [addr] [end]: add/remove memory range to dispaly\n\
 \break / bk:             add/remove breakpoint to the list\n\
 \quit  / q:              quit program\n\
-\exit  / e:              exit interactive mode\n\ 
+\exit  / e:              exit interactive mode\n\
 \trace / t:              toggle instruction tracing\n\
-\goto  / g <addr>:       set program counter to address"
+\goto  / g <addr>:       set program counter to address\n\
+\fill  / f <start> <end> <byte1> [byte2...]: fill memory range with bytes\n\
+\ra <val>:              set Accumulator to hex value\n\
+\rx <val>:              set X register to hex value\n\
+\ry <val>:              set Y register to hex value\n\
+\rsp <val>:             set Stack Pointer to hex value\n\
+\rsr <val>:             set Status Register to hex value\n\
+\rpc <val>:             set Program Counter to hex value"
     case words commandToExecute of
       ["help"] -> handleHelp >> interactiveLoopHelper commandToExecute
       ["h"] -> handleHelp >> interactiveLoopHelper commandToExecute
       ["goto", addrStr] -> handleGoto addrStr
       ["g", addrStr] -> handleGoto addrStr
+      "fill":args -> handleFill args commandToExecute
+      "f":args -> handleFill args commandToExecute -- Alias for fill
       ["step"] -> handleStep
       ["z"] -> handleStep
       ["regs"] -> handleRegs
@@ -228,6 +239,13 @@ interactiveLoopHelper lastCommand = do
           _ -> do
             liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0200 0300)."
             interactiveLoopHelper lastCommand
+      -- Register setting commands
+      ["ra", valStr] -> handleSetReg8 (\r val -> r { rAC = val }) valStr "Accumulator" commandToExecute
+      ["rx", valStr] -> handleSetReg8 (\r val -> r { rX = val }) valStr "X Register" commandToExecute
+      ["ry", valStr] -> handleSetReg8 (\r val -> r { rY = val }) valStr "Y Register" commandToExecute
+      ["rsp", valStr] -> handleSetReg8 (\r val -> r { rSP = val }) valStr "Stack Pointer" commandToExecute
+      ["rsr", valStr] -> handleSetReg8 (\r val -> r { rSR = val }) valStr "Status Register" commandToExecute
+      ["rpc", valStr] -> handleSetPC valStr commandToExecute
       _      -> do
         liftIO $ putStrLn "Invalid command."
         interactiveLoopHelper lastCommand -- Don't update last command on invalid input
@@ -295,3 +313,71 @@ handleMemTrace args lastCommand = do
     _ -> do -- Incorrect number of arguments
       liftIO $ putStrLn "Invalid use of memory trace command. Use 'mem' or 'm' to list, or 'mem <start> <end>' to add/remove."
       interactiveLoopHelper lastCommand
+
+-- Helper function to safely parse a hex string to Maybe Word8
+parseHexByte :: String -> Maybe Word8
+parseHexByte s = case readHex s of
+  [(val, "")] | val >= 0 && val <= 255 -> Just (fromInteger val) -- Ensure value fits in Word8
+  _           -> Nothing
+
+-- Helper function to safely parse a hex string to Maybe Word16
+parseHexWord :: String -> Maybe Word16
+parseHexWord s = case readHex s of
+  [(val, "")] | val >= 0 && val <= 65535 -> Just (fromInteger val) -- Ensure value fits in Word16
+  _           -> Nothing
+
+handleFill :: [String] -> String -> FDX ()
+handleFill args lastCommand = do
+  case args of
+    startAddrStr : endAddrStr : byteStrs -> do
+      case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+        (Just startAddr, Just endAddr) -> do
+          let byteValues = mapMaybe parseHexByte byteStrs
+          if null byteValues
+            then do
+              liftIO $ putStrLn "No valid byte values provided or parse error."
+              interactiveLoopHelper lastCommand
+            else if startAddr > endAddr
+            then do
+              liftIO $ putStrLn "Start address cannot be greater than end address."
+              interactiveLoopHelper lastCommand
+            else do
+              let addressRange = [startAddr .. endAddr]
+              let fillBytes = take (length addressRange) (Data.List.cycle byteValues)
+              machine <- get
+              let mem = mMem machine
+              -- Perform writes within FDX using liftIO
+              liftIO $ mapM_ (\(addr, val) -> writeByte addr val mem) (zip addressRange fillBytes)
+              -- Memory is modified in-place, no need to 'put' the machine state back just for this
+              liftIO $ putStrLn $ "Memory filled from $" ++ showHex startAddr "" ++ " to $" ++ showHex endAddr ""
+              interactiveLoopHelper lastCommand
+        _ -> do
+          liftIO $ putStrLn "Invalid address format for fill command. Use hex (e.g., fill 0200 0300 ff 00)."
+          interactiveLoopHelper lastCommand
+    _ -> do
+      liftIO $ putStrLn "Invalid use of fill command. Use 'fill <start> <end> <byte1> [byte2...]'"
+      interactiveLoopHelper lastCommand
+
+-- Generic handler for setting 8-bit registers
+handleSetReg8 :: (Registers -> Word8 -> Registers) -> String -> String -> String -> FDX ()
+handleSetReg8 regSetter valStr regName lastCommand = do
+    case parseHexByte valStr of
+        Just val -> do
+            modify (\m -> m { mRegs = regSetter (mRegs m) val })
+            liftIO $ putStrLn $ regName ++ " set to $" ++ showHex val ""
+            interactiveLoopHelper lastCommand
+        Nothing -> do
+            liftIO $ putStrLn $ "Invalid hex value for " ++ regName ++ "."
+            interactiveLoopHelper lastCommand
+
+-- Specific handler for setting the 16-bit PC
+handleSetPC :: String -> String -> FDX ()
+handleSetPC valStr lastCommand = do
+    case parseHexWord valStr of
+        Just val -> do
+            setPC val -- Assuming setPC updates the state directly
+            liftIO $ putStrLn $ "PC set to $" ++ showHex val ""
+            interactiveLoopHelper lastCommand
+        Nothing -> do
+            liftIO $ putStrLn "Invalid hex value for PC."
+            interactiveLoopHelper lastCommand

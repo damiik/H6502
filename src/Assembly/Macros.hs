@@ -1,33 +1,33 @@
-{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE PatternSynonyms, BinaryLiterals #-}
 module Assembly.Macros (
     -- Macros
     ifnzThen, ifzThen, ifneThen, ifeqThen, ifcThen, ifncThen,
     ifmThen, ifpThen, ifoThen, ifnoThen,
     whileZ, doWhileZ,
-    whileNz, doWhileNz, 
-    whileC, doWhileC, 
-    whileNc, doWhileNc, 
+    whileNz, doWhileNz,
+    whileC, doWhileC,
+    whileNc, doWhileNc,
     whileM, doWhileM,
-    whileP, doWhileP, 
+    whileP, doWhileP,
     whileO, doWhileO,
     whileNo, doWhileNo,
-    whileEq, doWhileEq, 
+    whileEq, doWhileEq,
     whileNe, doWhileNe,
-    doWhileX, 
+    doWhileX,
     doWhileY,
-    
+
     --whileAddr, doWhileAddr, whileZP, doWhileZP,
-    forEachRange, 
+    forEachRange,
     caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,
     addAto16bit, -- Add 8-bit value in A to a 16-bit memory location
     -- Helper (potentially hide later)
     makeUniqueLabel,
     waitRaster,
     vicWaitLine,
-    cmp_r, cmp_y, cmp_x, 
+    cmp_r, cmp_y, cmp_x,
     adc_rb, add_rb, sub_rb, sub_br,
-    sta_rb, sta_rw, 
-    adc_rrw, add_rrw, sta_rrw, 
+    sta_rb, sta_rw,
+    adc_rrw, add_rrw, sta_rrw,
     copyBlock,
     fillScreen,
     decsum, binsum,
@@ -73,13 +73,13 @@ import Assembly.Core
       Conditions(..), -- Ensure Conditions type is imported if needed by macros like while_
       db
       )
-import Assembly.EDSLInstr 
+import Assembly.EDSLInstr
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
-import C64 (vicRaster, screenRam, colorRam, vicControl1)
+import C64 (vicRaster, screenRam, colorRam, vicControl1, cia2DataPortA, cia2DataPortB, cia2TimerALow, cia2TimerAHigh, cia2InterruptControl)
 
 
--- zmienne lokalne na stronie zerowej 
+-- zmienne lokalne na stronie zerowej
 -- te adresy mogą się pokrywać z innmi zmiennymi lokalnymi
 srcTemp = AddrLit16 0x12 -- 2
 dstTemp = AddrLit16 0x14 -- 2
@@ -596,15 +596,15 @@ sub_rb op value = do
 
 sta_rw :: AddressRef -> Word16 -> Asm() -- op <- value :: Word16
 sta_rw op value = do
-    -- let nextAddr = case op of 
+    -- let nextAddr = case op of
     --         AddrLit8 addr -> AddrLit8 $ addr P.+ 1 -- Increment the address by 1 op P.+ 1
     --         AddrLit16 addr -> AddrLit16 $ addr P.+ 1 -- Increment the address by 1
-    --         _ -> error "Unsupported address type"   
+    --         _ -> error "Unsupported address type"
 
     lda# lsb value -- Lower byte
     sta op
     lda# msb value-- Upper byte
-    sta (op .+ 1) -- Store upper byte in next address    
+    sta (op .+ 1) -- Store upper byte in next address
 
 adc_rrw :: AddressRef -> AddressRef -> Asm() -- op1 <- op1 + op2 + carry
 adc_rrw op1 op2 = do
@@ -702,9 +702,9 @@ copyBlock dest src count = do
 
 
 -- waitRaster :: Asm ()
--- waitRaster = do 
+-- waitRaster = do
 --     while_ IsNonZero $ do
---         cmp_r vicRaster 250  
+--         cmp_r vicRaster 250
 vicWaitBottom :: Asm ()
 vicWaitBottom = do
     while_ IsZero $ do
@@ -750,7 +750,7 @@ fillScreen screenAddr fillB = do
         sta $ X (screenAddr .+ 750)
 
 
-decsum = do  
+decsum = do
         sed                              -- decimal mode
         clc                              -- clear carry
         doWhile_ IsNonZero $ do          -- while Y != 0
@@ -764,12 +764,12 @@ decsum = do
 
 
 -- Multidigit binary addition (bcd)
--- Address of number 1 at 0040:0041. 
--- Address of number 2 at 0042:0043. 
+-- Address of number 1 at 0040:0041.
+-- Address of number 2 at 0042:0043.
 -- Length of numbers (in bytes) in Index Register Y. Numbers arranged starting with most significant digits.
 -- Reslult: Sum replaces number with starting address in memory locations 0040 and 0041.
 binsum :: Asm ()
-binsum = do  
+binsum = do
         clc                              -- clear carry
         doWhile_ IsNonZero $ do          -- while Y != 0
             dey                          -- Y--
@@ -814,7 +814,7 @@ configureVectors addrRef = do
 
 printChar :: Word16 -> Word8 -> Asm()
 printChar textPos color = do
-    
+
     sta $ X (screenRam .+ textPos)    -- Store the character at the screen memory location
     lda# color
     sta $ X (colorRam .+ textPos)    -- Store the color at the screen color memory location
@@ -822,7 +822,7 @@ printChar textPos color = do
 printColorChar :: Word16 -> Address -> Asm()
 printColorChar textPos colorMap = do
     sta$ X (screenRam .+ textPos)
-    tay 
+    tay
     lda (Y colorMap)
     sta $ X (colorRam .+ textPos)
 
@@ -836,7 +836,7 @@ macrosLib = do
 
 -- returns petscii character of hundreds of value from accumulator
 -- returns rest of value in 0xf8
-hundreds2Petscii = do 
+hundreds2Petscii = do
 
     let count = AddrLit8 0xf7
     let rest = AddrLit8 0xf8
@@ -851,19 +851,19 @@ hundreds2Petscii = do
         sbc# 100
     adc# 100 -- undo last dec
     sta rest
-    lda count 
+    lda count
     clc
-    adc# 0x30        -- Convert the count to ASCII     
+    adc# 0x30        -- Convert the count to ASCII
     rts
 
 -- return petscii character of tens of accumulator, (max value of accumulator have to be < 99)
 -- return rest of value in 0xf8
 
-tens2Petscii = do 
+tens2Petscii = do
 
     let count = AddrLit8 0xf7
     let rest = AddrLit8 0xf8
-    
+
     -- sta rest
     sta_rb count 0
     lda rest
@@ -874,9 +874,9 @@ tens2Petscii = do
         sbc# 10
     adc# 10 -- undo last dec
     sta rest
-    lda count 
+    lda count
     clc
-    adc# 0x30        -- Convert the count to ASCII     
+    adc# 0x30        -- Convert the count to ASCII
     rts
 
 
@@ -896,7 +896,7 @@ printByte x y color = do
     ldx# 1
     printColorChar screenAddress color  --Print a character from the hellotext string at the specified position
 
-    lda rest 
+    lda rest
     clc
     adc# 0x30
     ldx# 2
@@ -922,5 +922,3 @@ fillMemory memAddr value sizeKb = do
         inc$ AddrLabel sfmd .+ 2  -- this will increment *STA* instruction second byte operand (at "sfmd")
         dex
     rts
-
-

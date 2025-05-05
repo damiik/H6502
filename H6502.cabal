@@ -33,6 +33,7 @@ library
       Assembly.List
       C64
       C64.Examples
+      C64.SerialPort
       MOS6502Emulator
       MOS6502Emulator.Machine
       MOS6502Emulator.Registers
