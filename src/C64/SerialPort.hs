@@ -5,10 +5,26 @@ module C64.SerialPort (
     writeCia2PortA,
     initSerialPort,
     serialIRQ,
-    setIRQVector
+    setIRQVector,
+
+    -- CIA1 Serial Port (from example)
+    cia1TimerALo,
+    cia1TimerAHi,
+    cia1CtrlRegA,
+    cia1IrqMaskOrIcr,
+    cia1PortA,
+    txBufferAddr,
+    rxBufferAddr,
+    bitCountAddr,
+    initCia1ForSerial,
+    sendCharViaCia1,
+    irqHandlerCia1,
+    setKernalIrqVector,
+    exampleSerialUsage_CIA1
 ) where
 
 import Data.Word (Word8, Word16)
+import Data.Char (ord) -- For fromEnum
 import Data.Bits((.&.), (.|.), shiftL, shiftR, testBit, complement, xor, (.<<.), (.>>.))
 import Assembly.Core
     ( l_,
@@ -40,10 +56,268 @@ import Assembly.Core
       Conditions(..), -- Ensure Conditions type is imported if needed by macros like while_
       db
       )
-import Assembly.EDSLInstr
+import Assembly.EDSLInstr -- Import all from EDSLInstr
+
+
 import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(+) is used elsewhere
 import qualified Prelude as P ((+), (-))
 import C64 (cia2DataPortA, cia2DataPortB, cia2TimerALow, cia2TimerAHigh, cia2InterruptControl)
+
+-- *** CIA #1 Based Serial Communication (from user example) ***
+
+-- CIA #1 Registers (as per example)
+cia1TimerALo, cia1TimerAHi, cia1CtrlRegA, cia1IrqMaskOrIcr, cia1PortA :: Address -- Assuming Address is Word16
+cia1TimerALo     = 0xDC04 -- Lower byte of Timer A
+cia1TimerAHi     = 0xDC05 -- Higher byte of Timer A
+cia1CtrlRegA     = 0xDC0E -- Control Register for Timer A
+cia1IrqMaskOrIcr = 0xDC0D -- IRQ Mask (write) / Interrupt Control Register (read) for CIA #1
+cia1PortA        = 0xDC00 -- Port A of CIA #1 (bit 0 = TX, bit 1 = RX, as per example)
+
+-- Serial Protocol Configuration (as per example)
+-- BAUD_RATE = 2400 (used to derive timerCyclesForBaud)
+-- BITS_PER_CHAR = 10 (8N1: 1 start, 8 data, 1 stop)
+bitsPerCharExample :: Word8
+bitsPerCharExample = 10
+
+timerCyclesForBaudExample :: Word16
+timerCyclesForBaudExample = 417 -- For 2400 baud at 1MHz CIA clock (1 bit = ~417 us)
+
+-- Zero Page Buffers and Counter (as per example)
+txBufferAddr, rxBufferAddr, bitCountAddr :: Word8
+txBufferAddr = 0x02 -- Transmission buffer address
+rxBufferAddr = 0x03 -- Reception buffer address (not used in send example)
+bitCountAddr = 0x04 -- Bit counter for transmission/reception
+
+-- Function to set the KERNAL IRQ vector ($0314-$0315)
+-- From example:
+-- ; Wektor przerwań IRQ (adres $0314-$0315)
+--         .org $0314
+--         .word IRQ_Handler ; Adres handlera przerwań
+setKernalIrqVector :: Label -> Asm ()
+setKernalIrqVector handlerLabel = do
+    -- Assembly.EDSLInstr.comment "-- Set KERNAL IRQ handler vector at $0314-$0315 --"
+    lda #< handlerLabel
+    sta (AddrLit16 0x0314)
+    lda #> handlerLabel
+    sta (AddrLit16 0x0315)
+
+-- Initialization of CIA#1 for Serial Communication (corresponds to 'Start' in example)
+-- Translated user comment:
+-- CIA Initialization:
+-- Timer A is configured in One-Shot mode with a value corresponding to the duration of one bit (for 2400 baud).
+-- Timer A interrupt is enabled by setting a bit in CIA1_IRQ_MASK.
+initCia1ForSerial :: Asm ()
+initCia1ForSerial = do
+    -- Assembly.EDSLInstr.comment "--- Initialize CIA#1 for Serial Communication (from example) ---"
+    -- Assembly.EDSLInstr.comment "CIA Initialization:"
+    -- Assembly.EDSLInstr.comment "Timer A is configured in One-Shot mode with a value corresponding to"
+    -- Assembly.EDSLInstr.comment "the duration of one bit (for 2400 baud)."
+    -- Assembly.EDSLInstr.comment "Timer A interrupt is enabled by setting a bit in CIA1_IRQ_MASK."
+
+    -- Assembly.EDSLInstr.comment "Disable interrupts globally"
+    sei
+
+    -- Assembly.EDSLInstr.comment "Disable all CIA#1 interrupts initially by writing to MASK register ($DC0D)"
+    -- Assembly.EDSLInstr.comment "Example uses: LDA #$7F; STA CIA1_IRQ_MASK"
+    -- Assembly.EDSLInstr.comment "Value $7F means bits 0-4 are 0 (disable int.), bit 7 is 0 (clear mode for mask bits)."
+    lda #0x7F
+    sta (AddrLit16 cia1IrqMaskOrIcr)
+
+    -- Assembly.EDSLInstr.comment "Configure Timer A Control Register ($DC0E) for One-Shot mode"
+    -- Assembly.EDSLInstr.comment "Example uses: LDA #%00000001; STA CIA1_CTRL_REG_A"
+    -- Assembly.EDSLInstr.comment "Value %00000001: Bit 0 (Start Timer A)=1. Other bits relevant to mode (RunMode=0 for one-shot) are 0."
+    lda #0b00000001
+    sta (AddrLit16 cia1CtrlRegA)
+
+    -- Assembly.EDSLInstr.comment "Set Timer A latch for 2400 baud (1 bit = ~417 us)"
+    -- Assembly.EDSLInstr.comment "Example uses: LDA #<417; STA CIA1_TIMER_A_LO; LDA #>417; STA CIA1_TIMER_A_HI"
+    lda #lsb timerCyclesForBaudExample
+    sta (AddrLit16 cia1TimerALo)
+    lda #msb timerCyclesForBaudExample
+    sta (AddrLit16 cia1TimerAHi)
+
+    -- Assembly.EDSLInstr.comment "Enable interrupts globally"
+    cli
+
+    -- Assembly.EDSLInstr.comment "Enable Timer A interrupt in CIA#1 IRQ Mask Register ($DC0D)"
+    -- Assembly.EDSLInstr.comment "Example uses: LDA #%00000010; STA CIA1_IRQ_MASK"
+    -- Assembly.EDSLInstr.comment "This implies bit 1 of MASK register enables Timer A interrupt (differs from standard CIA where bit 0 is Timer A)."
+    -- Assembly.EDSLInstr.comment "Writing %00000010 with bit 7 implicitly 0 means CLEARING mask bits except bit 1."
+    -- Assembly.EDSLInstr.comment "To SET mask bit 1 (enable interrupt), it should be #%10000010."
+    -- Assembly.EDSLInstr.comment "Following example's literal value, assuming specific non-standard behavior or interpretation."
+    lda #0b00000010
+    sta (AddrLit16 cia1IrqMaskOrIcr)
+
+-- Send Character Routine for CIA#1 (corresponds to 'SendChar' in example)
+-- Translated user comment (part 1 for SendChar):
+-- Data Transmission:
+-- The SendChar function sends an ASCII character via the serial port:
+-- First, it sends the start bit (low state).
+sendCharViaCia1 :: Asm ()
+sendCharViaCia1 = do
+    l_ "SendChar_CIA1"
+    -- Assembly.EDSLInstr.comment "--- SendChar routine for CIA#1 (from example) ---"
+    -- Assembly.EDSLInstr.comment "Data Transmission (SendChar part):"
+    -- Assembly.EDSLInstr.comment "The SendChar function sends an ASCII character via the serial port:"
+    -- Assembly.EDSLInstr.comment "First, it sends the start bit (low state)."
+    -- Assembly.EDSLInstr.comment "Assumes character to send is already in TxBuffer (ZP: $02)"
+
+    -- Assembly.EDSLInstr.comment "Set TX line for Start Bit (low state)"
+    -- Assembly.EDSLInstr.comment "Example: LDA #%00000001; STA CIA1_PORT_A"
+    -- Assembly.EDSLInstr.comment "This is unusual if port bit 0 is TX and 0=low, 1=high."
+    -- Assembly.EDSLInstr.comment "Literal translation of example code."
+    lda #0b00000001 -- Value for Port A to make TX line represent start bit
+    sta (AddrLit16 cia1PortA)
+
+    -- Assembly.EDSLInstr.comment "Initialize bit counter"
+    -- Assembly.EDSLInstr.comment "Example: LDA #BITS_PER_CHAR; STA BitCount (BITS_PER_CHAR = 10)"
+    lda #bitsPerCharExample
+    sta bitCountAddr -- Pass Word8 directly
+
+    -- Assembly.EDSLInstr.comment "Start Timer A to time the first bit (start bit's duration)"
+    -- Assembly.EDSLInstr.comment "Example: LDA #%00000011; STA CIA1_CTRL_REG_A"
+    -- Assembly.EDSLInstr.comment "Value %00000011 for CIA_CTRL_REG_A ($DC0E):"
+    -- Assembly.EDSLInstr.comment "  Bit 0 (START) = 1 (Start timer)"
+    -- Assembly.EDSLInstr.comment "  Bit 1 (PBON)  = 1 (Timer A output on PB6)"
+    -- Assembly.EDSLInstr.comment "Timer runs in mode previously set (one-shot). Restarting one-shot reloads latch."
+    lda #0b00000011
+    sta (AddrLit16 cia1CtrlRegA)
+    rts
+
+-- IRQ Handler for CIA#1 Serial Communication (corresponds to 'IRQ_Handler' in example)
+-- Translated user comments (part 2 for IRQ_Handler):
+-- Data Transmission (IRQ part):
+-- Then, it transmits subsequent data bits (LSB first).
+-- After each bit, the timer is restarted to ensure synchronization.
+-- Interrupt Handler:
+-- At each interrupt, the handler checks if Timer A has reached zero (underflowed).
+-- If so, it transmits the next data bit via CIA1_PORT_A.
+-- After all bits have been transmitted (10 bits in 8N1 protocol), the transmission ends.
+irqHandlerCia1 :: Asm ()
+irqHandlerCia1 = do
+    l_ "IRQ_Handler_CIA1"
+    -- Assembly.EDSLInstr.comment "--- IRQ Handler for CIA#1 Timer A (from example) ---"
+    -- Assembly.EDSLInstr.comment "Data Transmission (IRQ part):"
+    -- Assembly.EDSLInstr.comment "Then, it transmits subsequent data bits (LSB first)."
+    -- Assembly.EDSLInstr.comment "After each bit, the timer is restarted to ensure synchronization."
+    -- Assembly.EDSLInstr.comment "Interrupt Handler:"
+    -- Assembly.EDSLInstr.comment "At each interrupt, the handler checks if Timer A has reached zero (underflowed)."
+    -- Assembly.EDSLInstr.comment "If so, it transmits the next data bit via CIA1_PORT_A."
+    -- Assembly.EDSLInstr.comment "After all bits have been transmitted (10 bits in 8N1 protocol), the transmission ends."
+
+    -- Save registers
+    pha
+    txa
+    pha
+    tya
+    pha
+
+    -- Check interrupt source
+    -- Assembly.EDSLInstr.comment "Check source of interrupt - expecting Timer A from CIA#1"
+    -- Assembly.EDSLInstr.comment "Example reads CIA1_IRQ_MASK ($DC0D), which is ICR when read."
+    -- Assembly.EDSLInstr.comment "Example then checks bit 1 (AND #%00000010)."
+    -- Assembly.EDSLInstr.comment "This implies Timer A flag is bit 1 of ICR (differs from standard CIA)."
+    exitIsrLabel <- makeUniqueLabel ()
+    lda (AddrLit16 cia1IrqMaskOrIcr) -- Read ICR from $DC0D
+    and #0b00000010     -- Check bit 1
+    beq exitIsrLabel     -- If not set (not Timer A interrupt as per example's logic), exit
+
+    -- Handle transmission bit
+    -- Assembly.EDSLInstr.comment "Timer A interrupt occurred, handle serial transmission bit"
+    txDoneLabel <- makeUniqueLabel ()
+    lda bitCountAddr -- Pass Word8 directly
+    beq txDoneLabel      -- If bit count is 0, transmission of this char is done
+
+    -- Assembly.EDSLInstr.comment "Shift out next bit from TxBuffer (ZP: $02)"
+    sendLowLabel <- makeUniqueLabel ()
+    setTxLabel   <- makeUniqueLabel ()
+    lda txBufferAddr -- Pass Word8 directly
+    lsr (Nothing :: Maybe Word8) -- Disambiguate for accumulator
+    sta txBufferAddr -- Pass Word8 directly
+    bcc sendLowLabel     -- If Carry=0 (bit was 0), send LOW state on TX
+
+    -- Send HIGH bit (data bit was 1)
+    -- Assembly.EDSLInstr.comment "Send HIGH state on TX line (for data bit 1)"
+    -- Assembly.EDSLInstr.comment "Example: LDA #%00000001; STA CIA1_PORT_A"
+    lda #0b00000001
+    jmp setTxLabel
+
+    l_ sendLowLabel
+    -- Assembly.EDSLInstr.comment "Send LOW state on TX line (for data bit 0)"
+    -- Assembly.EDSLInstr.comment "Example: LDA #%00000000; STA CIA1_PORT_A"
+    lda #0b00000000
+    -- Fall through to SetTX
+
+    l_ setTxLabel
+    -- Assembly.EDSLInstr.comment "Set TX line on CIA1_PORT_A with value in A"
+    sta (AddrLit16 cia1PortA)
+
+    -- Assembly.EDSLInstr.comment "Decrement bit counter"
+    dec bitCountAddr -- Pass Word8 directly
+
+    -- Assembly.EDSLInstr.comment "Restart Timer A for the next bit's duration"
+    -- Assembly.EDSLInstr.comment "Example: LDA #%00000011; STA CIA1_CTRL_REG_A (Start Timer, PBOn=1)"
+    lda #0b00000011
+    sta (AddrLit16 cia1CtrlRegA)
+    -- RTI is not here; it's at TxDone or Exit_ISR. Control flows to next interrupt.
+
+    l_ txDoneLabel
+    -- Assembly.EDSLInstr.comment "Transmission of one character complete (all bits timed)"
+    -- Assembly.EDSLInstr.comment "Restore registers and return from interrupt"
+    pla
+    tay
+    pla
+    tax
+    pla
+    rti
+
+    l_ exitIsrLabel
+    -- Assembly.EDSLInstr.comment "Not the expected Timer A interrupt (or spurious), exit"
+    -- Assembly.EDSLInstr.comment "Restore registers and return from interrupt"
+    pla
+    tay
+    pla
+    tax
+    pla
+    rti
+
+-- Example usage of the CIA1 serial routines (derived from example's main program)
+exampleSerialUsage_CIA1 :: Label -> Char -> Asm ()
+exampleSerialUsage_CIA1 irqHandlerLabel charToSend = do
+    -- Assembly.EDSLInstr.comment "--- Example Main Program Logic for CIA1 Serial (from example) ---"
+    l_ "Start_CIA1_Example"
+
+    -- Assembly.EDSLInstr.comment "Initialize CIA1 and set up KERNAL IRQ vector"
+    -- Assembly.EDSLInstr.comment "This combines initCia1ForSerial and setKernalIrqVector for a complete setup"
+    initCia1ForSerial -- Sets up CIA1, Timer A, enables global interrupts (CLI)
+    setKernalIrqVector irqHandlerLabel -- Sets $0314/$0315 to point to our IRQ handler
+
+    -- Assembly.EDSLInstr.comment "Prepare data to send"
+    -- Assembly.EDSLInstr.comment "Example: LDA #'A'; STA TxBuffer"
+    lda #fromIntegral (ord charToSend) -- Load ASCII value of char
+    sta txBufferAddr          -- Store to TxBuffer (ZP: $02) - Pass Word8 directly
+
+    -- Assembly.EDSLInstr.comment "Call SendChar routine"
+    -- Assembly.EDSLInstr.comment "Example: JSR SendChar"
+    jsr (AddrLabel "SendChar_CIA1")    -- Call the send routine
+
+    -- Assembly.EDSLInstr.comment "Infinite loop (as in example)"
+    loopLabel <- makeUniqueLabel ()
+    l_ loopLabel
+    jmp loopLabel
+
+
+
+
+
+
+
+
+
+
+
+
+-- *** CIA #2 Based Serial Communication (existing code) ***
 
 -- Reads a byte from CIA2 Data Port B ($DD01)
 readCia2PortB :: Asm ()
