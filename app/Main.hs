@@ -18,13 +18,14 @@ import MOS6502Emulator.Registers (mkRegisters, rPC)
 
 -- stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
 -- *brk* instruction to stop
--- stack run -- --debug-address 4096
+-- stack run -- --debug-address 4096 -s result.lab
 
 -- --- Command Line Options ---
 data Options = Options
   { c64BasicOutput :: Bool
   , outputFile :: Maybe FilePath
   , debugAddress :: Maybe Word16
+  , symbolOutputFile :: Maybe FilePath -- Added for symbol file output
   }
 
 optionsParser :: Parser Options
@@ -40,15 +41,21 @@ optionsParser = Options
      <> help "Output file name for binary data"
       ))
  <*> optional (option auto
-      ( long "debug-address"
-      <> metavar "ADDRESS"
-      <> help "Run assembled code in emulator starting at ADDRESS"
-      ))
+       ( long "debug-address"
+       <> metavar "ADDRESS"
+       <> help "Run assembled code in emulator starting at ADDRESS"
+       ))
+ <*> optional (strOption -- Added for symbol file output
+       ( long "symbol-output"
+       <> short 's'
+       <> metavar "SYM_FILE"
+       <> help "Output symbol file name"
+       ))
 
 options :: ParserInfo Options
 options = info (optionsParser <**> helper)
-          ( fullDesc
-         <> progDesc "Assemble 6502 code and output in hex or C64 BASIC"
+           ( fullDesc
+          <> progDesc "Assemble 6502 code and output in hex or C64 BASIC"
          <> header "H6502 Assembler" )
 
 
@@ -158,9 +165,17 @@ main = do
         putStrLn $ "Actual Start Address: $" ++ showHex actualStartAddress ""
         putStrLn "\nLabels Defined:"
         mapM_ (\(lbl, addr) -> putStrLn $ "  " ++ lbl ++ "= $" ++ showHex addr "") (Map.toList labels)
+
+        -- Write symbol file if specified
+        case symbolOutputFile opts of
+          Just symPath -> do
+            let symbolData = unlines $ map (\(name, addr) -> showHex addr "" ++ " " ++ name) (Map.toList labels)
+            Prelude.writeFile symPath symbolData
+            putStrLn $ "\nSymbols written to: " ++ symPath
+          Nothing -> return ()
         
         case debugAddress opts of
-          Just addr -> runDebugger addr actualStartAddress byteCode -- If testAddress is provided, run the test with the specified start address and actual load address
+          Just addr -> runDebugger addr actualStartAddress byteCode (symbolOutputFile opts) -- If testAddress is provided, run the test with the specified start address and actual load address, passing symbol file path
           Nothing -> do -- Otherwise, proceed with file output
             let output = if c64BasicOutput opts
                             then formatBasic actualStartAddress byteCode

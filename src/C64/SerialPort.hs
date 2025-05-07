@@ -20,7 +20,20 @@ module C64.SerialPort (
     sendCharViaCia1,
     irqHandlerCia1,
     setKernalIrqVector,
-    exampleSerialUsage_CIA1
+    exampleSerialUsage_CIA1,
+
+    -- ACIA 6551 Serial Port (from user example)
+    aciaSR,
+    aciaRDR,
+    aciaTDR,
+    aciaCMD,
+    aciaCTRL,
+    defineHelloMsg,
+    initAciaEDSL,
+    sendCharAciaEDSL,
+    receiveCharAciaEDSL,
+    checkErrorsAciaEDSL,
+    exampleAciaProgram
 ) where
 
 import Data.Word (Word8, Word16)
@@ -47,7 +60,7 @@ import Assembly.Core
       (.+), -- Import renamed operator
       (.-), -- Import renamed operator
       parens, -- Import parens if needed by macros (though unlikely)
-      ArithExpr(add, sub), -- Import the class methods if needed directly (unlikely)
+      ArithExpr(add, sub), -- Import the class methuse: `lda $ X, label`ods if needed directly (unlikely)
       evalLabelExpr,
       resolveAddressMaybe,
       LabelExpression(LabelRef),
@@ -310,7 +323,136 @@ exampleSerialUsage_CIA1 irqHandlerLabel charToSend = do
 
 
 
+-- *** ACIA 6551 Based Serial Communication (from user example) ***
 
+-- ACIA 6551 Registers (base address $DE00 as per user example)
+aciaSR, aciaRDR, aciaTDR, aciaCMD, aciaCTRL :: Address
+aciaSR   = 0xDE00   -- Status Register (Read) / Control Register (Write, but different bits)
+aciaRDR  = 0xDE00   -- Receiver Data Register (Read)
+aciaTDR  = 0xDE01   -- Transmitter Data Register (Write)
+aciaCMD  = 0xDE02   -- Command Register (Write)
+aciaCTRL = 0xDE03   -- Control Register (Write) - Note: Example uses $DE03 for CTRL, $DE00 for SR.
+                    -- Standard ACIA 6551 typically has SR/RDR at base and TDR/CR at base+1.
+                    -- The example uses $DE00 for SR/RDR, $DE01 for TDR, $DE02 for CMD, $DE03 for CTRL.
+                    -- This is unusual. Following user's example for addresses.
+
+-- Define HELLO_MSG string
+defineHelloMsg :: Asm Label
+defineHelloMsg = do
+    label <- makeLabelWithPrefix "HELLO_MSG"
+    l_ label
+    db $ map (fromIntegral . ord) "Hello from C64!\r\n\0" -- Null-terminated for BEQ in example
+    return label
+
+-- Initialize ACIA (8N1, 9600 baud - as per example's InitACIA)
+-- Example's InitACIA:
+-- LDA #%00000011 ; Command: 8N1, no parity, 1 stop bit -> STA ACIA_CMD ($DE02)
+-- LDA #%00000111 ; Control: Enable transmitter/receiver -> STA ACIA_CTRL ($DE03)
+-- Note: Baud rate setting is usually part of Control Register, not Command.
+-- The example values for CMD and CTRL seem to conflate/simplify standard ACIA setup.
+-- Following example's direct register writes.
+initAciaEDSL :: Asm ()
+initAciaEDSL = do
+    l_ "initAciaEDSL"
+    -- Command: 8N1, no parity, 1 stop bit (as per example's comment for CMD)
+    -- However, value %00000011 for CMD usually means:
+    -- Bits 1-0: Counter Divide Select (00 = /1, 01 = /16, 10 = /64, 11 = Master Reset)
+    -- This would be Master Reset.
+    -- For 8N1, no parity, 1 stop bit, it's usually set in Control Register.
+    -- Example's LDA #%00000011 ; STA ACIA_CMD
+    lda #0b00000011
+    sta (AddrLit16 aciaCMD)
+
+    -- Control: Enable transmitter/receiver (as per example's comment for CTRL)
+    -- Value %00000111 for CTRL usually means:
+    -- Bits 4-0: Baud rate select (e.g. 00001 for 110 baud with 1.8432MHz crystal)
+    -- Bits 6-5: Word select (e.g. 10 for 8 bits, 1 stop bit)
+    -- Bit 7: Receive Interrupt Enable
+    -- Example's LDA #%00000111 ; STA ACIA_CTRL
+    lda #0b00000111
+    sta (AddrLit16 aciaCTRL)
+    rts
+
+-- Send a single character via ACIA
+-- Example's SendChar:
+-- PHA
+-- CheckTBE: LDA ACIA_SR; AND #%00100000 (TBE); BEQ CheckTBE
+-- PLA; STA ACIA_TDR; RTS
+sendCharAciaEDSL :: Asm ()
+sendCharAciaEDSL = do
+    l_ "sendCharAciaEDSL"
+    pha
+    checkTBELabel <- makeLabelWithPrefix "CheckTBE_ACIA"
+    l_ checkTBELabel
+    lda (AddrLit16 aciaSR)
+    and #0b00100000 -- Check TBE (Transmit Buffer Empty - bit 5)
+    beq checkTBELabel
+    pla
+    sta (AddrLit16 aciaTDR)
+    rts
+
+-- Receive a single character (blocking)
+-- Example's ReceiveChar:
+-- CheckRDR: LDA ACIA_SR; AND #%00000010 (RDR); BEQ CheckRDR
+-- LDA ACIA_RDR; RTS
+receiveCharAciaEDSL :: Asm ()
+receiveCharAciaEDSL = do
+    l_ "receiveCharAciaEDSL"
+    checkRDRLabel <- makeLabelWithPrefix "CheckRDR_ACIA"
+    l_ checkRDRLabel
+    lda (AddrLit16 aciaSR)
+    and #0b00000010 -- Check RDR (Receive Data Ready - bit 1)
+    beq checkRDRLabel
+    lda (AddrLit16 aciaRDR) -- Read received byte
+    rts
+
+-- Error Handling (optional, as per example)
+-- Example's CheckErrors:
+-- LDA ACIA_SR; AND #%00001110 (PE, FE, OE); BEQ NoError
+-- ; Handle error
+-- LDA #%00000111; STA ACIA_CTRL
+-- NoError: RTS
+checkErrorsAciaEDSL :: Asm ()
+checkErrorsAciaEDSL = do
+    l_ "checkErrorsAciaEDSL"
+    noErrorLabel <- makeLabelWithPrefix "NoError_ACIA"
+    lda (AddrLit16 aciaSR)
+    and #0b00001110 -- Check PE (bit 2), FE (bit 3), OE (bit 4)
+    beq noErrorLabel
+    -- Handle error (example just re-enables transmitter/receiver)
+    lda #0b00000111
+    sta (AddrLit16 aciaCTRL)
+    l_ noErrorLabel
+    rts
+
+-- Example ACIA Program (mirrors user's assembly example)
+exampleAciaProgram :: Asm ()
+exampleAciaProgram = do
+    l_ "exampleAciaProgram"
+    sei -- Disable interrupts
+
+    jsr (AddrLabel "initAciaEDSL") -- Corrected to camelCase if hlint applied it
+
+    -- helloMsgLabel <- defineHelloMsg -- Define and get label for HELLO_MSG
+
+    ldx #0
+    sendLoopLabel <- makeLabelWithPrefix "SendLoop_ACIA"
+    receiveLoopLabel <- makeLabelWithPrefix "ReceiveLoop_ACIA"
+    l_ sendLoopLabel
+    lda$ X (AddrLabel "HELLO_MSG") -- Using the AbsXLabel pattern - Correct EDSL syntax for LDA label,X is unknown.
+    beq receiveLoopLabel           -- If char is null, end of string
+    jsr (AddrLabel "sendCharAciaEDSL") -- Corrected to camelCase
+    inx
+    -- BNE SendLoop (original example has BNE, but LDA,X then BEQ is more common for strings)
+    -- For direct translation of BNE, we'd need a CMP or similar.
+    -- Assuming the BEQ handles the loop termination correctly for null-terminated string.
+    jmp sendLoopLabel -- If not BEQ, continue loop
+
+    l_ receiveLoopLabel
+    jsr (AddrLabel "receiveCharAciaEDSL") -- Wait for incoming byte; Corrected to camelCase
+    -- The received byte is in A
+    jsr (AddrLabel "sendCharAciaEDSL")    -- Echo back received byte (which is in A); Corrected to camelCase
+    jmp receiveLoopLabel
 
 
 

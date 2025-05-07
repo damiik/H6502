@@ -10,9 +10,10 @@ import Assembly.Macros
 import Data.Word (Word8, Word16) -- Added Word16
 import Data.Bits ((.|.), (.<<.), (.>>.), (.&.), shiftL, shiftR)
 import C64
+import C64.SerialPort (initAciaEDSL, sendCharAciaEDSL, receiveCharAciaEDSL, exampleAciaProgram, checkErrorsAciaEDSL )
 import Control.Monad
 import System.IO (readFile)
-import Data.Char (isHexDigit)
+import Data.Char (isHexDigit, ord)
 import Numeric (readHex)
 import Data.List (dropWhile, isPrefixOf, takeWhile, words)
 import Data.Maybe (mapMaybe)
@@ -272,8 +273,10 @@ initGame = do
 
     -- Skopiuj początkowy widok mapy
     jsr ("copyVisibleMap"::String)
+    -- jsr("initAciaEDSL"::String)
 
     cli
+    jmp ("exampleAciaProgram"::String)
 
 --     * = $fff0 "IRQ Indirect vector"
 -- IRQ_Indirect:
@@ -472,6 +475,13 @@ horizontalBars = do
     -- jsr $ AbsLabel "copyVisibleMap" -- Fill screen with initial bars
     jmp ("main_loop"::Label)
     macrosLib
+    initAciaEDSL
+    sendCharAciaEDSL
+    receiveCharAciaEDSL
+    checkErrorsAciaEDSL
+    exampleAciaProgram
+    l_ "HELLO_MSG"
+    db $ map (fromIntegral . ord) "Hello from C64!\r\n\0"
 
 
     -- Subroutine: Fill Screen with Bars

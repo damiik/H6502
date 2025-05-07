@@ -9,10 +9,11 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.State (gets) -- To get parts of the state
 import Data.Bits (shiftL, (.|.), testBit) -- Import bitwise operators and testBit
 import Data.Int (Int16) -- Import Int16
 
-import MOS6502Emulator.Machine (FDX, fetchByteMem, fetchWordMem, toWord)
+import MOS6502Emulator.Machine (FDX, fetchByteMem, fetchWordMem, toWord, Machine(labelMap)) -- Import labelMap
 import Assembly.Instructions6502 (Mnemonic(..), AddressingMode(..), instructionData, getModeSize)
 
 -- | Data structure to hold instruction details for disassembly
@@ -33,11 +34,12 @@ disassembleInstruction pc = do
     case Map.lookup opcode opcodeMap of
         Nothing -> return ("Unknown opcode: $" ++ showHex opcode "", 1)
         Just info -> do
+            lblMap <- gets labelMap -- Get the labelMap from the Machine state
             operands <- fetchOperands pc (size info)
             let bytes = opcode : operands
             let byteString = unwords $ map (`showHex` "") bytes
             let paddedByteString = take 10 (byteString ++ replicate 10 ' ') -- Pad for alignment
-            operandString <- formatOperand pc info operands
+            operandString <- formatOperand pc info operands lblMap -- Pass labelMap
             let addressString = "\x1b[34m($\x1b[33m" ++ showHex pc "" ++ "\x1b[34m): \x1b[0m"
             let instructionString = addressString  ++ paddedByteString ++ " \x1b[36m\x1b[1m" ++ show (mnemonic info) ++ "\x1b[0m " ++ operandString
             return (instructionString, size info)
@@ -55,48 +57,44 @@ fetchOperands pc 3 = do
 fetchOperands _ _ = return [] -- Should not happen with valid instruction sizes
 
 -- | Format the operand string based on the addressing mode
-formatOperand :: Word16 -> InstructionInfo -> [Word8] -> FDX String
-formatOperand pc info operands =
-    case addressingMode info of
+formatOperand :: Word16 -> InstructionInfo -> [Word8] -> Map.Map Word16 String -> FDX String
+formatOperand pc info operands lblMap =
+    let formatAddress addr =
+            case Map.lookup addr lblMap of
+                Just lbl -> "\x1b[32m" ++ lbl ++ "\x1b[0m \x1b[34m($\x1b[33m" ++ showHex addr "" ++ "\x1b[34m)\x1b[0m"
+                Nothing  -> "\x1b[34m$\x1b[33m" ++ showHex addr "" ++ "\x1b[0m"
+    in case addressingMode info of
         Implicit    -> return ""
         Accumulator -> return "\x1b[35mA\x1b[0m"
         Immediate   -> case operands of
                            [operand] -> return $ "\x1b[34m#$\x1b[33m" ++ (showHex operand "") ++ "\x1b[0m"
                            _         -> return "Invalid operands for Immediate mode"
         ZeroPage    -> case operands of
-                           [operand] -> return $ "\x1b[34m$\x1b[33m" ++ (showHex operand "") ++ "\x1b[0m"
+                           [operand] -> return $ formatAddress (fromIntegral operand)
                            _         -> return "Invalid operands for ZeroPage mode"
         ZeroPageX   -> case operands of
-                           [operand] -> return $ "\x1b[34m$\x1b[33m" ++ showHex operand "" ++ "\x1b[34m,X\x1b[0m"
+                           [operand] -> return $ formatAddress (fromIntegral operand) ++ "\x1b[34m,X\x1b[0m"
                            _         -> return "Invalid operands for ZeroPageX mode"
         ZeroPageY   -> case operands of
-                           [operand] -> return $ "\x1b[34m$\x1b[33m" ++ showHex operand "" ++ "\x1b[34m,Y\x1b[0m"
+                           [operand] -> return $ formatAddress (fromIntegral operand) ++ "\x1b[34m,Y\x1b[0m"
                            _         -> return "Invalid operands for ZeroPageY mode"
         Absolute    -> case operands of
-                           [lo, hi] -> do
-                               let addr = mkWord lo hi
-                               return $ "\x1b[34m$\x1b[33m" ++ (showHex addr "") ++ "\x1b[0m"
+                           [lo, hi] -> let addr = mkWord lo hi in return $ formatAddress addr
                            _        -> return "Invalid operands for Absolute mode"
         AbsoluteX   -> case operands of
-                           [lo, hi] -> do
-                               let addr = mkWord lo hi
-                               return $ "\x1b[34m$\x1b[33m" ++ showHex addr "" ++ "\x1b[34m,X\x1b[0m"
+                           [lo, hi] -> let addr = mkWord lo hi in return $ formatAddress addr ++ "\x1b[34m,X\x1b[0m"
                            _        -> return "Invalid operands for AbsoluteX mode"
         AbsoluteY   -> case operands of
-                           [lo, hi] -> do
-                               let addr = mkWord lo hi
-                               return $ "\x1b[34m$\x1b[33m" ++ showHex addr "" ++ "\x1b[34m,Y\x1b[0m"
+                           [lo, hi] -> let addr = mkWord lo hi in return $ formatAddress addr ++ "\x1b[34m,Y\x1b[0m"
                            _        -> return "Invalid operands for AbsoluteY mode"
         Indirect    -> case operands of -- Only for JMP
-                           [lo, hi] -> do
-                               let addr = mkWord lo hi
-                               return $ "\x1b[34m($\x1b[33m" ++ showHex addr "" ++ "\x1b[34m)\x1b[0m"
+                           [lo, hi] -> let addr = mkWord lo hi in return $ "\x1b[34m(" ++ formatAddress addr ++ "\x1b[34m)\x1b[0m"
                            _        -> return "Invalid operands for Indirect mode"
         IndirectX   -> case operands of
-                           [operand] -> return $ "\x1b[34m($\x1b[33m" ++ showHex operand "" ++ "\x1b[34m,X)\x1b[0m"
+                           [operand] -> return $ "\x1b[34m(" ++ formatAddress (fromIntegral operand) ++ "\x1b[34m,X)\x1b[0m"
                            _         -> return "Invalid operands for IndirectX mode"
         IndirectY   -> case operands of
-                           [operand] -> return $ "\x1b[34m($\x1b[33m" ++ showHex operand "" ++ "\x1b[34m),Y\x1b[0m"
+                           [operand] -> return $ "\x1b[34m(" ++ formatAddress (fromIntegral operand) ++ "\x1b[34m),Y\x1b[0m"
                            _         -> return "Invalid operands for IndirectY mode"
         Relative    -> case operands of
                            [offsetByte] -> do
@@ -104,9 +102,8 @@ formatOperand pc info operands =
                                    offset = if testBit offsetByte 7
                                             then fromIntegral offsetByte - 256 -- Calculate two's complement for negative
                                             else fromIntegral offsetByte
-                               -- Standard 6502 relative branch calculation: (address of opcode + 2) + signed_offset
                                let targetAddr = pc + 2 + fromIntegral offset
-                               return $ "\x1b[34m$\x1b[33m" ++ (showHex targetAddr "") ++ "\x1b[0m"
+                               return $ formatAddress targetAddr
                            _            -> return "Invalid operands for Relative mode"
 
 -- Helper to create a Word16 from low and high bytes

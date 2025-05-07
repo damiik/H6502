@@ -426,6 +426,7 @@ stringC64  str =
       | c == '?'             =  63                    -- ?: 63
       | c == '!'             =  33                    -- !: 33
       | c == '#'             =  35                    -- #: 35
+      | c == '\0'            =  0                     -- Null character
       | otherwise            =  63                    -- Nieobsługiwane znaki: ? (63)
     bytes = map asciiToScreencode str
     size = fromIntegral $ length bytes

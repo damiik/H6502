@@ -20,7 +20,7 @@ module MOS6502Emulator.Machine
 ,writeByteMem
 ,mkWord
 ,toWord
-
+,loadSymbolFile -- Export new function
 ) where
 
 -- import MonadLib
@@ -32,10 +32,13 @@ import MOS6502Emulator.Registers (Registers, rPC) -- Import rPC
 import Control.Monad.Trans.Class (lift)  -- Import lift
 import Control.Monad.Trans.State (StateT, runStateT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.State (MonadState, get, put)
-import Numeric (showHex) -- Import showHex
+import Control.Monad.State (MonadState, get, put, modify') -- Added modify'
+import Numeric (showHex, readHex) -- Import showHex and readHex
 import Data.Word (Word8, Word16)
 import Data.Bits (shiftL)
+import qualified Data.Map.Strict as Map -- Added for labelMap
+import System.IO (readFile) -- For reading the symbol file
+import Control.Exception (try, IOException) -- For error handling
 
 
 -- In this context, "Word" in an identifier name
@@ -67,6 +70,7 @@ data Machine = Machine
   , debuggerActive   :: Bool     -- Added to indicate if debugger is active
   , memoryTraceBlocks :: [(Word16, Word16)] -- Added for multiple memory trace blocks
   , lastDisassembledAddr :: Word16 -- Added to store the address of the last disassembled instruction
+  , labelMap             :: Map.Map Word16 String -- Added to store address-to-label mappings
   }
 
 -- | FDX is fetch-decode-execute
@@ -153,3 +157,26 @@ writeByteMem :: Word16 -> Word8 -> FDX ()
 writeByteMem addr b = do
   mem <- getMemory
   Mem.writeByte addr b mem
+
+-- | Loads a symbol file into the Machine's labelMap
+loadSymbolFile :: FilePath -> FDX ()
+loadSymbolFile filePath = do
+    liftIO $ putStrLn $ "Attempting to load symbol file: " ++ filePath -- Debug message
+    fileContentOrError <- liftIO $ try (System.IO.readFile filePath)
+    case fileContentOrError of
+        Left e -> liftIO $ putStrLn $ "Error loading symbol file: " ++ show (e :: IOException)
+        Right fileContent -> do
+            liftIO $ putStrLn "Symbol file read successfully. Parsing..." -- Debug message
+            let ls = lines fileContent
+            let parsedLabels = foldr parseLine Map.empty ls
+            modify' $ \m -> m { labelMap = parsedLabels }
+            liftIO $ putStrLn $ "Parsed " ++ show (Map.size parsedLabels) ++ " labels." -- Debug message
+  where
+    parseLine :: String -> Map.Map Word16 String -> Map.Map Word16 String
+    parseLine line acc =
+        case words line of
+            (addrStr:nameRest) | not (null nameRest) ->
+                case readHex addrStr of
+                    [(addr, "")] -> Map.insert addr (unwords nameRest) acc
+                    _            -> acc -- Failed to parse address
+            _ -> acc -- Line doesn't fit format

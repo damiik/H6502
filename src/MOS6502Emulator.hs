@@ -25,6 +25,7 @@ import System.IO (hFlush, stdout)
 import Data.List (stripPrefix, cycle, take) -- Import stripPrefix, cycle, take
 import Data.Maybe (mapMaybe) -- Import mapMaybe
 import Data.Bits (Bits, (.&.)) -- Import Bits for status register manipulation if needed
+import qualified Data.Map.Strict as Map -- For Map.empty
 
 
 fdxSingleCycle :: FDX Bool -- Returns True if emulation should continue, False if halted
@@ -55,7 +56,7 @@ newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000 } -- Initialize new fields
+  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty } -- Initialize new fields, including labelMap
 
 -- | The main fetch-decode-execute loop
 runFDXLoop :: FDX ()
@@ -106,10 +107,14 @@ runMachine debuggerLoop initialMachine = do
 
 -- | Sets up the initial state of the machine, including registers and memory
 -- Note: This function no longer sets the PC, as it's handled by runEmulator
-setupMachine :: Machine -> [(Word16, Word8)] -> IO Machine
-setupMachine machine memoryWrites = do
+setupMachine :: Machine -> [(Word16, Word8)] -> Maybe FilePath -> IO Machine
+setupMachine machine memoryWrites maybeSymPath = do
   mem <- foldr (\(addr, val) acc -> acc >>= \m -> writeByte addr val m >> return m) (return $ mMem machine) memoryWrites
-  return machine { mMem = mem }
+  let machineWithMem = machine { mMem = mem }
+  -- Load symbol file if path is provided
+  case maybeSymPath of
+    Just symPath -> snd <$> runStateT (unFDX $ loadSymbolFile symPath) machineWithMem
+    Nothing -> return machineWithMem
 
 
 runTest :: Word16 -> Word16 -> [Word8] -> IO ()
@@ -122,7 +127,8 @@ runTest startAddress actualLoadAddress byteCode = do
   let memoryWrites = zip [actualLoadAddress..] byteCode
 
   -- Setup the machine (PC is set by runEmulator now)
-  setupMachine initialMachine memoryWrites >>= \setupResult -> do
+  -- Pass Nothing for symbol file path in runTest, or decide if it needs one
+  setupMachine initialMachine memoryWrites Nothing >>= \setupResult -> do
     putStrLn "Emulator machine setup complete."
 
     -- Run the emulator with the specified start address
@@ -134,8 +140,8 @@ runTest startAddress actualLoadAddress byteCode = do
 
 
 -- | Initializes the emulator with the given starting address and bytecode, then enters interactive debugger mode
-runDebugger :: Word16 -> Word16 -> [Word8] -> IO ()
-runDebugger startAddress actualLoadAddress byteCode = do
+runDebugger :: Word16 -> Word16 -> [Word8] -> Maybe FilePath -> IO ()
+runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
   putStrLn $ "Initializing debugger with code starting at $" ++ showHex startAddress ""
   putStrLn $ "Loading bytecode at $" ++ showHex actualLoadAddress ""
   initialMachine <- newMachine
@@ -143,8 +149,8 @@ runDebugger startAddress actualLoadAddress byteCode = do
   -- Prepare memory writes - load bytecode at its actual load address
   let memoryWrites = zip [actualLoadAddress..] byteCode
 
-  -- Setup the machine
-  setupMachine initialMachine memoryWrites >>= \setupResult -> do
+  -- Setup the machine, including loading symbols
+  setupMachine initialMachine memoryWrites maybeSymPath >>= \setupResult -> do
     putStrLn "Emulator machine setup complete."
 
     -- Set the starting PC and enter interactive debugger loop
@@ -403,7 +409,12 @@ disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address aft
 disassembleInstructions currentPC 0 = return currentPC
 disassembleInstructions currentPC remaining = do
     machine <- get
-    let mem = mMem machine
+    let lblMap = labelMap machine
+    -- Check if the currentPC has a label and print it
+    case Map.lookup currentPC lblMap of
+        Just lbl -> liftIO $ putStrLn $ "\n\x1b[32m" ++ lbl ++ ":\x1b[0m" -- Print label on a new line if it exists
+        Nothing  -> return ()
+
     -- Disassemble the current instruction
     (disassembled, instLen) <- disassembleInstruction currentPC
     liftIO $ putStrLn disassembled
