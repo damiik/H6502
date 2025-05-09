@@ -12,9 +12,21 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (gets) -- To get parts of the state
 import Data.Bits (shiftL, (.|.), testBit) -- Import bitwise operators and testBit
 import Data.Int (Int16) -- Import Int16
-
 import MOS6502Emulator.Machine (FDX, fetchByteMem, fetchWordMem, toWord, Machine(labelMap)) -- Import labelMap
 import Assembly.Instructions6502 (Mnemonic(..), AddressingMode(..), instructionData, getModeSize)
+-- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
+formatHex8 :: Word8 -> String
+formatHex8 b =
+  let hexStr = showHex b ""
+  in if length hexStr < 2 then "0" ++ hexStr else hexStr
+
+-- | Formats a Word16 as a four-character hexadecimal string, padding with leading zeros if necessary.
+formatHex16 :: Word16 -> String
+formatHex16 w =
+  let hexStr = showHex w ""
+  in replicate (4 - length hexStr) '0' ++ hexStr
+
+
 
 -- | Data structure to hold instruction details for disassembly
 data InstructionInfo = InstructionInfo
@@ -32,15 +44,15 @@ disassembleInstruction :: Word16 -> FDX (String, Word8)
 disassembleInstruction pc = do
     opcode <- fetchByteMem pc
     case Map.lookup opcode opcodeMap of
-        Nothing -> return ("Unknown opcode: $" ++ showHex opcode "", 1)
+        Nothing -> return ("Unknown opcode: $" ++ formatHex8 opcode, 1)
         Just info -> do
             lblMap <- gets labelMap -- Get the labelMap from the Machine state
             operands <- fetchOperands pc (size info)
             let bytes = opcode : operands
-            let byteString = unwords $ map (`showHex` "") bytes
+            let byteString = unwords $ map formatHex8 bytes
             let paddedByteString = take 10 (byteString ++ replicate 10 ' ') -- Pad for alignment
             operandString <- formatOperand pc info operands lblMap -- Pass labelMap
-            let addressString = "\x1b[34m($\x1b[33m" ++ showHex pc "" ++ "\x1b[34m): \x1b[0m"
+            let addressString = "\x1b[34m($\x1b[33m" ++ formatHex16 pc ++ "\x1b[34m): \x1b[0m"
             let instructionString = addressString  ++ paddedByteString ++ " \x1b[36m\x1b[1m" ++ show (mnemonic info) ++ "\x1b[0m " ++ operandString
             return (instructionString, size info)
 
@@ -61,13 +73,13 @@ formatOperand :: Word16 -> InstructionInfo -> [Word8] -> Map.Map Word16 String -
 formatOperand pc info operands lblMap =
     let formatAddress addr =
             case Map.lookup addr lblMap of
-                Just lbl -> "\x1b[32m" ++ lbl ++ "\x1b[0m \x1b[34m($\x1b[33m" ++ showHex addr "" ++ "\x1b[34m)\x1b[0m"
-                Nothing  -> "\x1b[34m$\x1b[33m" ++ showHex addr "" ++ "\x1b[0m"
+                Just lbl -> "\x1b[32m" ++ lbl ++ "\x1b[0m \x1b[34m($\x1b[33m" ++ formatHex16 addr ++ "\x1b[34m)\x1b[0m"
+                Nothing  -> "\x1b[34m$\x1b[33m" ++ formatHex16 addr ++ "\x1b[0m"
     in case addressingMode info of
         Implicit    -> return ""
         Accumulator -> return "\x1b[35mA\x1b[0m"
         Immediate   -> case operands of
-                           [operand] -> return $ "\x1b[34m#$\x1b[33m" ++ (showHex operand "") ++ "\x1b[0m"
+                           [operand] -> return $ "\x1b[34m#$\x1b[33m" ++ (formatHex8 operand) ++ "\x1b[0m"
                            _         -> return "Invalid operands for Immediate mode"
         ZeroPage    -> case operands of
                            [operand] -> return $ formatAddress (fromIntegral operand)

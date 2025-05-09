@@ -273,10 +273,9 @@ initGame = do
 
     -- Skopiuj początkowy widok mapy
     jsr ("copyVisibleMap"::String)
-    -- jsr("initAciaEDSL"::String)
 
     cli
-    jmp ("exampleAciaProgram"::String)
+    -- jmp ("exampleAciaProgram"::String)
 
 --     * = $fff0 "IRQ Indirect vector"
 -- IRQ_Indirect:
@@ -430,7 +429,6 @@ horizontalBars = do
     --     if_ IsCarryClear $ do   -- Jeśli (X < max_X), CMP nie ustawiło Carry
     --         inc  $ OpZP scrollX         --   Zwiększ X
     -- waitRaster -- Sync with raster
-    brk
     vicWaitLine 255
     -- jsr ("scrollColors"::Label) -- Scroll colors
 

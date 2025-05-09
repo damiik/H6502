@@ -19,6 +19,18 @@ import Numeric (showHex) -- Import showHex for debugging output
 
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembler
 
+-- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
+formatHex8 :: Word8 -> String
+formatHex8 b =
+  let hexStr = showHex b ""
+  in if length hexStr < 2 then "0" ++ hexStr else hexStr
+
+-- | Formats a Word16 as a four-character hexadecimal string, padding with leading zeros if necessary.
+formatHex16 :: Word16 -> String
+formatHex16 w =
+  let hexStr = showHex w ""
+  in replicate (4 - length hexStr) '0' ++ hexStr
+
 getReg :: (Registers -> a) -> FDX a
 getReg f = f <$> getRegisters
 
@@ -160,14 +172,14 @@ jsr = do
   aLsb <- fetchAndIncPC
   aMsb <- fetchAndIncPC
   let targetAddress = mkWord aLsb aMsb
-  liftIO $ putStrLn $ "Jsr address: " ++ (showHex targetAddress "")
+  liftIO $ putStrLn $ "Jsr address: " ++ (formatHex16 targetAddress)
 
   currentPC <- getReg rPC
 
-  -- Return address is already PC+2 after two fetchAndIncPC calls but stored return address 
+  -- Return address is already PC+2 after two fetchAndIncPC calls but stored return address
   -- must be decremented because RTS will increment it: RTS -> pull PC, PC+1 -> PC
   let returnAddress = currentPC - 1
-  liftIO $ putStrLn $ "Jsr return address: " ++ (showHex returnAddress "")
+  liftIO $ putStrLn $ "Jsr return address: " ++ (formatHex16 returnAddress)
 
   pushWord returnAddress -- Push the correct return address (PC+2)
   setPC targetAddress -- Set PC to the target address
@@ -185,7 +197,7 @@ store src dest = modifyOperand dest (const (fetchOperand src))
 branchOn :: FDX Bool -> FDX ()
 branchOn test = do
   b <- fetchAndIncPC
-  liftIO $ putStrLn $ "***branchOn operand: " ++ (showHex b "")
+  liftIO $ putStrLn $ "***branchOn operand: " ++ (formatHex8 b)
   c  <- test
   curPC <- getReg rPC
   let offset = fromIntegral b :: Int8 -- make it signed

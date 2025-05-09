@@ -68,9 +68,10 @@ data Machine = Machine
   , traceMemoryEnd   :: Word16   -- Keep for backward compatibility or single range
   , breakpoints      :: [Word16] -- Added for debugger breakpoints
   , debuggerActive   :: Bool     -- Added to indicate if debugger is active
-  , memoryTraceBlocks :: [(Word16, Word16)] -- Added for multiple memory trace blocks
+  , memoryTraceBlocks :: [(Word16, Word16, Maybe String)] -- Modified to include optional name
   , lastDisassembledAddr :: Word16 -- Added to store the address of the last disassembled instruction
   , labelMap             :: Map.Map Word16 String -- Added to store address-to-label mappings
+  , debugLogPath         :: Maybe FilePath -- Added to store the path for debugger state persistence
   }
 
 -- | FDX is fetch-decode-execute

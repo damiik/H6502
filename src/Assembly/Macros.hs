@@ -28,6 +28,7 @@ module Assembly.Macros (
     adc_rb, add_rb, sub_rb, sub_br,
     sta_rb, sta_rw,
     adc_rrw, add_rrw, sta_rrw,
+    swap_b,
     copyBlock,
     fillScreen,
     decsum, binsum,
@@ -55,12 +56,14 @@ import Assembly.Core
       Address,
       AddressRef(AddrLabel, AddrLit16, AddrLit8, AddrLabelExpr),
       Asm,
+      
       Operand(..), -- Import all constructors
       pattern Imm, -- Import the pattern synonym
       pattern AbsLabel,
       pattern ZPAddr,
       pattern ImmLsbLabel, -- Import the new pattern synonym
       pattern ImmMsbLabel, -- Import the new pattern synonym
+      pattern A_,
       (.+), -- Import renamed operator
       (.-), -- Import renamed operator
       parens, -- Import parens if needed by macros (though unlikely)
@@ -659,6 +662,18 @@ sta_rrw op1 op2 = do
 --     adc (op2 .+ 1)
 --     sta (op1 .+ 1)
 
+swap_b :: Asm ()
+swap_b = do  -- 0xAB -> 0xBA
+
+    asl A_
+    adc# 0x80
+    rol A_
+    asl A_
+    adc#  0x80
+    rol A_
+    lda# 0xab
+
+
 -- | Kopiuje blok pamięci używając pętli while_.
 -- | Używa rejestrów A, X, Y.
 -- | UWAGA: Kopiuje maksymalnie 256 bajtów (licznik 8-bitowy w X).
@@ -726,7 +741,7 @@ waitRaster = do
 -- On an NTSC C64 (common in North America/Japan), it counts from line 0 up to line 262.
 vicWaitLine :: Word16 -> Asm()
 vicWaitLine line = do
-
+    l_ "vicWaitLine"
     let lineLsb = lsb line
     let msbBitFlag = lsb ((line `shiftR` 1) .&. 0x80) -- "compile time" precalculate Word8 msb bit 9 of line (Word16)
     doWhile_ IsNonZero $ do         -- Repeat the whole process if the 9th bit check fails.
