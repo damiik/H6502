@@ -29,11 +29,15 @@ library
       Assembly
       Assembly.Core
       Assembly.EDSLInstr
+      Assembly.Memory
+      Assembly.ArithmeticLogic
+      Assembly.ControlFlow
       Assembly.Macros
       Assembly.List
       C64
       C64.Examples
       C64.SerialPort
+      C64.HelpersC64
       MOS6502Emulator
       MOS6502Emulator.Machine
       MOS6502Emulator.Registers

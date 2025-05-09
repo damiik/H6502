@@ -18,6 +18,11 @@ module C64 (
     vicSprite6X, vicSprite6Y,
     vicSprite7X, vicSprite7Y,
     vicSpriteMSBX,  vicSpriteEnable,
+    vicSpritePriority, vicSpriteMulticolor, vicSpriteDoubleWidth, vicSpriteDoubleHeight, -- Added Sprite properties
+    vicSpriteSpriteColision, vicSpriteBackColision, -- Added Sprite collision registers
+    vicSpriteMc0, vicSpriteMc1, -- Added Sprite multicolor registers
+    vicSprite0Color, vicSprite1Color, vicSprite2Color, vicSprite3Color, -- Added Sprite color registers
+    vicSprite4Color, vicSprite5Color, vicSprite6Color, vicSprite7Color,
     _BLACK, _WHITE, _RED, _CYAN, _PURPLE,
     _GREEN, _BLUE, _YELLOW, _ORANGE, _BROWN,
     _PINK, _DARK_GREY, _GREY, _LIGHT_GREEN,

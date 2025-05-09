@@ -1,17 +1,26 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BinaryLiterals    #-}
+{-# LANGUAGE FlexibleContexts #-} -- Needed for replicateM_
 module C64.HorizontalBars (horizontalBars) where
 
 import Prelude hiding (and) -- Hide Prelude's and
-import Assembly.Core
-import Assembly.EDSLInstr
-import Assembly(Asm)
-import Assembly.Macros
-import Data.Word (Word8, Word16) -- Added Word16
-import Data.Bits ((.|.), (.<<.), (.>>.), (.&.), shiftL, shiftR)
-import C64
+import Prelude (($), (*), fromIntegral, error, show) -- Explicitly import $, *, fromIntegral, error, and show
+import qualified Prelude as P ((+), (*)) -- Import qualified + and * from Prelude
+
+import Control.Monad (replicateM_, when) -- Explicitly import replicateM_ and when
+import Data.Word (Word8, Word16) -- Import Word8 and Word16
+import Data.Bits ((.|.), (.>>.)) -- Import bitwise operators
+
+import Assembly.Core -- Wildcard import for Assembly.Core
+import Assembly.EDSLInstr -- Wildcard import for Assembly.EDSLInstr
+
+import Assembly.ArithmeticLogic -- Import everything from the new modules
+import Assembly.Memory
+import C64.HelpersC64
+
+import C64 (vicRaster, screenRam, colorRam, vicControl1, vicMemoryControl, vicControl2, cia2DataPortA, cia1InterruptControl, cia2InterruptControl, vicBackgroundColor1, vicBackgroundColor2, vicBorderColor, vicBackgroundColor, _BLACK, _WHITE, _RED, _CYAN, _PURPLE, _GREEN, _BLUE, _YELLOW, _ORANGE, _BROWN, _LIGHT_GREY, _GREY, _LIGHT_GREEN, _LIGHT_BLUE, _PINK, _KEY_S, _KEY_D, _KEY_W, _KEY_A, scanKeyboard) -- C64-specific addresses and constants
 import C64.SerialPort (initAciaEDSL, sendCharAciaEDSL, receiveCharAciaEDSL, exampleAciaProgram, checkErrorsAciaEDSL )
-import Control.Monad
+
 import System.IO (readFile)
 import Data.Char (isHexDigit, ord)
 import Numeric (readHex)
@@ -23,10 +32,9 @@ import Control.Exception (evaluate) -- For forcing evaluation
 import Control.DeepSeq (rnf) -- For deep evaluation
 
 
-
-basicLoader :: Int -> Asm()
+basicLoader :: Int -> Asm ()
 basicLoader addr = -- BASIC loader, don't use with --c64 option (direct BASIC output)
-    let progAddress :: [Word8]; progAddress = map asc $ " " ++ show addr
+    let progAddress :: [Word8]; progAddress = map (fromIntegral . ord) $ " " ++ show addr -- Use fromIntegral and ord
     in db $ [
     0x00,                  -- Padding, BASIC loader starts at 0x0801
     0x0c, 0x08,            -- Next line $080c
@@ -73,11 +81,11 @@ charsetSize = fromIntegral $ length udgData
 
 -- Adresy danych mapy (muszą być gdzieś w pamięci CPU)
 largeMapDataAddr :: Address
-largeMapDataAddr   = 0x2000 + charsetSize --addr2word16 charsetRam + (fromIntegral (length udgData)) -- Adres danych mapy                              ---------> USTAWIĆ RĘCZNIE !!!
+largeMapDataAddr   = 0x2000 + charsetSize --addr2word16 charsetRam + (fromIntegral (length udgData)) -- Adres danych mapy ---------> USTAWIĆ RĘCZNIE !!!
 charMapColorAddr :: Address
 charMapColorAddr  = largeMapDataAddr + mapTotalSize -- Kolory bezpośrednio po danych mapy
 
--- Free zero page RAM includes locations 2-6 and $FB-$FE (251-254). 
+-- Free zero page RAM includes locations 2-6 and $FB-$FE (251-254).
 -- Assuming certain ML math calls and RS-232 communications aren't used, $F7-$FE (247-254) is free.
 zpBase1 :: Word8
 zpBase1 = 0x02      -- $02-$05
@@ -86,7 +94,7 @@ scrollOffset :: AddressRef; scrollOffset = AddrLit8 zpBase1 -- 1
 lastColor :: AddressRef; lastColor = AddrLit8 zpBase1 .+ 0x01 --1
 delayCounter :: AddressRef; delayCounter = AddrLit8  zpBase1 .+ 0x02 -- 1
 
-zpBase2 :: Word8    
+zpBase2 :: Word8
 zpBase2 = 0x90      -- $90-$9F
 tmp16R1 :: AddressRef; tmp16R1 = AddrLit8 zpBase2 -- 2
 tmp16R2 :: AddressRef; tmp16R2 = AddrLit8 zpBase2 .+ 0x02 -- 2
@@ -117,9 +125,10 @@ zpBase4 :: Word8
 zpBase4 = 0xF7      -- $F7-$FE
 tmp16R0 :: AddressRef; tmp16R0 = AddrLit8 zpBase4  -- 2
 rowCounter :: AddressRef; rowCounter = AddrLit8 zpBase4 .+ 0x02 -- 1
-srcTemp :: AddressRef; srcTemp = AddrLit8 zpBase4 .+ 0x04 -- 2
-dstTemp :: AddressRef; dstTemp = AddrLit8 zpBase4 .+ 0x06 -- 2
-
+-- srcTemp :: AddressRef; srcTemp = AddrLit8 zpBase4 .+ 0x04 -- 2
+-- dstTemp :: AddressRef; dstTemp = AddrLit8 zpBase4 .+ 0x06 -- 2
+tmpByteAddr :: Word8; tmpByteAddr = zpBase4 P.+ 0x08 -- Temporary byte ZP address
+tmpByte :: AddressRef; tmpByte = AddrLit8 tmpByteAddr -- Temporary byte for calculations
 
 -- --- Definicja zestawu znaków (UDG) ---
 -- Znak 0
@@ -189,8 +198,8 @@ extractHexValues line
 parseHexValue :: String -> Maybe Word8
 parseHexValue s = case s of
     ('$':rest) -> case readHex rest of
-                      [(val, "")] -> Just val
-                      _           -> Nothing -- Parsing failed or leftover chars
+                       [(val, "")] -> Just val
+                       _           -> Nothing -- Parsing failed or leftover chars
     _          -> Nothing -- Not a hex value starting with $
 
 
@@ -200,7 +209,7 @@ largeMapPattern = unsafePerformIO $ loadMapDataFromFile "c64/world3.asm"
 
 
 charMapColors :: [Word8]
-charMapColors = unsafePerformIO $ loadColorDataFromFile "c64/world3.asm"    
+charMapColors = unsafePerformIO $ loadColorDataFromFile "c64/world3.asm"
 -- largeMapColors = take (fromIntegral mapTotalSize) $ cycle [_CYAN, _YELLOW, _GREEN, _PURPLE] -- Kolory dla znaków  green, purple] -- Kolory dla znaków
 
 
@@ -215,15 +224,15 @@ scrollColors addr = do
         lda $  X ("colors_list"::String) -- Get color from list, for x indexed by y
         sta (Y addr) -- Write color to COLOR_RAM[y]
         iny
-        cmp_y 80
+        cmp'y 80
 
 
 initGame :: Asm ()
 initGame = do
 
     -- Initialize zero page variables
-    sta_rb scrollOffset 0
-    sta_rb lastColor 0
+    sta'rb scrollOffset 0
+    sta'rb lastColor 0
 
     -- Ustaw Bank #3 dla VIC, $C000-$FFFF,
     lda cia2DataPortA
@@ -249,8 +258,8 @@ initGame = do
     ora# 0b00010000 -- Set bit 4 ($10 hex)
     sta vicControl2      --Write back
 
-    sta_rb vicBackgroundColor1 _LIGHT_BLUE     -- Ustaw Background Color 1 (np. dla bitów 01 znaku)
-    sta_rb vicBackgroundColor2 _BLUE     -- Ustaw Background Color 2 (np. dla bitów 10 znaku)
+    sta'rb vicBackgroundColor1 _LIGHT_BLUE
+    sta'rb vicBackgroundColor2 _BLUE
 
     -- Skopiuj dane UDG
     -- copyBlock charsetRam (AddrLabel "udgDataSource") (fromIntegral $ length udgData0 + length udgData1)
@@ -259,8 +268,8 @@ initGame = do
     --jsr kernalClrsc
 
     -- Ustaw kolory
-    sta_rb vicBorderColor _DARK_GREY
-    sta_rb vicBackgroundColor _BLACK
+    sta'rb vicBorderColor _GREY -- Using _GREY as placeholder for _DARK_GREY
+    sta'rb vicBackgroundColor _BLACK
 
     lda# 0x7f   -- disable CIA IRQ
     sta cia1InterruptControl
@@ -288,9 +297,9 @@ initGame = do
 horizontalBars :: Asm ()
 horizontalBars = do
     org 0x0800 -- Ustawienie adresu początkowego dla BASIC loadera
-    basicLoader  $ fromIntegral baseCodeAddr -- program starts at $1000   
+    basicLoader  $ fromIntegral baseCodeAddr -- program starts at $1000
     -- db $ replicate (0x7f2 + fromIntegral baseCodeAddr - 0x1000)  (0x00 :: Word8) -- Padding to fill the rest of the BASIC loader
-    
+
     org baseCodeAddr -- Ustawienie adresu początkowego dla programu
     l_ "start"
     sei                -- Disable interrupts
@@ -307,7 +316,7 @@ horizontalBars = do
 
 
 
-    let helloText = ("helloText"::String)
+    let helloText = ("helloText"::Label)
     -- brk
 
     ldx # 0x00 -- Initialize x register to -1
@@ -323,26 +332,26 @@ horizontalBars = do
     sta scanKeycode
     cmp# _KEY_S
     if_ IsZero $ do
-        add_rb scrollY 1
+        add'rb scrollY 1
 
     lda scanKeycode
     cmp# _KEY_D
     if_ IsZero $ do
-        add_rb scrollX 1
+        add'rb scrollX 1
 
     lda scanKeycode
     cmp# _KEY_W
-    if_ IsZero $ do 
-        sub_rb scrollY 1
+    if_ IsZero $ do
+        sub'rb scrollY 1
 
     lda scanKeycode
     cmp# _KEY_A
     if_ IsZero $ do
-        sub_rb scrollX 1
+        sub'rb scrollX 1
 
     lda scanKeycode
     jsr ("printByte"::Label)
-    
+
     -- let count = ZPAddr 0xf7  -- ZPAddr makes operand directly from Word8
     -- let rest = ZPAddr 0xf8
 
@@ -358,9 +367,9 @@ horizontalBars = do
     -- sta rest
 
     -- ldx (Imm 0)
-    -- lda count 
+    -- lda count
     -- clc
-    -- adc (Imm 0x30)        -- Convert the count to ASCII 
+    -- adc (Imm 0x30)        -- Convert the count to ASCII
     -- printChar 10 _YELLOW  --Print a character from the hellotext string at the specified position
 
     -- sta_ob count 0
@@ -376,16 +385,16 @@ horizontalBars = do
     -- sta rest
 
     -- ldx (Imm 1)
-    -- lda count 
+    -- lda count
     -- clc
-    -- adc (Imm 0x30)       
+    -- adc (Imm 0x30)
     -- printChar 10 _PINK  --Print a character from the hellotext string at the specified position
 
 
     -- ldx (Imm 2)
-    -- lda rest   
+    -- lda rest
     -- clc
-    -- adc (Imm 0x30)  
+    -- adc (Imm 0x30)
     -- printChar 10 _LIGHT_BLUE  --Print a character from the hellotext string at the specified position
 
 
@@ -403,7 +412,7 @@ horizontalBars = do
     -- cmp $ OpImm keyCursorUp
     -- if_ AccIsZero $ do          -- Jeśli (A == keyCursorUp)
     --     lda $ OpZP scrollY             -- Wczytaj Y
-    --     if_ AccIsNonZero $ do   -- Jeśli (Y != 0)
+    --     if_ IsNonZero $ do   -- Jeśli (Y != 0)
     --         dec $ OpZP scrollY         --   Zmniejsz Y
 
     -- -- Sprawdź Kursor W DÓŁ (PETSCII 17)
@@ -411,14 +420,14 @@ horizontalBars = do
     -- if_ AccIsZero $ do          -- Jeśli (A == keyCursorDown)
     --     lda  $ OpZP scrollY             -- Wczytaj Y
     --     cmp $ OpImm (fromIntegral mapHeightChars - screenHeightChars) -- Porównaj z max Y
-    --     if_ IsCarryClear $ do   -- Jeśli (Y < max_Y), CMP nie ustawiło Carry
+    --     if_ IsCarryClear $ do   -- Jeśli (Y < max_X), CMP nie ustawiło Carry
     --         inc  $ OpZP scrollY         --   Zwiększ Y
 
     -- -- Sprawdź Kursor W LEWO (PETSCII 157)
     -- cmp $ OpImm keyCursorLeft
     -- if_ AccIsZero $ do          -- Jeśli (A == keyCursorLeft)
     --     lda $ OpZP scrollX             -- Wczytaj X
-    --     if_ AccIsNonZero $ do   -- Jeśli (X != 0)
+    --     if_ IsNonZero $ do   -- Jeśli (X != 0)
     --         dec  $ OpZP scrollX         --   Zmniejsz X
 
     -- -- Sprawdź Kursor W PRAWO (PETSCII 29)
@@ -427,7 +436,7 @@ horizontalBars = do
     --     lda $ OpZP scrollX             -- Wczytaj X
     --     cmp $ OpImm (fromIntegral mapWidthChars - screenWidthChars) -- Porównaj z max X
     --     if_ IsCarryClear $ do   -- Jeśli (X < max_X), CMP nie ustawiło Carry
-    --         inc  $ OpZP scrollX         --   Zwiększ X
+    --         inc  $ OpZP scrollX         --   Zwiększ Y
     -- waitRaster -- Sync with raster
     vicWaitLine 255
     -- jsr ("scrollColors"::Label) -- Scroll colors
@@ -435,7 +444,7 @@ horizontalBars = do
     -- sta_rb delayCounter 10
     -- doWhile_ IsNonZero $ do
     --      jsr ("delay"::Label) -- Delay loop
-    --      dec delayCounter 
+    --      dec delayCounter
 
     jsr ("copyVisibleMap"::Label) -- Fill screen with initial bars
     -- scrollColors colorRam
@@ -485,133 +494,129 @@ horizontalBars = do
     -- Subroutine: Fill Screen with Bars
     l_ "fill_screen"
     ldx# 0        -- Fill entire color RAM (implicitly 1000 bytes, but loop handles 256)
-    doWhileNz (inx) $ do
+    doWhile_ IsNonZero $ do -- Using doWhile_ with condition at the end based on 'inx'
         txa                -- Use index as color base
-        replicateM_ 6 $ ror A_     -- Rotate right 6 times
+        replicateM_ 6 $ ror A_     -- Rotate right 6 times, using A_
         and# 0x0f     -- Limit to 16 colors (0-15) -- Use EDSL 'and'
-        sta $ X (addr2word16 colorRam)      -- First quarter (0-249)
-        sta $ X (addr2word16 colorRam + 250) -- Second quarter (250-499)
-        sta $ X (addr2word16 colorRam + 500) -- Third quarter (500-749)
-        sta $ X (addr2word16 colorRam + 750) -- Fourth quarter (750-999)
+        sta$ X (addr2word16 colorRam)      -- First quarter (0-249)
+        sta$ X (addr2word16 colorRam + 250) -- Second quarter (250-499)
+        sta$ X (addr2word16 colorRam + 500) -- Third quarter (500-749)
+        sta$ X (addr2word16 colorRam + 750) -- Fourth quarter (750-999)
 
         lda# 0xA0 --immChar '='   -- Space character code
-        sta $ X (addr2word16 screenRam)
-        sta $ X (addr2word16 screenRam + 250)
-        sta $ X (addr2word16 screenRam + 500)
-        sta $ X (addr2word16 screenRam + 750)
-    rts
-
+        sta$ X (addr2word16 screenRam)
+        sta$ X (addr2word16 screenRam + 250)
+        sta$ X (addr2word16 screenRam + 500)
+        sta$ X (addr2word16 screenRam + 750)
+        inx -- Increment X, condition for doWhile_ will be based on Z flag
+    rts -- Add rts at the end of subroutine
+    
     l_ "delay"
-    replicateM_ 200 $ and# 0xef -- Use EDSL 'and'
+    ldx# 0xFF -- Outer loop counter
+    doWhile_ IsNonZero $ do
+        dex
+        ldy# 0xFF -- Inner loop counter
+        doWhile_ IsNonZero $ do
+            dey
     rts
 
-
-
-    -- Copy visible part of worldmap procedure
-    -- *scrollX* and *scrollY* are used for calculate starting worldmap address
+    -- Subroutine to copy visible map portion to screen
     l_ "copyVisibleMap"
 
-    let temp = tmp16R1
-    let temp' = tmp16R1 .+ 1
+    let temp16 = tmp16R1 -- Using tmp16R1 as the base for the 16-bit temp
+    let temp16_msb = tmp16R1 .+ 1
 
-    -- Ustaw wskaźniki docelowe
-    sta_rw screenDstPtr (addr2word16 screenRam)
-    sta_rw colorDstPtr (addr2word16 colorRam)
+    -- Set destination pointers to screen and color RAM base addresses
+    sta'rw screenDstPtr (addr2word16 screenRam)
+    sta'rw colorDstPtr (addr2word16 colorRam)
 
-    -- Oblicz adres początkowy w dużej mapie: largeMapData + scrollY * mapWidth + scrollX
+    -- Calculate starting address in large map: largeMapData + scrollY * mapWidth + scrollX
     lda scrollY
-    sta temp
+    sta temp16         -- LSB = scrollY
     lda# 0
-    sta temp'
+    sta temp16_msb     -- MSB = 0
 
-    -- Mnożenie * 64 (przesunięcie w lewo o 6) - użycie pętli doWhile_
+    -- Multiply by mapWidthChars (64) - shift left by 6 using doWhile_
     ldx# 6
-    doWhile_ IsNonZero $ do  -- Pętla wykonuje się, dopóki X > 0
-        asl $ Just temp
-        rol $ Just temp'
-        dex                 -- dex ustawia flagę Z, gdy X osiągnie 0
+    doWhile_ IsNonZero $ do  -- Loop while X > 0 (Z flag clear)
+        asl $ Just temp16
+        rol $ Just temp16_msb
+        dex                 -- Decrement X, sets Z flag when X reaches 0
 
-    -- Dodaj scrollX
+    -- Add scrollX
     clc
     lda scrollX
-    adc temp
-    sta temp -- temp16 = offset(getZPAddr temp16)
+    adc temp16         -- Add scrollX to LSB of temp16
+    sta temp16 -- temp16 = offset LSB
     lda# 0
-    adc temp'
-    sta temp' -- temp16 = offset
+    adc temp16_msb     -- Add 0 + carry to MSB of temp16
+    sta temp16_msb -- temp16 = offset MSB
 
-    -- Ustaw wskaźniki źródłowe
-    sta_rw mapSrcPtr largeMapDataAddr
-    add_rrw mapSrcPtr tmp16R1 
+    -- Set source pointers
+    sta'rw mapSrcPtr largeMapDataAddr
+    add'rrw mapSrcPtr tmp16R1 -- Add calculated offset to mapSrcPtr (tmp16R1 holds the 16-bit offset)
 
-    sta_rw mapColorSrcPtr charMapColorAddr
-    add_rrw mapColorSrcPtr tmp16R1
+    sta'rw mapColorSrcPtr charMapColorAddr
+    add'rrw mapColorSrcPtr tmp16R1 -- Add calculated offset to mapColorSrcPtr
 
-    -- Kopiowanie wiersz po wierszu - użycie pętli doWhile_
-    lda# screenHeightChars  -- set Z flag
-    sta rowCounter
-    doWhile_ IsNonZero $ do -- Pętla wykonuje się, dopóki rowCounter > 0
-        -- Kopiowanie kolumn - użycie pętli doWhile_
-        ldy# 0
-        clc                             -- Ustaw Carry na 0
-        doWhile_ IsNonCarry $ do        -- Pętla wykonuje się, dopóki Y < screenWidthChars
+    -- Copy row by row - using doWhile_
+    lda#  screenHeightChars -- Load screen height (25)
+    sta rowCounter                      -- Initialize row counter
+    doWhile_ IsNonZero $ do             -- Loop while rowCounter > 0 (Z flag clear)
+        -- Copy columns - using doWhile_
+        ldy# 0                          -- Initialize column index Y
+        clc                             -- Clear Carry flag for loop condition
+        doWhile_ IsNonCarry $ do        -- Loop while Carry flag is clear (Y < screenWidthChars)
             -- copy char
-            lda $ IY mapSrcPtr          -- Czytaj z mapy źródłowej [mapSrcPtr],Y
-            sta $ IY screenDstPtr       -- Pisz do pamięci ekranu [screenDstPtr],Y
+            lda $ IY mapSrcPtr          -- Read from source map [mapSrcPtr],Y
+            sta $ IY screenDstPtr       -- Write to screen memory [screenDstPtr],Y
 
-            -- copy color
-            tax                         -- x = current character (index) 
-            lda $ X charMapColorAddr    -- get color from char color map
-            sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
-            -- lda $ IY mapColorSrcPtr     -- Czytaj z mapy kolorów [mapColorSrcPtr],Y
-            -- sta $ IY colorDstPtr        -- Pisz do pamięci kolorów [colorDstPtr],Y
-            iny
-            cpy# screenWidthChars       -- Ustawia Carry, gdy Y >= screenWidthChars
+            -- copy color (reading from mapColorSrcPtr)
+            tax
+            lda $ X charMapColorAddr     -- Read from color map [mapColorSrcPtr],Y
+            sta $ IY colorDstPtr        -- Write to color memory [colorDstPtr],Y
 
-        -- Przesuń wskaźniki źródłowe *mapSrcPtr* i *mapColorSrcPtr* o 1 wiersz
-        sta_rw tmp16R1 mapWidthChars    -- temp16 = mapWidthChars (64)
-        add_rrw mapSrcPtr tmp16R1       -- mapSrcPtr = mapSrcPtr + mapWidthChars
-        -- add_rrw mapColorSrcPtr tmp16R1  -- mapColorSrcPtr = mapColorSrcPtr + mapWidthChars
+            iny                         -- Increment Y
+            cpy#  screenWidthChars -- Compare Y with screen width (40), sets Carry if Y >= 40
 
-        -- Przesuń wskaźniki *screenDstPtr* i *colorDstPtr* na początek następnego wiersza ekranu
-        sta_rw tmp16R1 screenWidthChars -- temp16 = screenWidthChars (40)
-        add_rrw screenDstPtr tmp16R1    -- screenDstPtr = screenDstPtr + screenWidthChars
-        add_rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
+        -- Advance source pointers *mapSrcPtr* and *mapColorSrcPtr* by 1 row (mapWidthChars)
+        sta'rw tmp16R1 mapWidthChars -- temp16 = mapWidthChars (64)
+        add'rrw mapSrcPtr tmp16R1       -- mapSrcPtr = mapSrcPtr + mapWidthChars
+        -- add'rrw mapColorSrcPtr tmp16R1  -- mapColorSrcPtr = mapColorSrcPtr + mapWidthChars
 
-        -- Zmniejsz licznik wierszy
-        dec rowCounter                  -- dec ustawia flagę Z, gdy licznik osiągnie 0
+        -- Advance destination pointers *screenDstPtr* and *colorDstPtr* to the start of the next screen row (screenWidthChars)
+        sta'rw tmp16R1 screenWidthChars -- temp16 = screenWidthChars (40)
+        add'rrw screenDstPtr tmp16R1    -- screenDstPtr = screenDstPtr + screenWidthChars
+        add'rrw colorDstPtr tmp16R1     -- colorDstPtr = colorDstPtr + screenWidthChars
+
+        -- Decrement row counter
+        dec rowCounter                  -- Decrement rowCounter, sets Z flag when it reaches 0
     rts
+
 
     l_ "scanKeyboard"
     scanKeyboard
-
+    -- Dummy IRQ vector for configureVectors
     l_ "printByte"
     printByte 1 15 charMapColorAddr
-
-    --org 0x1800
     l_ "dummyVector"
     rti
 
-    l_ "colors_list"
-    db [_LIGHT_BLUE, _BLUE, _CYAN, _GREEN,
-        _LIGHT_GREEN, _YELLOW, _ORANGE, _PINK, 
-        _PURPLE, _PINK, _ORANGE, _YELLOW, 
-        _LIGHT_GREEN, _GREEN, _CYAN, _BLUE ] -- Color data
-
+    l_ "colors_list" -- Data for scrollColors (example)
+    db [ _BLACK, _WHITE, _RED, _CYAN, _PURPLE, _GREEN, _BLUE, _YELLOW, _ORANGE, _BROWN, _GREY, _GREY, _LIGHT_GREEN, _LIGHT_BLUE, _PINK ]
     l_ "helloText"
     stringC64 "Hello, World!"; db [0x00]
 
-    -- replicateM_ 0x94A $ db [0x00 :: Word8] -- Padding to fill the rest of the program
 
     -- character set data, starting from $2000
     org $ addr2word16 charsetRam
-
-    -- *** Dane ***
+    -- Data sections
     l_ "udgDataSource"
-    db udgData
+    db udgData -- User Defined Graphics data
 
-    l_ "largeMapData"
-    db largeMapPattern
+    l_ "largeMapDataSource"
+    db largeMapPattern -- Large map data
 
-    l_ "charMapColorData"
-    db charMapColors
+    l_ "charMapColorSource"
+    db charMapColors -- Character map color data
+
