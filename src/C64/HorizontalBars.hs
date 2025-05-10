@@ -311,7 +311,7 @@ horizontalBars = do
     initGame
     configureVectors (AddrLabelExpr $ LabelRef "dummyVector")
 
-
+    brk
     l_ "main_loop"
 
 

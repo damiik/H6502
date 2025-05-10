@@ -27,6 +27,7 @@ module Assembly.EDSLInstr (
 
     -- eDSL Control Flow Macros
     if_,
+    ifElse_,
     while_,
     doWhile_,
 ) where
@@ -298,6 +299,19 @@ if_ condition asmBlock = do
     -- Wykonaj blok kodu, jeśli warunek jest PRAWIDŁOWY (nie skoczono)
     asmBlock
     l_ skipLabel -- Etykieta końca bloku if
+
+ifElse_ :: Conditions -> Asm () -> Asm () -> Asm ()
+ifElse_ condition asmBlock elseBlock = do
+    skipLabel <- makeUniqueLabel ()
+    elseLabel <- makeUniqueLabel ()
+    -- Wykonaj skok WARUNKOWY ZA blok, jeśli warunek jest FAŁSZYWY
+    branchOnCondition (invert condition) elseLabel
+    -- Wykonaj blok kodu, jeśli warunek jest PRAWIDŁOWY (nie skoczono)
+    asmBlock
+    jmp skipLabel
+    l_ elseLabel    
+    elseBlock
+    l_ skipLabel -- Etykieta końca ifElse
 
 -- Zaktualizowane makro WHILE
 -- Wykonuje blok kodu, dopóki warunek jest PRAWDZIWY

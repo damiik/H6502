@@ -99,18 +99,24 @@ runMachine debuggerLoop initialMachine = do
           else do
             continue <- fdxSingleCycle -- Execute one instruction
             nextMachineState <- get -- Get state after instruction execution
-            if not continue
-              then return () -- Stop if fdxSingleCycle returns False (halted)
-              else do
-                -- Check for breakpoints after executing the instruction
-                let currentPC = rPC (mRegs nextMachineState)
-                if currentPC `elem` breakpoints nextMachineState
-                  then do
-                    liftIO $ putStrLn $ "\nBreakpoint hit at $" ++ showHex currentPC ""
-                    put (nextMachineState { debuggerActive = True }) -- Activate debugger
-                    runLoop debuggerLoopAction -- Continue the main runLoop (will enter debugger next)
-                  else
-                    runLoop debuggerLoopAction -- Continue the main runLoop (execute next instruction)
+            -- Check if the machine is halted after executing the instruction
+            if halted nextMachineState
+              then do
+                liftIO $ putStrLn "\nMachine halted. Entering debugger."
+                put (nextMachineState { debuggerActive = True }) -- Activate debugger
+                runLoop debuggerLoopAction -- Continue the main runLoop (will enter debugger next)
+              else if not continue
+                then return () -- Stop if fdxSingleCycle returns False (not halted, but some other stop condition)
+                else do
+                  -- Check for breakpoints after executing the instruction
+                  let currentPC = rPC (mRegs nextMachineState)
+                  if currentPC `elem` breakpoints nextMachineState
+                    then do
+                      liftIO $ putStrLn $ "\nBreakpoint hit at $" ++ showHex currentPC ""
+                      put (nextMachineState { debuggerActive = True }) -- Activate debugger
+                      runLoop debuggerLoopAction -- Continue the main runLoop (will enter debugger next)
+                    else
+                      runLoop debuggerLoopAction -- Continue the main runLoop (execute next instruction)
 
 -- | Sets up the initial state of the machine, including registers and memory
 -- Note: This function no longer sets the PC, as it's handled by runEmulator

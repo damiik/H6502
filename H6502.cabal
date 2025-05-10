@@ -99,6 +99,7 @@ test-suite H6502-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      Assembly.ControlFlowSpec
       Paths_H6502
   autogen-modules:
       Paths_H6502
