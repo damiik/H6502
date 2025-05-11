@@ -15,6 +15,9 @@ module Assembly.Macros (
     whileNe, doWhileNe,
     doWhileX,
     doWhileY,
+    doUntilX,
+    doUntilY,   
+    whileX, whileY,
     forX, forY,
 
     caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,

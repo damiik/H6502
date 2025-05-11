@@ -15,6 +15,9 @@ module Assembly.ControlFlow (
     whileNe, doWhileNe,
     doWhileX,
     doWhileY,
+    doUntilX,
+    doUntilY,   
+    whileX, whileY,
     forX, forY,
 
     -- Case/Switch Statement Macros
@@ -48,6 +51,7 @@ import Assembly.Core
       Label -- Add Label to the import list
       )
 import Assembly.EDSLInstr (
+      dey, dex,
       beq, bne, bcc, bcs, bpl, bmi, bvc, bvs, -- Branches
       jmp, jsr, rts, -- Jumps and Returns
       inx, iny, -- Increments/Decrements used in loops and other places
@@ -135,21 +139,78 @@ ifnoThen thenBlock = do
     l_ endLabel
 
 -- --- Pętle  ---
+-- make loop x times with indexes 255..1, ( if x = 0 then skip loop )
+whileX :: Asm () -> Asm ()
+whileX doBlock = do 
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    beq endLabel
+    doBlock
+    dex
+    bne startLabel
+    l_ endLabel
+
+-- make loop y times with indexes 255..1, ( if y = 0 then skip loop )
+whileY :: Asm () -> Asm ()
+whileY doBlock = do 
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    beq endLabel
+    doBlock
+    dey
+    bne startLabel
+    l_ endLabel
+
+-- TESTING FIRST!
+
+-- make loop x times + 1 with indexes 255..0, ( if x = 0 then make loop once)
 doWhileX :: Asm () -> Asm ()
 doWhileX doBlock = do
     startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()  -- We need an end label now
     l_ startLabel
     doBlock
-    inx
-    bne startLabel
+    cpx #0  -- Compare X with 0 to check if it's zero
+    beq endLabel  -- If X *was* 0 before decrementing, end the loop
+    dex
+    jmp startLabel  -- Otherwise, decrement and loop back
+    l_ endLabel
 
+-- make loop y times + 1 with indexes 255..0, if y = 0 then make loop once)
 doWhileY :: Asm () -> Asm ()
 doWhileY doBlock = do
     startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
     l_ startLabel
     doBlock
-    iny
+    cpy #0
+    beq endLabel
+    dey
+    jmp startLabel
+    l_ endLabel
+
+-- make loop x times ( if x = 0 then make loop 256 times, with indexes 0,255..1)
+doUntilX :: Asm () -> Asm ()
+doUntilX doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    dex
     bne startLabel
+
+-- make loop y times ( if y = 0 then make loop 256 times, with indexes 0,255..1)
+doUntilY :: Asm () -> Asm ()
+doUntilY doBlock = do
+    startLabel <- makeUniqueLabel ()
+    l_ startLabel
+    doBlock
+    dey
+    bne startLabel
+
+
+
 
 -- TESTING FIRST!
 whileEq :: Asm () -> Asm () -> Asm ()

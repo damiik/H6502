@@ -2,8 +2,8 @@ module Assembly.ControlFlowSpec (spec) where
 
 import Test.Hspec
 import Assembly.Core
-import Assembly.EDSLInstr (txa, brk, lda, cmp, sec, clc, adc, sbc, bit, inc, dec, sta, beq, jmp, (#), X(X), if_, ifElse_) -- Import instructions, X, and immediate addressing operator
-import Assembly.ControlFlow (ifzThen, ifnzThen, ifeqThen, ifneThen, ifcThen, ifncThen, ifmThen, ifpThen, ifoThen, ifnoThen, whileZ, doWhileZ, whileNz, doWhileNz, whileC, doWhileC, whileNc, doWhileNc, whileM, doWhileM, whileP, doWhileP, whileO, doWhileO, whileNo, doWhileNo, forX) -- Explicitly import all control flow macros for testing
+import Assembly.EDSLInstr (tax, tay, txa, tya, dex, dey, brk, lda, ldx, ldy, cmp, sec, clc, adc, sbc, bit, inc, dec, sta, beq, jmp, (#), X(X), if_, ifElse_) -- Import instructions, X, and immediate addressing operator
+import Assembly.ControlFlow (ifzThen, ifnzThen, ifeqThen, ifneThen, ifcThen, ifncThen, ifmThen, ifpThen, ifoThen, ifnoThen, whileZ, doWhileZ, whileNz, doWhileNz, whileC, doWhileC, whileNc, doWhileNc, whileM, doWhileM, whileP, doWhileP, whileO, doWhileO, whileNo, doWhileNo, doWhileX, doWhileY, doUntilX, doUntilY, whileX, whileY, forX) -- Explicitly import all control flow macros for testing
 import Assembly (runAssembler)
 import MOS6502Emulator (runEmulator, runDebugger, newMachine, setupMachine, Machine(..))
 import MOS6502Emulator.Memory (fetchByte)
@@ -732,6 +732,195 @@ spec = do
       -- Starts with 1. Block decrements to 0. Condition sets Overflow. doWhileNo checks *after*. Loop exits.
       fetchByte 0x40 (mMem finalMachine) `shouldReturn` 0x00
       rAC (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should execute the block at least once and loop while X is not zero (doWhileX)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldx # 0x03 -- Initialize X register
+
+            doWhileX $ do -- Loop while X is not zero
+              txa -- Transfer X to A to store
+              sta counter -- Store X at address 0x20 (will be overwritten)
+              -- inx -- doWhileX increments X automatically
+
+            -- After loop, X should be 0x00 (due to overflow from 0xFF)
+            -- The last value stored at 0x20 should be 0x00
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the last value stored at 0x20 was 0x00
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      -- Assert that the Accumulator holds the final value (0x00)
+      rAC (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should execute the block at least once and loop while Y is not zero (doWhileY)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldy # 0x03 -- Initialize Y register
+
+            doWhileY $ do -- Loop while Y is not zero
+              tya -- Transfer Y to A to store
+              sta counter -- Store Y at address 0x20 (will be overwritten)
+              -- iny -- doWhileY increments Y automatically
+
+            -- After loop, Y should be 0x00 (due to overflow from 0xFF)
+            -- The last value stored at 0x20 should be 0x00
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the last value stored at 0x20 was 0x00
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      -- Assert that the Accumulator holds the final value (0x00)
+      rAC (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should execute the block at least once and loop until X is zero (doUntilX)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            lda# 0x00
+            tax -- Initialize X register
+            sta counter -- Store counter
+            sta$ counter .+ 1
+
+            doUntilX $ do -- Loop until X is zero
+              inc counter -- Store X at address 0x20 (will be overwritten)
+              if_ IsZero $ do inc$ counter .+ 1 
+              -- dex -- doUntilX decrements X automatically
+
+            -- After loop, X should be 0x00
+            -- The last value stored at 0x20 should be 0x0100
+
+      finalMachine <- runAssemblyDebugTest 0x0800 testProgram
+      -- Assert that the last value stored at 0x20 was 0x0100
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x21 (mMem finalMachine) `shouldReturn` 0x01
+      rX (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should execute the block at least once and loop until Y is zero (doUntilY)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldy # 0x03 -- Initialize Y register
+
+            doUntilY $ do -- Loop until Y is zero
+              tya -- Transfer Y to A to store
+              sta counter -- Store Y at address 0x20 (will be overwritten)
+              -- dey -- doUntilY decrements Y automatically
+
+            -- After loop, Y should be 0x00
+            -- The last value stored at 0x20 should be 0x00
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the last value stored at 0x20 was 0x00
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      -- Assert that the Accumulator holds the final value (0x00)
+      rAC (mRegs finalMachine) `shouldBe` 0x01
+      rY (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should execute the block repeatedly while X is not zero (whileX)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldx # 0x03 -- Initialize X register
+
+            whileX $ do -- Loop while X is not zero
+              txa -- Transfer X to A to store
+              sta counter -- Store X at address 0x20 (will be overwritten)
+              -- dex -- whileX decrements X automatically
+
+            -- After loop, X should be 0x00
+            -- The last value stored at 0x20 should be 0x00
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the last value stored at 0x20 was 0x00
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      -- Assert that the Accumulator holds the final value (0x00)
+      rAC (mRegs finalMachine) `shouldBe` 0x01
+      rX (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should not execute the block if X is zero initially (whileX)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldx # 0x00 -- Initialize X register to zero
+
+            whileX $ do -- Loop while X is not zero
+              txa -- This should NOT be executed
+              sta counter -- This should NOT be executed
+
+            -- After loop, X should still be 0x00
+            -- The value at 0x20 should be its initial value (undefined or 0x00 if memory is zeroed)
+            -- Let's initialize memory to a known value to assert it wasn't changed
+            lda # 0xFF
+            sta counter
+            ldx # 0x00 -- Re-initialize X after setting memory
+
+            whileX $ do
+              txa
+              sta counter
+
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the value at 0x20 remained 0xFF
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0xFF
+      -- Assert that the Accumulator holds the final value (0xFF)
+      rAC (mRegs finalMachine) `shouldBe` 0xFF
+
+    it "should execute the block repeatedly while Y is not zero (whileY)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldy # 0x03 -- Initialize Y register
+
+            whileY $ do -- Loop while Y is not zero
+              tya -- Transfer Y to A to store
+              sta counter -- Store Y at address 0x20 (will be overwritten)
+              -- dey -- whileY decrements Y automatically
+
+            -- After loop, Y should be 0x00
+            -- The last value stored at 0x20 should be 0x00
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the last value stored at 0x20 was 0x00
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      -- Assert that the Accumulator holds the final value (0x00)
+      rAC (mRegs finalMachine) `shouldBe` 0x01
+      rY (mRegs finalMachine) `shouldBe` 0x00
+
+    it "should not execute the block if Y is zero initially (whileY)" $ do
+      let testProgram = do
+            let counter = AddrLit8 0x20
+            org 0x0800 -- Start assembly at 0x0800
+            ldy # 0x00 -- Initialize Y register to zero
+
+            whileY $ do -- Loop while Y is not zero
+              tya -- This should NOT be executed
+              sta counter -- This should NOT be executed
+
+            -- After loop, Y should still be 0x00
+            -- The value at 0x20 should be its initial value (undefined or 0x00 if memory is zeroed)
+            -- Let's initialize memory to a known value to assert it wasn't changed
+            lda # 0xFF
+            sta counter
+            ldy # 0x00 -- Re-initialize Y after setting memory
+
+            whileY $ do
+              tya
+              sta counter
+
+            lda counter -- Load the final value of the counter into A
+
+      finalMachine <- runAssemblyTest 0x0800 testProgram
+      -- Assert that the value at 0x20 remained 0xFF
+      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0xFF
+      -- Assert that the Accumulator holds the final value (0xFF)
+      rAC (mRegs finalMachine) `shouldBe` 0xFF
 
     it "should iterate over a range and execute the block for each value (forEachRange)" $ do
       let testProgram = do
