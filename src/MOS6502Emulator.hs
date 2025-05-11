@@ -161,7 +161,7 @@ runTest startAddress actualLoadAddress byteCode = do
 
 
 -- | Initializes the emulator with the given starting address and bytecode, then enters interactive debugger mode
-runDebugger :: Word16 -> Word16 -> [Word8] -> Maybe FilePath -> IO ()
+runDebugger :: Word16 -> Word16 -> [Word8] -> Maybe FilePath -> IO Machine
 runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
   putStrLn $ "Initializing debugger with code starting at $" ++ showHex startAddress ""
   putStrLn $ "Loading bytecode at $" ++ showHex actualLoadAddress ""
@@ -177,8 +177,8 @@ runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
     -- Set the starting PC and enter interactive debugger loop
     let machineWithStartPC = setupResult { mRegs = (mRegs setupResult) { rPC = startAddress }, debuggerActive = True } -- Set debuggerActive to True
     putStrLn "\nEntering interactive debugger."
-    _ <- runMachine (interactiveLoopHelper "") machineWithStartPC
-    return ()
+    (_, finalMachine) <- runMachine (interactiveLoopHelper "") machineWithStartPC
+    return finalMachine
 
 
 interactiveDebuggerLoop :: FDX ()

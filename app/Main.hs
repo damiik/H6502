@@ -175,7 +175,9 @@ main = do
           Nothing -> return ()
         
         case debugAddress opts of
-          Just addr -> runDebugger addr actualStartAddress byteCode (symbolOutputFile opts) -- If testAddress is provided, run the test with the specified start address and actual load address, passing symbol file path
+          Just addr -> do
+            _ <- runDebugger addr actualStartAddress byteCode (symbolOutputFile opts) -- If testAddress is provided, run the test with the specified start address and actual load address, passing symbol file path
+            return () -- Explicitly return IO () after running the debugger
           Nothing -> do -- Otherwise, proceed with file output
             let output = if c64BasicOutput opts
                             then formatBasic actualStartAddress byteCode

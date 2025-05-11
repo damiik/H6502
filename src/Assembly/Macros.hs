@@ -15,7 +15,8 @@ module Assembly.Macros (
     whileNe, doWhileNe,
     doWhileX,
     doWhileY,
-    forEachRange,
+    forX, forY,
+
     caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,
 
     -- Arithmetic/Logic (from Assembly.ArithmeticLogic) - Using apostrophe names

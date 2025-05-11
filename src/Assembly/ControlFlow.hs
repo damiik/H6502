@@ -15,7 +15,7 @@ module Assembly.ControlFlow (
     whileNe, doWhileNe,
     doWhileX,
     doWhileY,
-    forEachRange,
+    forX, forY,
 
     -- Case/Switch Statement Macros
     caseOf, caseOfA, caseOfX, caseOfY, caseOfAddr, caseOfZP, caseOfMultiBytes,
@@ -51,7 +51,7 @@ import Assembly.EDSLInstr (
       beq, bne, bcc, bcs, bpl, bmi, bvc, bvs, -- Branches
       jmp, jsr, rts, -- Jumps and Returns
       inx, iny, -- Increments/Decrements used in loops and other places
-      cmp, cpx, cpy, lda, sta, ldx, -- Instructions with addressing modes (removed #)
+      cmp, cpx, cpy, lda, sta, ldy, ldx, -- Instructions with addressing modes (removed #)
       (#) -- Explicitly import the immediate addressing operator
       )
 import qualified Prelude as P ((+), (-)) -- Used in caseOfMultiBytes example and others
@@ -348,19 +348,33 @@ doWhileNo conditionBlock doBlock = do
 
 
 -- --- Iteracje ---
-forEachRange :: Word8 -> Word8 -> (Operand -> Asm ()) -> Asm ()
-forEachRange start end action = do
+-- forX start end action -> loops for X = *start* to (*end* - 1)
+forX :: Word8 -> Word8 -> Asm () -> Asm ()
+forX start end action = do
     ldx# start
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
     cpx# end
     beq endLabel
-    action (OpAbsX (AddrLit16 0)) -- Note: OpAbsX operand might need adjustment based on use case
+    action 
     inx
     jmp startLabel
     l_ endLabel
 
+-- forY start end action -> loops for Y = *start* to (*end* - 1)
+forY :: Word8 -> Word8 -> Asm () -> Asm ()
+forY start end action = do
+    ldy# start
+    startLabel <- makeUniqueLabel ()
+    endLabel <- makeUniqueLabel ()
+    l_ startLabel
+    cpy# end
+    beq endLabel
+    action
+    inx
+    jmp startLabel
+    l_ endLabel
 -- --- Przełączniki ---
 caseOf :: (Word8 -> Asm ()) -> [(Word8, Asm ())] -> Asm ()
 caseOf compareWith cases = do
