@@ -35,9 +35,10 @@ createList_ addr = do
 
 createList :: String -> Asm AddressRef
 createList s = do
-    let sAddr = AddrLabel s
-    createList_ sAddr
-    return sAddr
+    l_ s          -- Define the label 's' at the current address
+    db [0x00]     -- Emit a byte with value 0 at the label's address
+    let sAddr = AddrLabel s -- Create the AddressRef for the label
+    return sAddr  -- Return the AddressRef
 
 
 copyList :: AddressRef -> AddressRef -> Asm ()

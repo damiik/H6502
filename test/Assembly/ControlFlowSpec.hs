@@ -10,35 +10,13 @@ import MOS6502Emulator.Memory (fetchByte)
 import MOS6502Emulator.Registers (Registers(..), SRFlag(..), lookupSRFlag)
 import Data.Word (Word8, Word16) -- Added Word16
 import Data.ByteString (ByteString) -- Added for ByteString
+import Assembly.TestHelper (runAssemblyTest, runAssemblyDebugTest)
 
 ------------------------------------------------------------------------
 -- For run debugger use: runAssemblyDebugTest instead of runAssemblyTest
 ------------------------------------------------------------------------
 -- For run one test use:
 -- stack test --test-arguments '-m "Control Flow Macros should execute the block at least once and loop while zero flag is set (doWhileZ)"'
-
-
--- Helper function to assemble Asm, run in emulator, and return final state
-runAssemblyTest :: Word16 -> Asm () -> IO Machine
-runAssemblyTest initialPC asmBlock = do
-  case runAssembler initialPC asmBlock of
-    Left err -> fail $ "Assembly failed: " ++ err
-    Right (actualLoadAddress, byteCode, _) -> do
-      initialMachine <- newMachine
-      let memoryWrites = zip [actualLoadAddress..] byteCode
-      setupMachine initialMachine memoryWrites Nothing Nothing >>= \setupResult -> do
-        (_, finalMachine) <- runEmulator actualLoadAddress setupResult
-        return finalMachine
-
--- Helper function to assemble Asm, run in debugger, and return final state
-runAssemblyDebugTest :: Word16 -> Asm () -> IO Machine
-runAssemblyDebugTest initialPC asmBlock = do
-  case runAssembler initialPC asmBlock of
-    Left err -> fail $ "Assembly failed: " ++ err
-    Right (actualLoadAddress, byteCode, _) -> do
-      -- runDebugger takes startAddress, actualLoadAddress, byteCode, maybeSymPath
-      finalMachine <- runDebugger initialPC actualLoadAddress byteCode Nothing
-      return finalMachine
 
 spec :: Spec
 spec = do
@@ -51,7 +29,7 @@ spec = do
             ifzThen $ do
               lda # 0xFF -- Load a known value if zero flag is set
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifzThen block was executed
       rAC (mRegs finalMachine) `shouldBe` 0xFF
 
@@ -63,7 +41,7 @@ spec = do
             ifnzThen $ do
               lda # 0xFF -- This should NOT be executed
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x00, indicating the ifnzThen block was skipped
       rAC (mRegs finalMachine) `shouldBe` 0x00
 
@@ -75,7 +53,7 @@ spec = do
             ifzThen $ do
               lda # 0xFF -- This should NOT be executed
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x01, indicating the ifzThen block was skipped
       rAC (mRegs finalMachine) `shouldBe` 0x01
 
@@ -87,7 +65,7 @@ spec = do
             ifnzThen $ do
               lda # 0xFF -- Load a known value if zero flag is not set
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifnzThen block was executed
       rAC (mRegs finalMachine) `shouldBe` 0xFF
 
@@ -100,7 +78,7 @@ spec = do
             ifeqThen $ do
               lda # 0xFF -- Load a known value if equal flag is set
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifeqThen block was executed
       rAC (mRegs finalMachine) `shouldBe` 0xFF
 
@@ -113,7 +91,7 @@ spec = do
             ifeqThen $ do
               lda # 0xFF -- This should NOT be executed
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x10, indicating the ifeqThen block was skipped
       rAC (mRegs finalMachine) `shouldBe` 0x10
 
@@ -126,7 +104,7 @@ spec = do
             ifneThen $ do
               lda # 0xFF -- Load a known value if equal flag is not set
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifneThen block was executed
       rAC (mRegs finalMachine) `shouldBe` 0xFF
 
@@ -139,8 +117,8 @@ spec = do
             ifneThen $ do
               lda # 0xFF -- This should NOT be executed
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
-      -- Assert that the Accumulator contains 0x10, indicating the ifneThen block was skipped
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      -- Assert that the Accumulator contains 0x10, indicating the ifeqThen block was skipped
       rAC (mRegs finalMachine) `shouldBe` 0x10
 
     it "should execute the block if the carry flag is set (ifcThen)" $ do
@@ -151,8 +129,8 @@ spec = do
             ifcThen $ do
               lda # 0xFF -- Load a known value if carry flag is set
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
-      -- Assert that the Accumulator contains 0xFF, indicating the ifcThen block was executed
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      -- Assert that the Accumulator contains 0xFF, indicating the ifneThen block was executed
       rAC (mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the carry flag is not set (ifcThen)" $ do
@@ -163,7 +141,7 @@ spec = do
             ifcThen $ do
               lda # 0xFF -- This should NOT be executed
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x00 (initial state), indicating the ifcThen block was skipped
       rAC (mRegs finalMachine) `shouldBe` 0x00
 
@@ -175,8 +153,8 @@ spec = do
             ifncThen $ do
               lda # 0xFF -- Load a known value if carry flag is not set
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
-      -- Assert that the Accumulator contains 0xFF, indicating the ifncThen block was executed
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      -- Assert that the Accumulator contains 0xFF, indicating the ifcThen block was executed
       rAC (mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the carry flag is set (ifncThen)" $ do
@@ -187,7 +165,7 @@ spec = do
             ifncThen $ do
               lda # 0xFF -- This should NOT be executed
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x00 (initial state), indicating the ifncThen block was skipped
       rAC (mRegs finalMachine) `shouldBe` 0x00
 
@@ -205,7 +183,7 @@ spec = do
                 dec counter -- Decrement the counter at 0x20
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
       fetchByte 0xa0 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
@@ -224,7 +202,7 @@ spec = do
                 dec counter -- This should NOT be executed
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter remained at its initial non-zero value
       fetchByte 0xa0 (mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the initial value (1)
@@ -245,7 +223,7 @@ spec = do
               
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram -- Use the new debug helper
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Use the new debug helper
       -- Assert that the counter became 0 (from initial -1), then 1 and cmp #0 reset the Zero flag ending the loop.
       -- A doWhileZ with INC will loop until overflow wraps it to 0.
       fetchByte 0xa0 (mMem finalMachine) `shouldReturn` 0x01 -- Use 0xa0 as defined in the test
@@ -263,7 +241,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter was incremented once to 0x01
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x01)
@@ -280,7 +258,7 @@ spec = do
 
             lda (0x20::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
@@ -297,7 +275,7 @@ spec = do
 
             lda (0x20::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter remained at its initial zero value
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the initial value (0)
@@ -315,7 +293,7 @@ spec = do
 
             lda (0x20::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
@@ -332,7 +310,7 @@ spec = do
 
             lda (0x20::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- The loop decrements until the value at 0x20 is 0.
       -- When 0x20 becomes 0, the condition block sets the Zero flag, then branches to set_carry, setting the Carry flag.
       -- The whileNc macro checks if Carry is *not* set. Since Carry is now set, the loop exits.
@@ -356,7 +334,7 @@ spec = do
 
             lda counter -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Initially Carry is set, so the loop should not execute.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
       -- rAC (mRegs finalMachine) `shouldBe` 0x01
@@ -372,7 +350,7 @@ spec = do
 
             lda (0x20::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition: lda 0, cmp #0 sets Zero. Branch to set_carry_dw sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
@@ -389,7 +367,7 @@ spec = do
 
             lda (0x20::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
@@ -410,7 +388,7 @@ spec = do
 
             lda (0x20::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- The loop increments until the value at 0x20 becomes positive (less than 0x80).
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x7f -- After incrementing from 0x7F to 0x80, LDA 0x80 sets Neg. Loop exits.
       rAC (mRegs finalMachine) `shouldBe` 0x7f
@@ -426,7 +404,7 @@ spec = do
               dec counter -- This should NOT be executed
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Initially Negative flag is not set, so the loop should not execute.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
       rAC (mRegs finalMachine) `shouldBe` 0x01
@@ -443,7 +421,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x81. Block increments to 0x82. Condition: lda 0x82, cmp #0x80. Negative flag is set. Loop continues.
       -- Loop continues until value becomes 0x80. After incrementing from 0x7F to 0x80, LDA 0x80 sets Negative.
       -- Let's use a counter that starts negative and increments until it becomes positive.
@@ -463,7 +441,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x7F. Block increments to 0x80. Condition: LDA 0x80 sets Neg. doWhileM checks *after*. Loop continues.
       -- Ah, the condition should be about the negative flag *remaining* set.
       -- Let's use a counter that starts negative and increments until it becomes positive.
@@ -478,7 +456,7 @@ spec = do
               inc counter -- Increment the counter at 0x20
             lda counter -- Load the final value of the counter into A
 
-      finalMachine' <- runAssemblyTest 0x0800 testProgram'
+      (finalMachine', _) <- runAssemblyTest 0x0800 testProgram'
       -- Starts at 0x80. Block increments to 0x81. Condition: lda 0x81 sets Neg. Loop.
       -- Loop continues until value becomes 0x00 (after 0xFF). LDA 0x00 clears Neg. Loop exits.
       fetchByte 0x20 (mMem finalMachine') `shouldReturn` 0x00
@@ -496,7 +474,7 @@ spec = do
 
             lda (0x20::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
@@ -514,7 +492,7 @@ spec = do
 
             lda (0x20::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter was decremented once to 0x00
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0x00)
@@ -532,7 +510,7 @@ spec = do
 
             lda counter -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition clears Carry. doWhileC checks *after*. Loop exits.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       rAC (mRegs finalMachine) `shouldBe` 0x00
@@ -550,7 +528,7 @@ spec = do
 
             lda counter -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition clears Carry. doWhileC checks *after*. Loop exits.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       rAC (mRegs finalMachine) `shouldBe` 0x00
@@ -566,7 +544,7 @@ spec = do
 
             lda (0x20::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition: lda 0, cmp #0 sets Zero. Branch to set_carry_dw sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
@@ -583,7 +561,7 @@ spec = do
 
             lda (0x20::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
@@ -601,7 +579,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x81. Block increments to 0x82. Condition: lda 0x82 sets Neg. Loop continues.
       -- Loop continues until value becomes 0x00 (after 0xFF). LDA 0x00 clears Neg. Loop exits.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
@@ -619,7 +597,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x01. Block increments to 0x02. Condition: LDA 0x02 clears Neg. doWhileM checks *after*. Loop exits.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x02
       rAC (mRegs finalMachine) `shouldBe` 0x02
@@ -636,7 +614,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x01. Block increments. Loop continues until value becomes negative (>= 0x80).
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x80
       rAC (mRegs finalMachine) `shouldBe` 0x80
@@ -653,7 +631,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x80. Block increments to 0x81. Condition: LDA 0x81 clears Pos. doWhileP checks *after*. Loop exits.
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x81
       rAC (mRegs finalMachine) `shouldBe` 0x81
@@ -676,7 +654,7 @@ spec = do
 
             lda counter -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- The value at 0x30 should become 0x80 after the first iteration, and 0xA0 after the second iteration.
       fetchByte 0x30 (mMem finalMachine) `shouldReturn` 0x82
       -- The final LDA (0x30) should load 0xA0.
@@ -693,7 +671,7 @@ spec = do
 
             lda (0x30::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block increments to 2. Condition clears Overflow. doWhileO checks *after*. Loop exits.
       fetchByte 0x30 (mMem finalMachine) `shouldReturn` 0x02
       rAC (mRegs finalMachine) `shouldBe` 0x02
@@ -709,7 +687,7 @@ spec = do
 
             lda (0x40::Word8) -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- The loop body executes at least once. The counter is decremented.
       -- The condition checks the counter *after* decrementing.
       -- Starts with 3. Dec to 2. Condition clears V. Loop.
@@ -728,7 +706,7 @@ spec = do
 
             lda (0x40::Word8) -- Load final value
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition sets Overflow. doWhileNo checks *after*. Loop exits.
       fetchByte 0x40 (mMem finalMachine) `shouldReturn` 0x00
       rAC (mRegs finalMachine) `shouldBe` 0x00
@@ -748,7 +726,7 @@ spec = do
             -- The last value stored at 0x20 should be 0x00
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0x00)
@@ -769,7 +747,7 @@ spec = do
             -- The last value stored at 0x20 should be 0x00
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0x00)
@@ -792,7 +770,7 @@ spec = do
             -- After loop, X should be 0x00
             -- The last value stored at 0x20 should be 0x0100
 
-      finalMachine <- runAssemblyDebugTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x0100
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
       fetchByte 0x21 (mMem finalMachine) `shouldReturn` 0x01
@@ -813,7 +791,7 @@ spec = do
             -- The last value stored at 0x20 should be 0x00
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x00)
@@ -835,7 +813,7 @@ spec = do
             -- The last value stored at 0x20 should be 0x00
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x00)
@@ -865,7 +843,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the value at 0x20 remained 0xFF
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0xFF
       -- Assert that the Accumulator holds the final value (0xFF)
@@ -886,7 +864,7 @@ spec = do
             -- The last value stored at 0x20 should be 0x00
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x00)
@@ -916,7 +894,7 @@ spec = do
 
             lda counter -- Load the final value of the counter into A
 
-      finalMachine <- runAssemblyTest 0x0800 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the value at 0x20 remained 0xFF
       fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0xFF
       -- Assert that the Accumulator holds the final value (0xFF)
@@ -941,7 +919,7 @@ spec = do
               )
 
 
-      finalMachine <- runAssemblyTest 0x0900 testProgram
+      (finalMachine, _) <- runAssemblyTest 0x0900 testProgram
 
       -- Assert the values in memory locations 0x50 to 0x54
       fetchByte 0x50 (mMem finalMachine) `shouldReturn` 0x00 -- X=0

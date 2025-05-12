@@ -2,6 +2,7 @@ import Test.Hspec
 import Assembly.Core
 import Assembly.ControlFlowSpec -- Import the new test module
 import Control.Exception (evaluate)
+import Assembly.ListSpec -- Import the new test module
 
 main :: IO ()
 main = hspec $ do
@@ -25,3 +26,4 @@ main = hspec $ do
       evaluate (evalLabelExpr expr2) `shouldThrow` errorCall "Compile-time error: Cannot get value of unresolved label 'test' within expression"
 
   Assembly.ControlFlowSpec.spec -- Include the tests from ControlFlowSpec
+  Assembly.ListSpec.spec -- Include the tests from ListSpec

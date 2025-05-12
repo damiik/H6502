@@ -101,6 +101,7 @@ test-suite H6502-test
   other-modules:
       Assembly.ControlFlowSpec
       Assembly.ListSpec
+      Assembly.TestHelper
       Paths_H6502
   autogen-modules:
       Paths_H6502
