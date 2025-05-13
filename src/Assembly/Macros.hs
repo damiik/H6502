@@ -1,3 +1,4 @@
+-- | Re-exports macros from various modules to provide a single point of import.
 {-# LANGUAGE PatternSynonyms, BinaryLiterals #-}
 module Assembly.Macros (
     -- Control Flow (from Assembly.ControlFlow)
@@ -16,7 +17,7 @@ module Assembly.Macros (
     doWhileX,
     doWhileY,
     doUntilX,
-    doUntilY,   
+    doUntilY,
     whileX, whileY,
     forX, forY,
 

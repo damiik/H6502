@@ -1,3 +1,4 @@
+-- | Defines the core types and state for the MOS 6502 emulator machine.
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StrictData #-}
@@ -41,6 +42,7 @@ import System.IO (readFile) -- For reading the symbol file
 import Control.Exception (try, IOException) -- For error handling
 
 
+-- | Creates a 16-bit Word from a low byte and a high byte.
 -- In this context, "Word" in an identifier name
 -- means a machine word on the 6502 which is 16 bits.
 -- Not to be confused with the Haskell Word type
@@ -52,29 +54,30 @@ mkWord !lb !hb = (hw `shiftL` 8) + lw
   lw = toWord lb
   hw = toWord hb
 
+-- | Converts a Word8 to a Word16.
 toWord :: Word8 -> Word16
 toWord = fromIntegral
 
 
-
+-- | Represents the state of the MOS 6502 machine.
 data Machine = Machine
-  { mRegs            :: Registers
-  , mMem             :: Memory
-  , halted           :: Bool
-  , instructionCount :: Int
-  , cycleCount       :: Int
-  , enableTrace      :: Bool
-  , traceMemoryStart :: Word16 -- Keep for backward compatibility or single range
-  , traceMemoryEnd   :: Word16   -- Keep for backward compatibility or single range
-  , breakpoints      :: [Word16] -- Added for debugger breakpoints
-  , debuggerActive   :: Bool     -- Added to indicate if debugger is active
-  , memoryTraceBlocks :: [(Word16, Word16, Maybe String)] -- Modified to include optional name
-  , lastDisassembledAddr :: Word16 -- Added to store the address of the last disassembled instruction
-  , labelMap             :: Map.Map Word16 String -- Added to store address-to-label mappings
-  , debugLogPath         :: Maybe FilePath -- Added to store the path for debugger state persistence
+  { mRegs            :: Registers -- ^ The machine's registers.
+  , mMem             :: Memory -- ^ The machine's memory.
+  , halted           :: Bool -- ^ Indicates if the machine is halted.
+  , instructionCount :: Int -- ^ The number of instructions executed.
+  , cycleCount       :: Int -- ^ The number of cycles executed.
+  , enableTrace      :: Bool -- ^ Indicates if instruction tracing is enabled.
+  , traceMemoryStart :: Word16 -- ^ The start address for memory tracing (for backward compatibility or single range).
+  , traceMemoryEnd   :: Word16   -- ^ The end address for memory tracing (for backward compatibility or single range).
+  , breakpoints      :: [Word16] -- ^ A list of breakpoint addresses.
+  , debuggerActive   :: Bool     -- ^ Indicates if the debugger is active.
+  , memoryTraceBlocks :: [(Word16, Word16, Maybe String)] -- ^ A list of memory ranges to trace, with optional names.
+  , lastDisassembledAddr :: Word16 -- ^ The address of the last disassembled instruction.
+  , labelMap             :: Map.Map Word16 String -- ^ A map from addresses to labels.
+  , debugLogPath         :: Maybe FilePath -- ^ The path for debugger state persistence.
   }
 
--- | FDX is fetch-decode-execute
+-- | Represents the fetch-decode-execute monad for the emulator.
 newtype FDX a = FDX { unFDX :: StateT Machine IO a }
   deriving (Functor, Monad, Applicative)
 
@@ -89,38 +92,41 @@ newtype FDX a = FDX { unFDX :: StateT Machine IO a }
 --   set = derive_set isoFDX
 -- MonadState instance for FDX
 
--- instance MonadState Machine FDX where
---   get = FDX $ lift get
---   put m = FDX $ lift (put m)
-
+-- | MonadState instance for the FDX monad.
 instance MonadState Machine FDX where
   get = FDX get
   put m = FDX (put m)
 
+-- | MonadIO instance for the FDX monad.
 instance MonadIO FDX where
   liftIO = FDX . liftIO
 
+-- | Gets the current register state.
 getRegisters :: FDX Registers
 getRegisters = do
   m <- get
   return (mRegs m)
 
+-- | Sets the current register state.
 setRegisters :: Registers -> FDX ()
 setRegisters rs = do
   m <- get
   put ( m { mRegs = rs } )
 
+-- | Gets the current memory state.
 getMemory :: FDX Memory
 getMemory = do
   m <- get
   return (mMem m)
 
+-- | Sets the current memory state.
 setMemory :: Memory -> FDX ()
 setMemory mem = do
   m <- get
   put (m { mMem = mem })
 
-data AddressMode = 
+-- | Represents the addressing modes of the 6502.
+data AddressMode =
   Immediate
   | Zeropage
   | ZeropageX
@@ -136,14 +142,13 @@ data AddressMode =
   | SP
 
 
--- | Fetches a byte from the provided
--- address.
+-- | Fetches a byte from the provided address in memory.
 fetchByteMem :: Word16 -> FDX Word8
 fetchByteMem addr = do
   mem <- getMemory
   Mem.fetchByte addr mem
 
--- | Fetches a word located at an address
+-- | Fetches a word (16 bits) located at an address
 -- stored in the zero page. That means
 -- we only need an 8bit address, but we
 -- also read address+1
@@ -154,12 +159,14 @@ fetchWordMem addr = do
   hi  <- Mem.fetchByte (toWord (addr+1)) mem
   return $! mkWord lo hi
 
+-- | Writes a byte to the provided address in memory.
 writeByteMem :: Word16 -> Word8 -> FDX ()
 writeByteMem addr b = do
   mem <- getMemory
   Mem.writeByte addr b mem
 
--- | Loads a symbol file into the Machine's labelMap
+-- | Loads a symbol file into the Machine's labelMap.
+-- The file format is expected to be lines of "address label".
 loadSymbolFile :: FilePath -> FDX ()
 loadSymbolFile filePath = do
     liftIO $ putStrLn $ "Attempting to load symbol file: " ++ filePath -- Debug message
@@ -173,6 +180,7 @@ loadSymbolFile filePath = do
             modify' $ \m -> m { labelMap = parsedLabels }
             liftIO $ putStrLn $ "Parsed " ++ show (Map.size parsedLabels) ++ " labels." -- Debug message
   where
+    -- | Parses a single line from the symbol file into an address-label pair.
     parseLine :: String -> Map.Map Word16 String -> Map.Map Word16 String
     parseLine line acc =
         case words line of

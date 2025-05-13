@@ -1,3 +1,4 @@
+-- | Provides higher-level macros for common control flow patterns.
 {-# LANGUAGE PatternSynonyms, BinaryLiterals #-}
 module Assembly.ControlFlow (
     -- Control Flow Macros
@@ -16,7 +17,7 @@ module Assembly.ControlFlow (
     doWhileX,
     doWhileY,
     doUntilX,
-    doUntilY,   
+    doUntilY,
     whileX, whileY,
     forX, forY,
 
@@ -67,7 +68,8 @@ dstTemp = AddrLit16 0x14 -- 2
 
 -- --- Control Flow ---
 
--- --- Warunki ---
+-- --- Conditions ---
+-- | Executes the `thenBlock` if the Zero flag is not set (result is non-zero).
 ifnzThen :: Asm () -> Asm ()
 ifnzThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -75,6 +77,7 @@ ifnzThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Zero flag is set (result is zero).
 ifzThen :: Asm () -> Asm ()
 ifzThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -82,6 +85,7 @@ ifzThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Zero flag is not set (result is not equal).
 ifneThen :: Asm () -> Asm ()
 ifneThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -89,6 +93,7 @@ ifneThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Zero flag is set (result is equal).
 ifeqThen :: Asm () -> Asm ()
 ifeqThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -96,6 +101,7 @@ ifeqThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Carry flag is set.
 ifcThen :: Asm () -> Asm ()
 ifcThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -103,6 +109,7 @@ ifcThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Carry flag is not set.
 ifncThen :: Asm () -> Asm ()
 ifncThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -110,6 +117,7 @@ ifncThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Negative flag is set (result is minus).
 ifmThen :: Asm () -> Asm ()
 ifmThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -117,6 +125,7 @@ ifmThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Negative flag is not set (result is plus).
 ifpThen :: Asm () -> Asm ()
 ifpThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -124,6 +133,7 @@ ifpThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Overflow flag is set.
 ifoThen :: Asm () -> Asm ()
 ifoThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -131,6 +141,7 @@ ifoThen thenBlock = do
     thenBlock
     l_ endLabel
 
+-- | Executes the `thenBlock` if the Overflow flag is not set.
 ifnoThen :: Asm () -> Asm ()
 ifnoThen thenBlock = do
     endLabel <- makeUniqueLabel ()
@@ -138,33 +149,36 @@ ifnoThen thenBlock = do
     thenBlock
     l_ endLabel
 
--- --- Pętle  ---
+-- --- Loops ---
+-- | Loops `X` times with index from `X-1` down to 0. Skips if X is 0.
 -- make loop x times with indexes 255..1, ( if x = 0 then skip loop )
 whileX :: Asm () -> Asm ()
-whileX doBlock = do 
+whileX doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
-    beq endLabel
+    beq endLabel -- If X is 0 initially, skip loop
     doBlock
     dex
-    bne startLabel
+    bne startLabel -- Loop if X is not 0 after decrement
     l_ endLabel
 
+-- | Loops `Y` times with index from `Y-1` down to 0. Skips if Y is 0.
 -- make loop y times with indexes 255..1, ( if y = 0 then skip loop )
 whileY :: Asm () -> Asm ()
-whileY doBlock = do 
+whileY doBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel <- makeUniqueLabel ()
     l_ startLabel
-    beq endLabel
+    beq endLabel -- If Y is 0 initially, skip loop
     doBlock
     dey
-    bne startLabel
+    bne startLabel -- Loop if Y is not 0 after decrement
     l_ endLabel
 
 -- TESTING FIRST!
 
+-- | Loops `X+1` times with index from `X` down to 0. Executes once if X is 0.
 -- make loop x times + 1 with indexes 255..0, ( if x = 0 then make loop once)
 doWhileX :: Asm () -> Asm ()
 doWhileX doBlock = do
@@ -178,6 +192,7 @@ doWhileX doBlock = do
     jmp startLabel  -- Otherwise, decrement and loop back
     l_ endLabel
 
+-- | Loops `Y+1` times with index from `Y` down to 0. Executes once if Y is 0.
 -- make loop y times + 1 with indexes 255..0, if y = 0 then make loop once)
 doWhileY :: Asm () -> Asm ()
 doWhileY doBlock = do
@@ -191,6 +206,7 @@ doWhileY doBlock = do
     jmp startLabel
     l_ endLabel
 
+-- | Loops `X` times (or 256 times if X is 0 initially) with index from `X-1` down to 0.
 -- make loop x times ( if x = 0 then make loop 256 times, with indexes 0,255..1)
 doUntilX :: Asm () -> Asm ()
 doUntilX doBlock = do
@@ -200,6 +216,7 @@ doUntilX doBlock = do
     dex
     bne startLabel
 
+-- | Loops `Y` times (or 256 times if Y is 0 initially) with index from `Y-1` down to 0.
 -- make loop y times ( if y = 0 then make loop 256 times, with indexes 0,255..1)
 doUntilY :: Asm () -> Asm ()
 doUntilY doBlock = do
@@ -213,6 +230,7 @@ doUntilY doBlock = do
 
 
 -- TESTING FIRST!
+-- | Executes `doBlock` while `conditionBlock` results in Zero flag being set.
 whileEq :: Asm () -> Asm () -> Asm ()
 whileEq conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -225,6 +243,7 @@ whileEq conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Zero flag is set.
 doWhileEq :: Asm () -> Asm () -> Asm ()
 doWhileEq conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -234,6 +253,7 @@ doWhileEq conditionBlock doBlock = do
     beq startLabel
 
 -- TESTING FIRST!
+-- | Executes `doBlock` while `conditionBlock` results in Zero flag being clear.
 whileNe :: Asm () -> Asm () -> Asm ()
 whileNe conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -247,6 +267,7 @@ whileNe conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Zero flag is clear.
 doWhileNe :: Asm () -> Asm () -> Asm ()
 doWhileNe conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -255,13 +276,16 @@ doWhileNe conditionBlock doBlock = do
     conditionBlock
     bne startLabel
 
+-- | Alias for `whileEq`. Executes `doBlock` while `conditionBlock` results in Zero flag being set.
 whileZ :: Asm () -> Asm () -> Asm ()
 whileZ = whileEq
 
+-- | Alias for `doWhileEq`. Executes `doBlock` then checks `conditionBlock`. Repeats if Zero flag is set.
 doWhileZ :: Asm () -> Asm () -> Asm ()
 doWhileZ = doWhileEq
 
 -- TESTING FIRST!
+-- | Executes `doBlock` while `conditionBlock` results in Zero flag being clear.
 whileNz :: Asm () -> Asm () -> Asm ()
 whileNz conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -274,6 +298,7 @@ whileNz conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Zero flag is clear.
 doWhileNz :: Asm () -> Asm () -> Asm ()
 doWhileNz conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -282,7 +307,7 @@ doWhileNz conditionBlock doBlock = do
     conditionBlock
     bne startLabel
 
-
+-- | Executes `doBlock` while `conditionBlock` results in Carry flag being set.
 whileC :: Asm () -> Asm () -> Asm ()
 whileC conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -295,6 +320,7 @@ whileC conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Carry flag is set.
 doWhileC :: Asm () -> Asm () -> Asm ()
 doWhileC conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -303,6 +329,7 @@ doWhileC conditionBlock doBlock = do
     conditionBlock
     bcs startLabel
 
+-- | Executes `doBlock` while `conditionBlock` results in Carry flag being clear.
 whileNc :: Asm () -> Asm () -> Asm ()
 whileNc conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -315,6 +342,7 @@ whileNc conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Carry flag is clear.
 doWhileNc :: Asm () -> Asm () -> Asm ()
 doWhileNc conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -323,6 +351,7 @@ doWhileNc conditionBlock doBlock = do
     conditionBlock
     bcc startLabel
 
+-- | Executes `doBlock` while `conditionBlock` results in Negative flag being set.
 whileM :: Asm () -> Asm () -> Asm ()
 whileM conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -335,6 +364,7 @@ whileM conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Negative flag is set.
 doWhileM :: Asm () -> Asm () -> Asm ()
 doWhileM conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -344,6 +374,7 @@ doWhileM conditionBlock doBlock = do
     bmi startLabel
 
 -- TESTING FIRST!
+-- | Executes `doBlock` while `conditionBlock` results in Negative flag being clear.
 whileP :: Asm () -> Asm () -> Asm ()
 whileP conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -356,6 +387,7 @@ whileP conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Negative flag is clear.
 doWhileP :: Asm () -> Asm () -> Asm ()
 doWhileP conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -364,7 +396,7 @@ doWhileP conditionBlock doBlock = do
     conditionBlock
     bpl startLabel
 
-
+-- | Executes `doBlock` while `conditionBlock` results in Overflow flag being set.
 whileO :: Asm () -> Asm () -> Asm ()
 whileO conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -377,6 +409,7 @@ whileO conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Overflow flag is set.
 doWhileO :: Asm () -> Asm () -> Asm ()
 doWhileO conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -386,7 +419,7 @@ doWhileO conditionBlock doBlock = do
     bvs startLabel
 
 
-
+-- | Executes `doBlock` while `conditionBlock` results in Overflow flag being clear.
 whileNo :: Asm () -> Asm () -> Asm ()
 whileNo conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -399,6 +432,7 @@ whileNo conditionBlock doBlock = do
     l_ endLabel
 
 -- TESTING LAST!
+-- | Executes `doBlock` then checks `conditionBlock`. Repeats if Overflow flag is clear.
 doWhileNo :: Asm () -> Asm () -> Asm ()
 doWhileNo conditionBlock doBlock = do
     startLabel <- makeUniqueLabel ()
@@ -408,7 +442,8 @@ doWhileNo conditionBlock doBlock = do
     bvc startLabel
 
 
--- --- Iteracje ---
+-- --- Iterations ---
+-- | Loops with X register from `start` to `end-1`.
 -- forX start end action -> loops for X = *start* to (*end* - 1)
 forX :: Word8 -> Word8 -> Asm () -> Asm ()
 forX start end action = do
@@ -418,11 +453,12 @@ forX start end action = do
     l_ startLabel
     cpx# end
     beq endLabel
-    action 
+    action
     inx
     jmp startLabel
     l_ endLabel
 
+-- | Loops with Y register from `start` to `end-1`.
 -- forY start end action -> loops for Y = *start* to (*end* - 1)
 forY :: Word8 -> Word8 -> Asm () -> Asm ()
 forY start end action = do
@@ -436,7 +472,8 @@ forY start end action = do
     inx
     jmp startLabel
     l_ endLabel
--- --- Przełączniki ---
+-- --- Switches ---
+-- | Generic case/switch statement. `compareWith` is a function that takes a value and performs the comparison.
 caseOf :: (Word8 -> Asm ()) -> [(Word8, Asm ())] -> Asm ()
 caseOf compareWith cases = do
     endLabel <- makeUniqueLabel ()
@@ -456,25 +493,31 @@ caseOf compareWith cases = do
       ) casesWithLabels
     l_ endLabel
 
+-- | Case/switch statement comparing with the Accumulator.
 caseOfA :: [(Word8, Asm ())] -> Asm ()
 caseOfA = caseOf (cmp #)
 
+-- | Case/switch statement comparing with the X register.
 caseOfX :: [(Word8, Asm ())] -> Asm ()
 caseOfX = caseOf (cpx #)
 
+-- | Case/switch statement comparing with the Y register.
 caseOfY :: [(Word8, Asm ())] -> Asm ()
 caseOfY = caseOf (cpy #)
 
+-- | Case/switch statement comparing the Accumulator with a value from an address.
 caseOfAddr :: AddressRef -> [(Word8, Asm ())] -> Asm ()
 caseOfAddr addr = caseOf (\val -> do
     lda addr
     cmp# val)
 
+-- | Case/switch statement comparing the Accumulator with a value from a zero-page address.
 caseOfZP :: AddressRef -> [(Word8, Asm ())] -> Asm ()
 caseOfZP addr = caseOf (\val -> do
     lda addr
     cmp# val)
 
+-- | Case/switch statement comparing multiple bytes from specified addresses.
 caseOfMultiBytes :: [(AddressRef, Word8)] -> [([(Word8, Word8)], Asm ())] -> Asm ()
 caseOfMultiBytes addrBytes cases = do
     endLabel <- makeUniqueLabel ()
@@ -511,6 +554,7 @@ caseOfMultiBytes addrBytes cases = do
       ) casesWithLabels
     l_ endLabel -- Final end label
 
+-- | Example usage of `caseOf` for enemy health.
 -- Example usage (remains unchanged, illustrative only)
 customCaseExample :: Asm ()
 customCaseExample = do
@@ -538,6 +582,7 @@ customCaseExample = do
     l_ endCase
 
 
+-- | Example usage of `caseOfMultiBytes` for checking player position.
 -- Example: Check player position (16-bit x and y coordinates)
 checkSpecialPositions :: Asm ()
 checkSpecialPositions = do

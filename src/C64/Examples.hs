@@ -1,3 +1,4 @@
+-- | Re-exports example C64 programs.
 module C64.Examples (
     module C64.HelloWorld,
     module C64.HorizontalBars

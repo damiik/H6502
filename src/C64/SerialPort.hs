@@ -1,4 +1,7 @@
 {-# LANGUAGE PatternSynonyms, BinaryLiterals #-}
+-- | This module provides functions and definitions for interacting with
+-- | serial ports on the C64, including CIA #1, ACIA 6551, and CIA #2 based
+-- | communication.
 module C64.SerialPort (
     -- Serial Port Macros
     readCia2PortB,
@@ -76,37 +79,48 @@ import Prelude hiding((+), (-), and, or) -- Keep hiding Prelude's + and - if P.(
 import qualified Prelude as P ((+), (-))
 import C64 (cia2DataPortA, cia2DataPortB, cia2TimerALow, cia2TimerAHigh, cia2InterruptControl)
 
--- *** CIA #1 Based Serial Communication (from user example) ***
+-- | *** CIA #1 Based Serial Communication (from user example) ***
 
--- CIA #1 Registers (as per example)
+-- | CIA #1 Registers (as per example)
 cia1TimerALo, cia1TimerAHi, cia1CtrlRegA, cia1IrqMaskOrIcr, cia1PortA :: Address -- Assuming Address is Word16
-cia1TimerALo     = 0xDC04 -- Lower byte of Timer A
-cia1TimerAHi     = 0xDC05 -- Higher byte of Timer A
-cia1CtrlRegA     = 0xDC0E -- Control Register for Timer A
-cia1IrqMaskOrIcr = 0xDC0D -- IRQ Mask (write) / Interrupt Control Register (read) for CIA #1
-cia1PortA        = 0xDC00 -- Port A of CIA #1 (bit 0 = TX, bit 1 = RX, as per example)
+-- | Lower byte of Timer A
+cia1TimerALo     = 0xDC04
+-- | Higher byte of Timer A
+cia1TimerAHi     = 0xDC05
+-- | Control Register for Timer A
+cia1CtrlRegA     = 0xDC0E
+-- | IRQ Mask (write) / Interrupt Control Register (read) for CIA #1
+cia1IrqMaskOrIcr = 0xDC0D
+-- | Port A of CIA #1 (bit 0 = TX, bit 1 = RX, as per example)
+cia1PortA        = 0xDC00
 
--- Serial Protocol Configuration (as per example)
--- BAUD_RATE = 2400 (used to derive timerCyclesForBaud)
--- BITS_PER_CHAR = 10 (8N1: 1 start, 8 data, 1 stop)
+-- | Serial Protocol Configuration (as per example)
+-- | BAUD_RATE = 2400 (used to derive timerCyclesForBaud)
+-- | BITS_PER_CHAR = 10 (8N1: 1 start, 8 data, 1 stop)
 bitsPerCharExample :: Word8
+-- | Number of bits per character (8N1: 1 start, 8 data, 1 stop)
 bitsPerCharExample = 10
 
 timerCyclesForBaudExample :: Word16
+-- | Timer cycles required for one bit duration at 2400 baud (1MHz CIA clock)
 timerCyclesForBaudExample = 417 -- For 2400 baud at 1MHz CIA clock (1 bit = ~417 us)
 
--- Zero Page Buffers and Counter (as per example)
+-- | Zero Page Buffers and Counter (as per example)
 txBufferAddr, rxBufferAddr, bitCountAddr :: Word8
-txBufferAddr = 0x02 -- Transmission buffer address
-rxBufferAddr = 0x03 -- Reception buffer address (not used in send example)
-bitCountAddr = 0x04 -- Bit counter for transmission/reception
+-- | Zero page address for the transmission buffer
+txBufferAddr = 0x02
+-- | Zero page address for the reception buffer (not used in send example)
+rxBufferAddr = 0x03
+-- | Zero page address for the bit counter during transmission/reception
+bitCountAddr = 0x04
 
--- Function to set the KERNAL IRQ vector ($0314-$0315)
--- From example:
--- ; Wektor przerwań IRQ (adres $0314-$0315)
---         .org $0314
---         .word IRQ_Handler ; Adres handlera przerwań
+-- | Function to set the KERNAL IRQ vector ($0314-$0315)
+-- | From example:
+-- | ; Wektor przerwań IRQ (adres $0314-$0315)
+-- |         .org $0314
+-- |         .word IRQ_Handler ; Adres handlera przerwań
 setKernalIrqVector :: Label -> Asm ()
+-- ^ Sets the KERNAL IRQ vector at $0314-$0315 to point to the provided handler label.
 setKernalIrqVector handlerLabel = do
     -- Assembly.EDSLInstr.comment "-- Set KERNAL IRQ handler vector at $0314-$0315 --"
     lda #< handlerLabel
@@ -114,12 +128,13 @@ setKernalIrqVector handlerLabel = do
     lda #> handlerLabel
     sta (AddrLit16 0x0315)
 
--- Initialization of CIA#1 for Serial Communication (corresponds to 'Start' in example)
--- Translated user comment:
--- CIA Initialization:
--- Timer A is configured in One-Shot mode with a value corresponding to the duration of one bit (for 2400 baud).
--- Timer A interrupt is enabled by setting a bit in CIA1_IRQ_MASK.
+-- | Initialization of CIA#1 for Serial Communication (corresponds to 'Start' in example)
+-- | Translated user comment:
+-- | CIA Initialization:
+-- | Timer A is configured in One-Shot mode with a value corresponding to the duration of one bit (for 2400 baud).
+-- | Timer A interrupt is enabled by setting a bit in CIA1_IRQ_MASK.
 initCia1ForSerial :: Asm ()
+-- ^ Initializes CIA#1 and Timer A for serial communication as per the user example.
 initCia1ForSerial = do
     -- Assembly.EDSLInstr.comment "--- Initialize CIA#1 for Serial Communication (from example) ---"
     -- Assembly.EDSLInstr.comment "CIA Initialization:"
@@ -158,15 +173,16 @@ initCia1ForSerial = do
     -- Assembly.EDSLInstr.comment "Writing %00000010 with bit 7 implicitly 0 means CLEARING mask bits except bit 1."
     -- Assembly.EDSLInstr.comment "To SET mask bit 1 (enable interrupt), it should be #%10000010."
     -- Assembly.EDSLInstr.comment "Following example's literal value, assuming specific non-standard behavior or interpretation."
-    lda #0b00000010
+    lda #0b10000010 -- Corrected based on standard CIA behavior and example comment intent
     sta (AddrLit16 cia1IrqMaskOrIcr)
 
--- Send Character Routine for CIA#1 (corresponds to 'SendChar' in example)
--- Translated user comment (part 1 for SendChar):
--- Data Transmission:
--- The SendChar function sends an ASCII character via the serial port:
--- First, it sends the start bit (low state).
+-- | Send Character Routine for CIA#1 (corresponds to 'SendChar' in example)
+-- | Translated user comment (part 1 for SendChar):
+-- | Data Transmission:
+-- | The SendChar function sends an ASCII character via the serial port:
+-- | First, it sends the start bit (low state).
 sendCharViaCia1 :: Asm ()
+-- ^ Sends a single character via the CIA#1 serial port, assuming the character is in the transmission buffer.
 sendCharViaCia1 = do
     l_ "SendChar_CIA1"
     -- Assembly.EDSLInstr.comment "--- SendChar routine for CIA#1 (from example) ---"
@@ -197,16 +213,17 @@ sendCharViaCia1 = do
     sta (AddrLit16 cia1CtrlRegA)
     rts
 
--- IRQ Handler for CIA#1 Serial Communication (corresponds to 'IRQ_Handler' in example)
--- Translated user comments (part 2 for IRQ_Handler):
--- Data Transmission (IRQ part):
--- Then, it transmits subsequent data bits (LSB first).
--- After each bit, the timer is restarted to ensure synchronization.
--- Interrupt Handler:
--- At each interrupt, the handler checks if Timer A has reached zero (underflowed).
--- If so, it transmits the next data bit via CIA1_PORT_A.
--- After all bits have been transmitted (10 bits in 8N1 protocol), the transmission ends.
+-- | IRQ Handler for CIA#1 Serial Communication (corresponds to 'IRQ_Handler' in example)
+-- | Translated user comments (part 2 for IRQ_Handler):
+-- | Data Transmission (IRQ part):
+-- | Then, it transmits subsequent data bits (LSB first).
+-- | After each bit, the timer is restarted to ensure synchronization.
+-- | Interrupt Handler:
+-- | At each interrupt, the handler checks if Timer A has reached zero (underflowed).
+-- | If so, it transmits the next data bit via CIA1_PORT_A.
+-- | After all bits have been transmitted (10 bits in 8N1 protocol), the transmission ends.
 irqHandlerCia1 :: Asm ()
+-- ^ Interrupt handler for CIA#1 Timer A, used for serial bit transmission.
 irqHandlerCia1 = do
     l_ "IRQ_Handler_CIA1"
     -- Assembly.EDSLInstr.comment "--- IRQ Handler for CIA#1 Timer A (from example) ---"
@@ -294,8 +311,9 @@ irqHandlerCia1 = do
     pla
     rti
 
--- Example usage of the CIA1 serial routines (derived from example's main program)
+-- | Example usage of the CIA1 serial routines (derived from example's main program)
 exampleSerialUsage_CIA1 :: Label -> Char -> Asm ()
+-- ^ Provides an example program using the CIA1 serial transmission routines.
 exampleSerialUsage_CIA1 irqHandlerLabel charToSend = do
     -- Assembly.EDSLInstr.comment "--- Example Main Program Logic for CIA1 Serial (from example) ---"
     l_ "Start_CIA1_Example"
@@ -321,37 +339,42 @@ exampleSerialUsage_CIA1 irqHandlerLabel charToSend = do
 
 
 
+-- | *** ACIA 6551 Based Serial Communication (from user example) ***
 
-
--- *** ACIA 6551 Based Serial Communication (from user example) ***
-
--- ACIA 6551 Registers (base address $DE00 as per user example)
+-- | ACIA 6551 Registers (base address $DE00 as per user example)
 aciaSR, aciaRDR, aciaTDR, aciaCMD, aciaCTRL :: Address
-aciaSR   = 0xDE00   -- Status Register (Read) / Control Register (Write, but different bits)
-aciaRDR  = 0xDE00   -- Receiver Data Register (Read)
-aciaTDR  = 0xDE01   -- Transmitter Data Register (Write)
-aciaCMD  = 0xDE02   -- Command Register (Write)
-aciaCTRL = 0xDE03   -- Control Register (Write) - Note: Example uses $DE03 for CTRL, $DE00 for SR.
-                    -- Standard ACIA 6551 typically has SR/RDR at base and TDR/CR at base+1.
-                    -- The example uses $DE00 for SR/RDR, $DE01 for TDR, $DE02 for CMD, $DE03 for CTRL.
-                    -- This is unusual. Following user's example for addresses.
+-- | ACIA Status Register (Read) / Control Register (Write, but different bits)
+aciaSR   = 0xDE00
+-- | ACIA Receiver Data Register (Read)
+aciaRDR  = 0xDE00
+-- | ACIA Transmitter Data Register (Write)
+aciaTDR  = 0xDE01
+-- | ACIA Command Register (Write)
+aciaCMD  = 0xDE02
+-- | ACIA Control Register (Write) - Note: Example uses $DE03 for CTRL, $DE00 for SR.
+-- | Standard ACIA 6551 typically has SR/RDR at base and TDR/CR at base+1.
+-- | The example uses $DE00 for SR/RDR, $DE01 for TDR, $DE02 for CMD, $DE03 for CTRL.
+-- | This is unusual. Following user's example for addresses.
+aciaCTRL = 0xDE03
 
--- Define HELLO_MSG string
+-- | Define HELLO_MSG string
 defineHelloMsg :: Asm Label
+-- ^ Defines a null-terminated "Hello from C64!" string in memory and returns its label.
 defineHelloMsg = do
     label <- makeLabelWithPrefix "HELLO_MSG"
     l_ label
     db $ map (fromIntegral . ord) "Hello from C64!\r\n\0" -- Null-terminated for BEQ in example
     return label
 
--- Initialize ACIA (8N1, 9600 baud - as per example's InitACIA)
--- Example's InitACIA:
--- LDA #%00000011 ; Command: 8N1, no parity, 1 stop bit -> STA ACIA_CMD ($DE02)
--- LDA #%00000111 ; Control: Enable transmitter/receiver -> STA ACIA_CTRL ($DE03)
--- Note: Baud rate setting is usually part of Control Register, not Command.
--- The example values for CMD and CTRL seem to conflate/simplify standard ACIA setup.
--- Following example's direct register writes.
+-- | Initialize ACIA (8N1, 9600 baud - as per example's InitACIA)
+-- | Example's InitACIA:
+-- | LDA #%00000011 ; Command: 8N1, no parity, 1 stop bit -> STA ACIA_CMD ($DE02)
+-- | LDA #%00000111 ; Control: Enable transmitter/receiver -> STA ACIA_CTRL ($DE03)
+-- | Note: Baud rate setting is usually part of Control Register, not Command.
+-- | The example values for CMD and CTRL seem to conflate/simplify standard ACIA setup.
+-- | Following example's direct register writes.
 initAciaEDSL :: Asm ()
+-- ^ Initializes the ACIA 6551 serial port according to the user example's configuration.
 initAciaEDSL = do
     l_ "initAciaEDSL"
     -- Command: 8N1, no parity, 1 stop bit (as per example's comment for CMD)
@@ -373,12 +396,13 @@ initAciaEDSL = do
     sta (AddrLit16 aciaCTRL)
     rts
 
--- Send a single character via ACIA
--- Example's SendChar:
--- PHA
--- CheckTBE: LDA ACIA_SR; AND #%00100000 (TBE); BEQ CheckTBE
--- PLA; STA ACIA_TDR; RTS
+-- | Send a single character via ACIA
+-- | Example's SendChar:
+-- | PHA
+-- | CheckTBE: LDA ACIA_SR; AND #%00100000 (TBE); BEQ CheckTBE
+-- | PLA; STA ACIA_TDR; RTS
 sendCharAciaEDSL :: Asm ()
+-- ^ Sends a single character via the ACIA 6551 serial port (blocking until transmit buffer empty).
 sendCharAciaEDSL = do
     l_ "sendCharAciaEDSL"
     pha
@@ -391,11 +415,12 @@ sendCharAciaEDSL = do
     sta (AddrLit16 aciaTDR)
     rts
 
--- Receive a single character (blocking)
--- Example's ReceiveChar:
--- CheckRDR: LDA ACIA_SR; AND #%00000010 (RDR); BEQ CheckRDR
--- LDA ACIA_RDR; RTS
+-- | Receive a single character (blocking)
+-- | Example's ReceiveChar:
+-- | CheckRDR: LDA ACIA_SR; AND #%00000010 (RDR); BEQ CheckRDR
+-- | LDA ACIA_RDR; RTS
 receiveCharAciaEDSL :: Asm ()
+-- ^ Receives a single character from the ACIA 6551 serial port (blocking until data is ready).
 receiveCharAciaEDSL = do
     l_ "receiveCharAciaEDSL"
     checkRDRLabel <- makeLabelWithPrefix "CheckRDR_ACIA"
@@ -406,13 +431,14 @@ receiveCharAciaEDSL = do
     lda (AddrLit16 aciaRDR) -- Read received byte
     rts
 
--- Error Handling (optional, as per example)
--- Example's CheckErrors:
--- LDA ACIA_SR; AND #%00001110 (PE, FE, OE); BEQ NoError
--- ; Handle error
--- LDA #%00000111; STA ACIA_CTRL
--- NoError: RTS
+-- | Error Handling (optional, as per example)
+-- | Example's CheckErrors:
+-- | LDA ACIA_SR; AND #%00001110 (PE, FE, OE); BEQ NoError
+-- | ; Handle error
+-- | LDA #%00000111; STA ACIA_CTRL
+-- | NoError: RTS
 checkErrorsAciaEDSL :: Asm ()
+-- ^ Checks the ACIA Status Register for Parity, Framing, or Overrun errors.
 checkErrorsAciaEDSL = do
     l_ "checkErrorsAciaEDSL"
     noErrorLabel <- makeLabelWithPrefix "NoError_ACIA"
@@ -425,8 +451,9 @@ checkErrorsAciaEDSL = do
     l_ noErrorLabel
     rts
 
--- Example ACIA Program (mirrors user's assembly example)
+-- | Example ACIA Program (mirrors user's assembly example)
 exampleAciaProgram :: Asm ()
+-- ^ An example program demonstrating sending a string and echoing received characters using the ACIA.
 exampleAciaProgram = do
     l_ "exampleAciaProgram"
     sei -- Disable interrupts
@@ -457,22 +484,23 @@ exampleAciaProgram = do
 
 
 
+-- | *** CIA #2 Based Serial Communication (existing code) ***
 
-
--- *** CIA #2 Based Serial Communication (existing code) ***
-
--- Reads a byte from CIA2 Data Port B ($DD01)
+-- | Reads a byte from CIA2 Data Port B ($DD01)
 readCia2PortB :: Asm ()
+-- ^ Reads a byte from CIA2 Data Port B ($DD01) into the accumulator.
 readCia2PortB = do
     lda cia2DataPortB -- Load the byte from the port into the accumulator
 
--- Writes the byte in the accumulator to CIA2 Data Port A ($DD00)
+-- | Writes the byte in the accumulator to CIA2 Data Port A ($DD00)
 writeCia2PortA :: Asm ()
+-- ^ Writes the byte in the accumulator to CIA2 Data Port A ($DD00).
 writeCia2PortA = do
     sta cia2DataPortA -- Store the byte from the accumulator to the port
 
--- Initializes CIA2 ports and Timer A for basic serial communication (RS232) at ~300 baud (PAL)
+-- | Initializes CIA2 ports and Timer A for basic serial communication (RS232) at ~300 baud (PAL)
 initSerialPort :: Asm ()
+-- ^ Initializes CIA2 ports and Timer A for basic serial communication (RS232).
 initSerialPort = do
     -- Configure CIA2 Port A DDR ($DD02)
     -- Set Bit 2 (TXD) as output (1), others as input (0) for simplicity
@@ -525,8 +553,9 @@ initSerialPort = do
     lda# 0b10000001 -- Set (Bit 7), Enable Timer A (Bit 0)
     sta cia2InterruptControl
 
--- Create a basic serial IRQ handler macro
+-- | Create a basic serial IRQ handler macro
 serialIRQ :: Asm ()
+-- ^ Basic serial IRQ handler placeholder for CIA2.
 serialIRQ = do
     -- Save registers
     pha -- Push A
@@ -556,8 +585,9 @@ serialIRQ = do
     -- Return from interrupt
     rti
 
--- Macro to set the IRQ vector
+-- | Macro to set the IRQ vector
 setIRQVector :: Label -> Asm ()
+-- ^ Sets the system IRQ vector at $FFFE/$FFFF to point to the provided handler label.
 setIRQVector handlerLabel = do
     -- The IRQ vector is at $FFFE/$FFFF
     -- We need to write the LSB to $FFFE and the MSB to $FFFF

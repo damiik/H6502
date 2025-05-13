@@ -1,4 +1,5 @@
 {-# LANGUAGE PatternSynonyms, BinaryLiterals, FlexibleInstances #-}
+-- | C64 Helper macros and utility functions for generating 6502 assembly.
 module C64.HelpersC64 (
     -- C64 Hardware Interaction Macros
     waitRaster,
@@ -68,23 +69,27 @@ import C64 (vicRaster, screenRam, colorRam, vicControl1) -- C64-specific address
 -- --- C64 Hardware Interaction Macros ---
 
 vicWaitBottom :: Asm ()
+-- ^ Waits for the VIC raster beam to reach the bottom border.
 vicWaitBottom = do
     while_ IsZero $ do
         and'r vicControl1 0x80 -- Renamed and_r
 
 vicWaitTop :: Asm ()
+-- ^ Waits for the VIC raster beam to leave the bottom border and enter the top border area.
 vicWaitTop = do
     while_ IsNonZero $ do
         and'r vicControl1 0x80 -- Renamed and_r
 
 -- Need and'r helper defined here or imported
 and'r :: AddressRef -> Word8 -> Asm()
+-- ^ Internal helper: Loads an immediate value and performs a bitwise AND with the value at the given address.
 and'r address value = do
     lda# value
     and address
 
 
 waitRaster :: Asm()
+-- ^ Waits for the VIC raster beam to reach the bottom border.
 waitRaster = do
     -- vicWaitTop -- The original commented this out
     vicWaitBottom -- Waiting for bottom of raster
@@ -92,6 +97,7 @@ waitRaster = do
 -- On a PAL C64 (common in Europe/Australia), the raster beam counts from line 0 up to line 311.
 -- On an NTSC C64 (common in North America/Japan), it counts from line 0 up to line 262.
 vicWaitLine :: Word16 -> Asm()
+-- ^ Waits for the VIC raster beam to reach a specific line number.
 vicWaitLine line = do
     l_ "vicWaitLine"
     let lineLsb = lsb line
@@ -106,12 +112,14 @@ vicWaitLine line = do
 
 -- Need cmp'r helper defined here or imported
 cmp'r :: AddressRef -> Word8 -> Asm()
+-- ^ Internal helper: Loads an immediate value and performs a comparison with the value at the given address.
 cmp'r address value = do
     lda# value
     cmp address
 
 
 fillScreen :: AddressRef  -> Word8 -> Asm ()
+-- ^ Fills a portion of the screen memory with a given byte value.
 fillScreen screenAddr fillB = do
     lda# fillB
     ldx# 250
@@ -137,6 +145,7 @@ fillScreen screenAddr fillB = do
 
 -- Updated configureVectors to accept AddressRef and use symbolic LSB/MSB loading
 configureVectors :: AddressRef -> Asm ()
+-- ^ Configures the NMI, IRQ, and BRK vectors to point to the given address reference.
 configureVectors addrRef = do
     -- Extract the label name. Raise error if it's not a label reference.
     let labelName = case addrRef of
@@ -172,6 +181,7 @@ configureVectors addrRef = do
 -- Need #< and #> from Assembly.EDSLInstr
 
 printChar :: Word16 -> Word8 -> Asm()
+-- ^ Prints a character (currently in the accumulator) with a specific color at a given screen position.
 printChar textPos color = do
     -- Assuming accumulator holds the character to print
     sta (X (screenRam .+ textPos))    -- Store the character at the screen memory location
@@ -181,6 +191,7 @@ printChar textPos color = do
 -- Need X constructor/OpGenerator instance, screenRam, colorRam from C64, and .+ from Assembly.Core
 
 printColorChar :: Word16 -> Address -> Asm()
+-- ^ Prints a character (currently in the accumulator) at a given screen position, using a color from a color map.
 printColorChar textPos colorMap = do
     -- Assuming accumulator holds the character to print
     sta (X (screenRam .+ textPos))
@@ -191,6 +202,7 @@ printColorChar textPos colorMap = do
 -- Need X, Y constructors/OpGenerator instances, screenRam, colorRam from C64, .+ from Assembly.Core, and tay instruction
 
 macrosLib = do
+-- ^ Defines common utility macros like 'hundreds2Petscii' and 'tens2Petscii'.
     l_ "hundreds2Petscii" -- Need l_ from Assembly.Core
     hundreds2Petscii
     l_ "tens2Petscii"
@@ -200,6 +212,8 @@ macrosLib = do
 -- returns rest of value in 0xf8
 -- Assumes accumulator holds the value on entry
 hundreds2Petscii :: Asm ()
+-- ^ Converts the hundreds digit of the value in the accumulator to PETSCII and returns it in the accumulator.
+--   The remainder is stored in address $f8. Assumes input is less than 1000.
 hundreds2Petscii = do
     let count = AddrLit8 0xf7 -- Need AddrLit8 from Assembly.Core
     let rest = AddrLit8 0xf8
@@ -229,6 +243,8 @@ hundreds2Petscii = do
 -- return rest of value in 0xf8
 -- Assumes accumulator holds the value on entry
 tens2Petscii :: Asm ()
+-- ^ Converts the tens digit of the value in the accumulator to PETSCII and returns it in the accumulator.
+--   The remainder is stored in address $f8. Assumes input is less than 100.
 tens2Petscii = do
     let count = AddrLit8 0xf7
     let rest = AddrLit8 0xf8
@@ -253,6 +269,8 @@ tens2Petscii = do
 --- (needs *macrosLib*)
 -- Assumes value to print is in accumulator on entry
 printByte :: Word16 -> Word16 -> Address -> Asm()
+-- ^ Prints a byte value (currently in the accumulator) as a three-digit decimal string at the given x, y coordinates.
+--   Requires 'macrosLib' to be included.
 printByte x y color = do
     let rest = AddrLit8 0xf8 -- Need AddrLit8
     let screenAddress = y * 0x40 P.+ x -- Need P.* and P.+ from qualified Prelude
@@ -277,6 +295,7 @@ printByte x y color = do
 -- makeUniqueLabel and makeLabelWithPrefix are imported from Assembly.Core
 
 skipNext2B :: Asm ()
+-- ^ Skips the next two bytes in the generated code using a BIT instruction.
 skipNext2B = do
     db [0x2C] -- Instruction BIT $address (direct addr. mode) -- Need db from Assembly.Core
 

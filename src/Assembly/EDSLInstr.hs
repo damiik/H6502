@@ -1,3 +1,5 @@
+-- | Provides an EDSL (Embedded Domain Specific Language) for writing 6502 assembly instructions
+-- and control flow macros.
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -6,17 +8,17 @@ module Assembly.EDSLInstr (
 
     -- OpGenerator Class
     OpGenerator(toOperand),
-    -- A(..),
-    X(..),
-    Y(..),
+    -- A(..), -- Accumulator addressing (implicit)
+    X(..),    -- Indexed X addressing wrapper
+    Y(..),    -- Indexed Y addressing wrapper
 
-    I(),
-    IX(..),
-    IY(..),
-    IM(..),
-    (#),
-    (#>),
-    (#<),
+    I(..),    -- Indirect addressing wrapper
+    IX(..),   -- Indexed Indirect X addressing wrapper
+    IY(..),   -- Indirect Indexed Y addressing wrapper
+    IM(..),   -- Immediate addressing wrapper
+    (#),      -- Operator for immediate addressing
+    (#>),     -- Operator for immediate MSB of label
+    (#<),     -- Operator for immediate LSB of label
 
     -- eDSL Instruction Aliases
     lda, sta, ldx, ldy, jmp, inx, adc, sbc, tax, tay, stx, sty,
@@ -39,27 +41,31 @@ import Assembly.Core (Asm, Operand(..), pattern A_, Label, emitIns, emitImplied,
 import Assembly.Instructions6502 (Mnemonic(..))
 import Assembly.Branch (BranchMnemonic(..)) -- Import BranchMnemonic constructors
 
--- OpGenerator Class and Instances
+-- | Typeclass for types that can be converted to an `Operand`.
 class OpGenerator a where
     toOperand :: a -> Operand
 
 
 
--- OpGenerator instances for Word8 and Word16 absoulte addressing mode
+-- OpGenerator instances for Word8 and Word16 absolute addressing mode
 -- -------------------------------------------------------------------
+-- | Converts a `Word8` to a Zero Page operand.
 instance OpGenerator Word8 where
-    toOperand v = OpZP (AddrLit8 v) 
+    toOperand v = OpZP (AddrLit8 v)
 
+-- | Converts a `Word16` to an Absolute operand.
 instance OpGenerator Word16 where
     toOperand v = OpAbs (AddrLit16 v)
 
+-- | Converts a `String` (label) to an Absolute operand.
 instance OpGenerator String where
     toOperand l = OpAbs (AddrLabel l)
 
 --TODO: missing AddrLabelExpr with zero page.
+-- | Converts an `AddressRef` to an appropriate `Operand` based on its constructor.
 instance OpGenerator AddressRef where
     toOperand addr =  case addr of
-        AddrLit8 v -> OpZP (AddrLit8 v)       -- Immediate addressing
+        AddrLit8 v -> OpZP (AddrLit8 v)       -- Zero Page addressing
         AddrLit16 v -> OpAbs (AddrLit16 v)       -- Absolute addressing
         AddrLabel l -> OpAbs (AddrLabel l) -- Absolute addressing with label
         AddrLabelExpr expr -> OpAbs (AddrLabelExpr expr) -- Absolute addressing with label expression
@@ -67,19 +73,25 @@ instance OpGenerator AddressRef where
 
 -- Define newtype wrappers for LSB/MSB immediate mode
 -- -------------------------------------------------------
+-- | Newtype wrapper for the LSB of a label's address in immediate mode.
 newtype LsbLabel a = LsbLabel a
+-- | Newtype wrapper for the MSB of a label's address in immediate mode.
 newtype MsbLabel a = MsbLabel a
 
 -- Add OpGenerator instances for these wrappers targeting Labels
+-- | Converts `LsbLabel Label` to an `OpLsbImm` operand.
 instance OpGenerator (LsbLabel Label) where
     toOperand (LsbLabel l) = OpLsbImm l -- Use the new constructor (or pattern LsbImm l)
 
+-- | Converts `MsbLabel Label` to an `OpMsbImm` operand.
 instance OpGenerator (MsbLabel Label) where
     toOperand (MsbLabel l) = OpMsbImm l -- Use the new constructor (or pattern MsbImm l)
 
+-- | Infix operator for applying an instruction with the MSB of a label as an immediate operand.
 infixl 6 #>
 (#>):: (MsbLabel Label -> Asm ()) -> Label -> Asm ()
 ins #> val  = ins (MsbLabel val)
+-- | Infix operator for applying an instruction with the LSB of a label as an immediate operand.
 infixl 6 #<
 (#<):: (LsbLabel Label -> Asm ()) -> Label -> Asm ()
 ins #< val  = ins (LsbLabel val)
@@ -87,13 +99,16 @@ ins #< val  = ins (LsbLabel val)
 
 -- Define newtype wrappers for immediate intent
 -- -----------------------------------------------------------------------------
+-- | Newtype wrapper to signify an immediate operand.
 newtype IM a = IM a
+-- | Converts `IM Word8` to an `OpImm` operand.
 instance OpGenerator (IM Word8) where
     toOperand (IM a) = OpImm a
 
 -- (#) :: Word8 -> IM Word8
 -- (#)  = IM-- Use the toOperand function from OpGenerator
 
+-- | Infix operator for applying an instruction with an immediate `Word8` operand.
 infixl 6 #
 (#):: (IM Word8 -> Asm ()) -> Word8 -> Asm ()
 ins # val  = ins (IM val)
@@ -103,7 +118,7 @@ ins # val  = ins (IM val)
 --     toOperand A = OpNull -- OpGenerator constructors for addressing modes
 
 
--- nieużywane
+-- unused
 -- newtype Z a = Z a
 -- instance OpGenerator (Z Word8) where
 --     toOperand (Z v) = OpZP (AddrLit8 v)
@@ -119,38 +134,47 @@ ins # val  = ins (IM val)
 
 -- define newtype wrappers for absolute X and Y indexed addressing modes
 ------------------------------------------------------------------------
+-- | Newtype wrapper for X-indexed addressing.
 newtype X a = X a
+-- | Converts `X Word8` to an Absolute,X operand (using the Word8 as an address).
 instance OpGenerator (X Word8) where
     toOperand (X addr) = OpAbsX (AddrLit8 addr)
 
+-- | Converts `X Word16` to an Absolute,X operand.
 instance OpGenerator (X Word16) where
     toOperand (X addr) = OpAbsX (AddrLit16 addr)
 
+-- | Converts `X String` (label) to an Absolute,X operand.
 instance OpGenerator (X String) where
     toOperand (X addr) = OpAbsX (AddrLabel addr)
 
 --TODO: missing AddrLabelExpr with zero page addressing
+-- | Converts `X AddressRef` to an appropriate X-indexed operand.
 instance OpGenerator (X AddressRef) where
-    toOperand (X addr) = 
+    toOperand (X addr) =
         case addr of
             AddrLit16 _ -> OpAbsX addr
             AddrLabel _ -> OpAbsX addr
             AddrLit8 _ -> OpZPX addr
             AddrLabelExpr e -> OpAbsX (AddrLabelExpr e)
 
-
+-- | Newtype wrapper for Y-indexed addressing.
 newtype Y a = Y a
+-- | Converts `Y Word8` to a Zero Page,Y operand.
 instance OpGenerator (Y Word8) where
     toOperand (Y addr) = OpZPY (AddrLit8 addr)
 
+-- | Converts `Y Word16` to an Absolute,Y operand.
 instance OpGenerator (Y Word16) where
     toOperand (Y addr) = OpAbsY (AddrLit16 addr)
 
+-- | Converts `Y String` (label) to an Absolute,Y operand.
 instance OpGenerator (Y String) where
     toOperand (Y addr) = OpAbsY (AddrLabel addr)
 
-instance OpGenerator (Y AddressRef) where  -- TODO: uzupełnić wszystkie instancje AddressRef
-    toOperand (Y addr) = 
+-- | Converts `Y AddressRef` to an appropriate Y-indexed operand.
+instance OpGenerator (Y AddressRef) where  -- TODO: complete all AddressRef instances
+    toOperand (Y addr) =
         case addr of
             AddrLit16 _ -> OpAbsY addr
             AddrLabel _ -> OpAbsY addr
@@ -160,16 +184,21 @@ instance OpGenerator (Y AddressRef) where  -- TODO: uzupełnić wszystkie instan
 
 -- Indirect addressing modes
 -- ----------------------------------------------------------------
+-- | Newtype wrapper for indirect addressing.
 newtype I a = I a
 
+-- | Converts `I Word8` to an Indirect operand (using Word8 as address).
 instance OpGenerator (I Word8) where
     toOperand (I addr) = OpInd (AddrLit8 addr)
+-- | Converts `I Word16` to an Indirect operand.
 instance OpGenerator (I Word16) where
     toOperand (I addr) = OpInd (AddrLit16 addr)
 
+-- | Converts `I String` (label) to an Indirect operand.
 instance OpGenerator (I String) where
     toOperand (I addr) = OpInd (AddrLabel addr)
 
+-- | Converts `I AddressRef` to an Indirect operand.
 instance OpGenerator (I AddressRef) where
     toOperand (I addr) = case addr of
         AddrLit16 _ -> OpInd addr
@@ -177,14 +206,17 @@ instance OpGenerator (I AddressRef) where
         AddrLabelExpr _ -> OpInd addr
         AddrLit8 _ -> OpInd addr
 
-
+-- | Newtype wrapper for indexed indirect X addressing.
 newtype IX a = IX a
+-- | Converts `IX Word8` to an Indexed Indirect X operand.
 instance OpGenerator (IX Word8) where
     toOperand (IX addr) = OpIndX (AddrLit8 addr)
 
+-- | Converts `IX Word16` to an Indexed Indirect X operand.
 instance OpGenerator (IX Word16) where
     toOperand (IX addr) = OpIndX (AddrLit16 addr)
 
+-- | Converts `IX AddressRef` to an Indexed Indirect X operand.
 instance OpGenerator (IX AddressRef) where
     toOperand (IX addr) = case addr of
         AddrLit16 _ -> OpIndX addr
@@ -192,17 +224,21 @@ instance OpGenerator (IX AddressRef) where
         AddrLabelExpr _ -> OpIndX addr
         AddrLit8 _ -> OpIndX addr
 
+-- | Converts `IX String` (label) to an Indexed Indirect X operand.
 instance OpGenerator (IX String) where
     toOperand (IX addr) = OpIndX (AddrLabel addr)
 
-
+-- | Newtype wrapper for indirect indexed Y addressing.
 newtype IY a = IY a
+-- | Converts `IY Word8` to an Indirect Indexed Y operand.
 instance OpGenerator (IY Word8) where
     toOperand (IY addr) = OpIndY (AddrLit8 addr)
 
+-- | Converts `IY Word16` to an Indirect Indexed Y operand.
 instance OpGenerator (IY Word16) where
     toOperand (IY addr) = OpIndY (AddrLit16 addr)
 
+-- | Converts `IY AddressRef` to an Indirect Indexed Y operand.
 instance OpGenerator (IY AddressRef) where
     toOperand (IY addr) = case addr of
         AddrLit16 _ -> OpIndY addr
@@ -210,24 +246,18 @@ instance OpGenerator (IY AddressRef) where
         AddrLabelExpr _ -> OpIndY addr
         AddrLit8 _ -> OpIndY addr
 
-
+-- | Converts `IY String` (label) to an Indirect Indexed Y operand.
 instance OpGenerator (IY String) where
     toOperand (IY addr) = OpIndY (AddrLabel addr)
 
 
 -- --- eDSL Instruction Aliases ---
 lda :: OpGenerator a => a -> Asm (); lda op = emitIns LDA (toOperand op)
--- lda :: OpGenerator b => (a -> b) -> a -> Asm (); lda mode addr = emitIns LDA (toOperand (mode addr))
 sta :: OpGenerator a => a -> Asm (); sta op = emitIns STA (toOperand op)
 ldx :: OpGenerator a => a -> Asm (); ldx op = emitIns LDX (toOperand op)
 ldy :: OpGenerator a => a -> Asm (); ldy op = emitIns LDY (toOperand op)
 jmp :: OpGenerator a => a -> Asm (); jmp op = emitIns JMP (toOperand op)
--- jmp :: AddressRef -> Asm (); jmp addr = emitIns JMP (OpAbs addr)
-
 jsr :: OpGenerator a => a -> Asm (); jsr op = emitIns JSR (toOperand op)
--- jsr :: AddressRef -> Asm (); jsr addr = emitIns JSR (OpAbs addr)
--- inc :: OpGenerator a => a -> Asm (); inc op = emitIns INC (toOperand op)
--- dec :: OpGenerator a => a -> Asm (); dec op = emitIns DEC (toOperand op)
 inx :: Asm (); inx = emitImplied INX
 rts :: Asm (); rts = emitImplied RTS
 adc :: OpGenerator a => a -> Asm (); adc op = emitIns ADC (toOperand op)
@@ -289,54 +319,55 @@ ror (Just op) = emitIns ROR (toOperand op)
 
 
 
--- Wykonuje blok kodu, jeśli podany warunek jest PRAWDZIWY
--- (Zakłada, że flagi zostały ustawione *przed* wywołaniem if_)
+-- | Executes a block of code if the given condition is TRUE.
+-- (Assumes flags were set *before* calling if_).
 if_ :: Conditions -> Asm () -> Asm ()
 if_ condition asmBlock = do
     skipLabel <- makeUniqueLabel ()
-    -- Wykonaj skok WARUNKOWY ZA blok, jeśli warunek jest FAŁSZYWY
+    -- Perform a CONDITIONAL jump PAST the block if the condition is FALSE.
     branchOnCondition (invert condition) skipLabel
-    -- Wykonaj blok kodu, jeśli warunek jest PRAWIDŁOWY (nie skoczono)
+    -- Execute the code block if the condition is TRUE (no jump occurred).
     asmBlock
-    l_ skipLabel -- Etykieta końca bloku if
+    l_ skipLabel -- End label of the if block.
 
+-- | Executes `asmBlock` if the condition is TRUE, otherwise executes `elseBlock`.
 ifElse_ :: Conditions -> Asm () -> Asm () -> Asm ()
 ifElse_ condition asmBlock elseBlock = do
     skipLabel <- makeUniqueLabel ()
     elseLabel <- makeUniqueLabel ()
-    -- Wykonaj skok WARUNKOWY ZA blok, jeśli warunek jest FAŁSZYWY
+    -- Perform a CONDITIONAL jump to the else block if the condition is FALSE.
     branchOnCondition (invert condition) elseLabel
-    -- Wykonaj blok kodu, jeśli warunek jest PRAWIDŁOWY (nie skoczono)
+    -- Execute the 'then' block if the condition is TRUE.
     asmBlock
-    jmp skipLabel
-    l_ elseLabel    
+    jmp skipLabel -- Skip the else block.
+    l_ elseLabel
     elseBlock
-    l_ skipLabel -- Etykieta końca ifElse
+    l_ skipLabel -- End label of the if-else block.
 
--- Zaktualizowane makro WHILE
--- Wykonuje blok kodu, dopóki warunek jest PRAWDZIWY
--- (Zakłada, że flagi są ustawiane *przed* sprawdzeniem warunku na początku pętli)
+-- | Updated WHILE macro.
+-- Executes a block of code as long as the condition is TRUE.
+-- (Assumes flags are set *before* checking the condition at the beginning of the loop).
 while_ :: Conditions -> Asm () -> Asm ()
 while_ condition asmBlock = do
     startLabel <- makeUniqueLabel ()
     endLabel   <- makeUniqueLabel ()
     l_ startLabel
-    -- Sprawdź warunek: skocz na koniec, jeśli FAŁSZYWY
+    -- Check condition: jump to end if FALSE.
     branchOnCondition (invert condition) endLabel
-    -- Wykonaj ciało pętli, jeśli warunek PRAWDZIWY
+    -- Execute loop body if condition TRUE.
     asmBlock
-    jmp startLabel -- Wróć na początek, aby ponownie sprawdzić warunek
+    jmp startLabel -- Return to the beginning to check the condition again.
     l_ endLabel
 
--- Zaktualizowane makro DO-WHILE
--- Wykonuje blok kodu RAZ, a następnie powtarza, dopóki warunek jest PRAWDZIWY
--- (Zakłada, że flagi są ustawiane *wewnątrz* bloku, tuż przed końcem iteracji)
+-- | Updated DO-WHILE macro.
+-- Executes a block of code ONCE, then repeats as long as the condition is TRUE.
+-- (Assumes flags are set *inside* the block, just before the end of the iteration).
 doWhile_ :: Conditions -> Asm () -> Asm ()
 doWhile_ condition asmBlock = do
     startLabel <- makeUniqueLabel ()
     l_ startLabel
-    -- Wykonaj ciało pętli
+    -- Execute loop body.
     asmBlock
-    -- Sprawdź warunek na końcu: skocz na początek, jeśli PRAWIDZIWY
+    -- Check condition at the end: jump to the beginning if TRUE.
     branchOnCondition condition startLabel
-    -- W przeciwnym razie (warunek FAŁSZYWY), wypadnij z pętli
+    -- Otherwise (condition FALSE), fall out of the loop.

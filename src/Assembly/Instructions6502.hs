@@ -1,3 +1,4 @@
+-- | Defines the 6502 instruction set mnemonics, addressing modes, and opcode data.
 {-# LANGUAGE LambdaCase #-}
 
 
@@ -13,24 +14,24 @@ import qualified Data.Map.Strict as Map
 
 
 
--- NOWY: Enum dla wszystkich trybów adresowania
+-- | NEW: Enum for all 6502 addressing modes.
 data AddressingMode
-    = Implicit
-    | Accumulator
-    | Immediate
-    | ZeroPage
-    | ZeroPageX
-    | ZeroPageY
-    | Absolute
-    | AbsoluteX
-    | AbsoluteY
-    | Indirect
-    | IndirectX -- (zp,X)
-    | IndirectY -- (zp),Y
-    | Relative -- Specjalny dla skoków
+    = Implicit    -- ^ No operand (e.g., NOP, RTS).
+    | Accumulator -- ^ Operand is the accumulator (e.g., ASL A).
+    | Immediate   -- ^ Operand is the next byte in memory (e.g., LDA #$FF).
+    | ZeroPage    -- ^ Operand is a byte at a zero-page address (e.g., LDA $00).
+    | ZeroPageX   -- ^ Operand is a byte at a zero-page address indexed by X (e.g., LDA $00,X).
+    | ZeroPageY   -- ^ Operand is a byte at a zero-page address indexed by Y (e.g., LDX $00,Y).
+    | Absolute    -- ^ Operand is a byte at a 16-bit address (e.g., LDA $ABCD).
+    | AbsoluteX   -- ^ Operand is a byte at a 16-bit address indexed by X (e.g., LDA $ABCD,X).
+    | AbsoluteY   -- ^ Operand is a byte at a 16-bit address indexed by Y (e.g., LDA $ABCD,Y).
+    | Indirect    -- ^ Operand is a 16-bit address read from memory (only for JMP) (e.g., JMP ($ABCD)).
+    | IndirectX   -- ^ Operand is a byte at an address read from zero page indexed by X (e.g., LDA ($00,X)).
+    | IndirectY   -- ^ Operand is a byte at an address read from zero page indexed by Y (e.g., LDA ($00),Y).
+    | Relative    -- ^ Special for branches: signed 8-bit offset relative to PC+2 (e.g., BCC label).
     deriving (Show, Eq, Ord, Enum, Bounded)
 
--- Funkcja pomocnicza do obliczania rozmiaru na podstawie trybu adresowania
+-- | Helper function for calculating size based on addressing mode.
 getModeSize :: AddressingMode -> Word8
 getModeSize = \case
     Implicit      -> 1
@@ -42,13 +43,13 @@ getModeSize = \case
     Absolute      -> 3
     AbsoluteX     -> 3
     AbsoluteY     -> 3
-    Indirect      -> 3 -- Tylko JMP
+    Indirect      -> 3 -- Only JMP
     IndirectX     -> 2
     IndirectY     -> 2
-    Relative      -> 2 -- Skoki warunkowe
+    Relative      -> 2 -- Conditional branches
 
 
--- ZAKTUALIZOWANY: Enum dla wszystkich mnemoników 6502
+-- | UPDATED: Enum for all 6502 mnemonics.
 data Mnemonic
     = ADC | AND | ASL | BCC | BCS | BEQ | BIT | BMI | BNE | BPL | BRK | BVC | BVS | CLC
     | CLD | CLI | CLV | CMP | CPX | CPY | DEC | DEX | DEY | EOR | INC | INX | INY | JMP
@@ -57,8 +58,8 @@ data Mnemonic
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 
--- Surowe dane instrukcji: Lista (Mnemonic, AddressingMode, Opcode) - rozmiar zostanie dodany
--- Na podstawie listy OCaml, przekonwertowane na Hex i z odpowiednimi typami Haskell
+-- | Raw instruction data: List of (Mnemonic, AddressingMode, Opcode) - size will be added.
+-- Based on OCaml list, converted to Hex and with appropriate Haskell types.
 instructionData :: [(Mnemonic, AddressingMode, Word8)]
 instructionData = [
     (BRK, Implicit, 0x00),

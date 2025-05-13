@@ -99,20 +99,26 @@ import Assembly.EDSLInstr
 
 
 
+-- | Address of the screen RAM.
 screenRam :: AddressRef
 screenRam = AddrLit16 0x0400
 
+-- | Address of the color RAM.
 colorRam :: AddressRef
 colorRam = AddrLit16 0xd800
 
 
+-- | Address of CIA1 Data Port A (Joystick Port 2, unused).
 cia1DataPortA :: AddressRef
-cia1DataPortA = AddrLit16 0xdc00 -- Joystick Port 2 (nieużywane)
+cia1DataPortA = AddrLit16 0xdc00 -- Joystick Port 2 (unused)
+-- | Address of CIA1 Data Port B (Joystick Port 2, unused).
 cia1DataPortB :: AddressRef
-cia1DataPortB = AddrLit16 0xdc01 -- Joystick Port 2 (nieużywane)
+cia1DataPortB = AddrLit16 0xdc01 -- Joystick Port 2 (unused)
 
+-- | Address of CIA1 Interrupt Control Register.
 cia1InterruptControl :: AddressRef
 cia1InterruptControl = AddrLit16 0xdc0d
+-- | Address of CIA2 Interrupt Control Register.
 cia2InterruptControl :: AddressRef
 cia2InterruptControl = AddrLit16 0xdd0d
 
@@ -131,8 +137,9 @@ cia2InterruptControl = AddrLit16 0xdd0d
 -- Bit #5: Serial bus DATA OUT; 0 = High; 1 = Low.
 -- Bit #6: Serial bus CLOCK IN; 0 = Low; 1 = High.
 -- Bit #7: Serial bus DATA IN; 0 = Low; 1 = High.
+-- | Address of CIA2 Data Port A.
 cia2DataPortA :: AddressRef
-cia2DataPortA = AddrLit16 0xdd00    
+cia2DataPortA = AddrLit16 0xdd00
 
 
 -- Port B, RS232 access. Read bits:
@@ -149,51 +156,77 @@ cia2DataPortA = AddrLit16 0xdd00
 -- Bit #3: RS232 RI line.
 -- Bit #4: RS232 DCD line.
 -- Bit #5: User port H pin.
+-- | Address of CIA2 Data Port B.
 cia2DataPortB :: AddressRef
 cia2DataPortB = AddrLit16 0xdd01
 
+-- | Address of CIA2 Timer A Low byte.
 cia2TimerALow :: AddressRef
 cia2TimerALow = AddrLit16 0xdd04
+-- | Address of CIA2 Timer A High byte.
 cia2TimerAHigh :: AddressRef
 cia2TimerAHigh = AddrLit16 0xdd05
 
 
--- Rutyny KERNAL
+-- KERNAL Routines
+-- | Address of the KERNAL routine to clear the screen.
 kernalClrscr :: AddressRef
 kernalClrscr = AddrLit16 0xE544
+-- | Address of the KERNAL routine to read a character from the keyboard (blocking).
 kernalGetin :: AddressRef
-kernalGetin = AddrLit16 0xFFE4 -- Odczytuje znak z klawiatury (blokujące)
+kernalGetin = AddrLit16 0xFFE4 -- Reads a character from the keyboard (blocking)
 
--- Kody PETSCII dla klawiszy kursorów
+-- PETSCII codes for cursor keys
+-- | PETSCII code for the Cursor Down key.
 keyCursorDown :: Word8;  keyCursorDown  = 17
+-- | PETSCII code for the Cursor Right key.
 keyCursorRight :: Word8;  keyCursorRight = 29
+-- | PETSCII code for the Cursor Up key.
 keyCursorUp    :: Word8; keyCursorUp    = 145
+-- | PETSCII code for the Cursor Left key.
 keyCursorLeft  :: Word8; keyCursorLeft  = 157
 
 
 
 -- The colors of the C64
+-- | Black color.
 _BLACK :: Word8; _BLACK = 0x00
+-- | White color.
 _WHITE :: Word8; _WHITE = 0x01
+-- | Red color.
 _RED :: Word8; _RED = 0x02
+-- | Cyan color.
 _CYAN :: Word8; _CYAN = 0x03
+-- | Purple color.
 _PURPLE :: Word8; _PURPLE = 0x04
+-- | Green color.
 _GREEN :: Word8; _GREEN = 0x05
+-- | Blue color.
 _BLUE :: Word8; _BLUE = 0x06
+-- | Yellow color.
 _YELLOW :: Word8; _YELLOW = 0x07
+-- | Orange color.
 _ORANGE :: Word8; _ORANGE = 0x08
+-- | Brown color.
 _BROWN :: Word8; _BROWN = 0x09
+-- | Pink color.
 _PINK :: Word8; _PINK = 0x0a
+-- | Light Red color (same as Pink).
 _LIGHT_RED :: Word8; _LIGHT_RED = 0x0a
+-- | Dark Grey color.
 _DARK_GREY :: Word8; _DARK_GREY= 0x0b
+-- | Grey color.
 _GREY :: Word8; _GREY = 0x0c
+-- | Light Green color.
 _LIGHT_GREEN :: Word8; _LIGHT_GREEN = 0x0d
+-- | Light Blue color.
 _LIGHT_BLUE :: Word8; _LIGHT_BLUE = 0x0e
+-- | Light Grey color.
 _LIGHT_GREY :: Word8; _LIGHT_GREY = 0x0f
 
 
 
-; --- Kody dla $CB / $C5 ---
+-- --- Codes for $CB / $C5 ---
 _KEY_INST_DEL     =   0 :: Word8        -- (Ins/Del)
 _KEY_RETURN       =   1 :: Word8        --; (Enter)
 _KEY_CURSOR_RIGHT =   2 :: Word8        --; ⇔ (Left/Right)
@@ -259,20 +292,21 @@ _KEY_RUNSTOP      =  63 :: Word8
 -- _KEY_SHIFTLOCK    =   8 :: Word8
 -- _KEY_CTRL         =   2 :: Word8
 
---; --- Definicje specjalne (z tabeli, dla czytelności)
-_KEY_NONE         = 64 :: Word8              --; brak klawisza
+-- --- Special definitions (from table, for readability)
+_KEY_NONE         = 64 :: Word8              --; no key
 
 
 
 
 
--- Adresy rejestrów CIA#1
-cia1PortA = AddrLit16 0xDC00 -- Port A (Kolumny klawiatury - zapis)
-cia1PortB = AddrLit16 0xDC01 -- Port B (Wiersze klawiatury - odczyt)
-cia1DDRA  = AddrLit16 0xDC02 -- Rejestr kierunku dla Portu A
-cia1DDRB  = AddrLit16 0xDC03 -- Rejestr kierunku dla Portu B
+-- CIA#1 Register Addresses
+cia1PortA = AddrLit16 0xDC00 -- Port A (Keyboard columns - write)
+cia1PortB = AddrLit16 0xDC01 -- Port B (Keyboard rows - read)
+cia1DDRA  = AddrLit16 0xDC02 -- Direction register for Port A
+cia1DDRB  = AddrLit16 0xDC03 -- Direction register for Port B
 
 
+-- | Scans the C64 keyboard matrix.
 scanKeyboard :: Asm()
 scanKeyboard = do
 
@@ -281,7 +315,7 @@ scanKeyboard = do
 
     --; set columns (Port A) as output and rows (Port B) as input
     lda# 0xff
-    sta cia1DDRA 
+    sta cia1DDRA
     lda# 0x00
     sta cia1DDRB
 
@@ -313,33 +347,33 @@ scanKeyboard = do
                 adc scanKeycode         --; column * 8 + row
                 sta scanKeycode
                 rts                     --; break from while_ by setting Y=8 i X=8 or return
-            
+
             lda dataPortB
             lsr A_
-            sta dataPortB    -- ;  rotating right dataPortB, testing bits 0-1-2-3-4-5-6-7 of dataPortB
+            sta dataPortB    -- ;  rotating right dataPortB, testing bits 0-1-2-3-4-5-6-6-7 of dataPortB
             inx          -- ; next row index
             cpx# 0x08
-        
+
         iny
         cpy# 0x08
     rts
     l_ "colMaskData"
-    db [0b11111110, 
-        0b11111101, 
-        0b11111011, 
-        0b11110111, 
-        0b11101111, 
-        0b11011111, 
-        0b10111111, 
+    db [0b11111110,
+        0b11111101,
+        0b11111011,
+        0b11110111,
+        0b11101111,
+        0b11011111,
+        0b10111111,
         0b01111111]
 
 
 
-    -- --; MODIFIERS = 0 na start
+    -- --; MODIFIERS = 0 at start
     -- LDA #0
     -- STA SCAN_MODIFIERS
 
-    -- --; --- SHIFT LEFT: kolumna 1 ($BF), wiersz 6 (bit 6) ---
+    -- --; --- SHIFT LEFT: column 1 ($BF), row 6 (bit 6) ---
     -- LDA #$BF
     -- STA DC00
     -- LDA DC01
@@ -349,7 +383,7 @@ scanKeyboard = do
     --     ORA #1     ; bit 0 = SHIFT
     --     STA SCAN_MODIFIERS
 
-    -- --; --- SHIFT RIGHT: kolumna 2 ($DF), wiersz 0 (bit 7) ---
+    -- --; --- SHIFT RIGHT: column 2 ($DF), row 0 (bit 7) ---
     -- LDA #$DF
     -- STA DC00
     -- LDA DC01
@@ -358,9 +392,9 @@ scanKeyboard = do
     --     LDA SCAN_MODIFIERS
     --     ORA #1
     --     STA SCAN_MODIFIERS
-    
 
-    -- --; --- COMMODORE: kolumna 7 ($FE), wiersz 1 (bit 6) ---
+
+    -- --; --- COMMODORE: column 7 ($FE), row 1 (bit 6) ---
     -- LDA #$FE
     -- STA DC00
     -- LDA DC01
@@ -370,7 +404,7 @@ scanKeyboard = do
     --     ORA #2
     --     STA SCAN_MODIFIERS
 
-    -- ; --- CTRL: kolumna 5 ($F7), wiersz 0 (bit 7) ---
+    -- ; --- CTRL: column 5 ($F7), row 0 (bit 7) ---
     -- LDA #$F7
     -- STA DC00
     -- LDA DC01
@@ -382,35 +416,37 @@ scanKeyboard = do
 
     -- rts
 
--- Dane potrzebne procedurze
+-- Data needed for the procedure
+-- | Defines the data needed for the keyboard scanning procedure.
 defineKeyboardData :: Asm ()
 defineKeyboardData = do
-    -- Tablica 8 bajtów na stan macierzy klawiatury (inicjowana zerami lub dowolnie)
+    -- 8-byte array for keyboard matrix state (initialized with zeros or arbitrarily)
     l_ "keyMatrixStateData"
     replicateM_ 8 $ db [0x00 :: Word8] -- 8 bytes for keyMatrixState
 
-    -- Tablica wartości do wyboru wierszy klawiatury (bit 0 dla wiersza 0 itd.)
-    -- Wartość $FE (%11111110) wybiera wiersz 0
-    -- Wartość $FD (%11111101) wybiera wiersz 1
+    -- Array of values for selecting keyboard rows (bit 0 for row 0, etc.)
+    -- Value $FE (%11111110) selects row 0
+    -- Value $FD (%11111101) selects row 1
     -- ...
-    -- Wartość $7F (%01111111) wybiera wiersz 7
+    -- Value $7F (%01111111) selects row 7
     l_ "rowSelectValuesData"
     db [0x7F, 0xBF, 0xDF, 0xEF, 0xF7, 0xFB, 0xFD, 0xFE]
 
--- Gdzieś w kodzie głównym trzeba zdefiniować dane:
+-- Somewhere in the main code, data needs to be defined:
 -- mainAssembly :: Asm ()
 -- mainAssembly = do
 --    org 0xC000
 --    jmp (AbsLabel "start")
---    scanKeys -- Definicja procedury
---    defineKeyboardData -- Definicja danych
+--    scanKeys -- Procedure definition
+--    defineKeyboardData -- Data definition
 --    l_ "start"
---    -- ... reszta programu ...
---    jsr "scanKeys" -- Wywołanie skanowania
-    -- ... sprawdzenie stanu w keyMatrixState ...
+--    -- ... rest of the program ...
+--    jsr "scanKeys" -- Scanning call
+    -- ... checking the state in keyMatrixState ...
 
 
 
+-- | Address of the sprite pointers in memory.
 _SPRITE_POINTERS                     = 0x07f8 -- 2040
 
 --; ----------------------------------------------------------
@@ -419,24 +455,41 @@ _SPRITE_POINTERS                     = 0x07f8 -- 2040
 --; ----------------------------------------------------------
 
 --; Sprite horizontal and vertical position registers
+-- | Address of Sprite 0 X position register.
 vicSprite0X :: AddressRef; vicSprite0X = AddrLit16 0xd000 -- 53248
+-- | Address of Sprite 0 Y position register.
 vicSprite0Y :: AddressRef; vicSprite0Y = AddrLit16 0xd001 -- 53249
+-- | Address of Sprite 1 X position register.
 vicSprite1X :: AddressRef; vicSprite1X = AddrLit16 0xd002 -- 53250
+-- | Address of Sprite 1 Y position register.
 vicSprite1Y :: AddressRef; vicSprite1Y = AddrLit16 0xd003 -- 53251
+-- | Address of Sprite 2 X position register.
 vicSprite2X :: AddressRef; vicSprite2X = AddrLit16 0xd004 -- 53252
+-- | Address of Sprite 2 Y position register.
 vicSprite2Y :: AddressRef; vicSprite2Y = AddrLit16 0xd005 -- 53253
+-- | Address of Sprite 3 X position register.
 vicSprite3X :: AddressRef; vicSprite3X = AddrLit16 0xd006 -- 53254
+-- | Address of Sprite 3 Y position register.
 vicSprite3Y :: AddressRef; vicSprite3Y = AddrLit16 0xd007 -- 53255
+-- | Address of Sprite 4 X position register.
 vicSprite4X :: AddressRef; vicSprite4X = AddrLit16 0xd008 -- 53256
+-- | Address of Sprite 4 Y position register.
 vicSprite4Y :: AddressRef; vicSprite4Y = AddrLit16 0xd009 -- 53257
+-- | Address of Sprite 5 X position register.
 vicSprite5X :: AddressRef; vicSprite5X = AddrLit16 0xd00a -- 53258
+-- | Address of Sprite 5 Y position register.
 vicSprite5Y :: AddressRef; vicSprite5Y = AddrLit16 0xd00b -- 53259
+-- | Address of Sprite 6 X position register.
 vicSprite6X :: AddressRef; vicSprite6X = AddrLit16 0xd00c -- 53260
+-- | Address of Sprite 6 Y position register.
 vicSprite6Y :: AddressRef; vicSprite6Y = AddrLit16 0xd00d -- 53261
+-- | Address of Sprite 7 X position register.
 vicSprite7X :: AddressRef; vicSprite7X = AddrLit16 0xd00e -- 53262
+-- | Address of Sprite 7 Y position register.
 vicSprite7Y :: AddressRef; vicSprite7Y = AddrLit16 0xd00f -- 53263
 
 --; Most significant bit of sprites 0-7 horizontal positions, bit #x: Sprite #x (X-coord. bit #8 of spirte #x)
+-- | Address of the Most Significant Bit (MSB) of sprite X positions.
 vicSpriteMSBX :: AddressRef; vicSpriteMSBX =  AddrLit16 0xd010 -- 53264
 
 
@@ -452,14 +505,17 @@ vicSpriteMSBX :: AddressRef; vicSpriteMSBX =  AddrLit16 0xd010 -- 53264
 -- Bit #6: 1 = Extended background mode on.
 -- Bit #7:  Read: Current raster line (bit #8).
 --         Write: Raster line to generate interrupt at (bit #8).
+-- | Address of VIC Control Register #1.
 vicControl1 :: AddressRef
 vicControl1 = AddrLit16 0xd011
 
 -- Read: Current raster line (bits #0-#7).
 -- Write: Raster line to generate interrupt at (bits #0-#7).
+-- | Address of the VIC Raster register.
 vicRaster :: AddressRef
 vicRaster = AddrLit16 0xd012
 --; Sprite enable register
+-- | Address of the Sprite Enable register.
 vicSpriteEnable :: AddressRef; vicSpriteEnable = AddrLit16 0xd015 -- 53269
 
 
@@ -470,6 +526,7 @@ vicSpriteEnable :: AddressRef; vicSpriteEnable = AddrLit16 0xd015 -- 53269
 --             0 | 38 characters/304 pixels |   31 (0x1f)   |  334 (0x14e)
 --             1 | 40 characters/320 pixels |   24 (0x18)   |  343 (0x157)
 -- Bit #4: 1 = Multicolor mode on.
+-- | Address of VIC Control Register #2.
 vicControl2 :: AddressRef
 vicControl2 = AddrLit16 0xd016
 
@@ -506,10 +563,11 @@ vicControl2 = AddrLit16 0xd016
 -- %1001, 9: $2400-$27FF, 9216-10239.
 -- %1010, 10: $2800-$2BFF, 10240-11263.
 -- %1011, 11: $2C00-$2FFF, 11264-12287.
--- %1100, 12: $3000-$33FF, 12288-13311.
+-- %1100, 12: $3000-$33FF, 13312-14335.
 -- %1101, 13: $3400-$37FF, 13312-14335.
 -- %1110, 14: $3800-$3BFF, 14336-15359.
 -- %1111, 15: $3C00-$3FFF, 15360-16383.
+-- | Address of VIC Memory Control Register.
 vicMemoryControl :: AddressRef
 vicMemoryControl = AddrLit16 0xd018 -- Bity 7-4: Screen Base, Bity 3-1: Charset Base
 
@@ -524,6 +582,7 @@ vicMemoryControl = AddrLit16 0xd018 -- Bity 7-4: Screen Base, Bity 3-1: Charset 
 -- Bit #1: 1 = Acknowledge sprite-background collision interrupt.
 -- Bit #2: 1 = Acknowledge sprite-sprite collision interrupt.
 -- Bit #3: 1 = Acknowledge light pen interrupt.
+-- | Address of VIC Interrupt Status Register.
 vicInterruptStatus :: AddressRef
 vicInterruptStatus = AddrLit16 0xd019 -- Bit 7: 1 = IRQ occurred; 0 = No IRQ occurred.
 
@@ -532,48 +591,70 @@ vicInterruptStatus = AddrLit16 0xd019 -- Bit 7: 1 = IRQ occurred; 0 = No IRQ occ
 -- Bit #1: 1 = Sprite-background collision interrupt enabled.
 -- Bit #2: 1 = Sprite-sprite collision interrupt enabled.
 -- Bit #3: 1 = Light pen interrupt enabled.
+-- | Address of VIC Interrupt Enable Register.
 vicInterruptEnable :: AddressRef
 vicInterruptEnable = AddrLit16 0xd01a -- Bit 7: 1 = Enable raster IRQ; 0 = Disable raster IRQ.
 
+-- | Address of the Sprite Priority register.
 vicSpritePriority :: AddressRef
 vicSpritePriority = AddrLit16 0xd01b -- Bit #x: 0 = Sprite #x is drawn in front of screen contents; 1 = Sprite #x is behind screen contents.
+-- | Address of the Sprite Multicolor register.
 vicSpriteMulticolor :: AddressRef
 vicSpriteMulticolor = AddrLit16 0xd01c -- Bit #x: 1 = Sprite #x is multicolored.
+-- | Address of the Sprite Double Width register.
 vicSpriteDoubleWidth :: AddressRef
 vicSpriteDoubleWidth = AddrLit16 0xd01d  --Bit #x: 1 = Sprite #x is stretched to double width.
+-- | Address of the Sprite Double Height register.
 vicSpriteDoubleHeight :: AddressRef
 vicSpriteDoubleHeight = AddrLit16 0xd017 -- Bit #x: 1 = Sprite #x is stretched to double height.
 
+-- | Address of the Sprite-Sprite Collision register.
 vicSpriteSpriteColision :: AddressRef
 vicSpriteSpriteColision = AddrLit16 0xd01e
+-- | Address of the Sprite-Background Collision register.
 vicSpriteBackColision :: AddressRef
 vicSpriteBackColision = AddrLit16 0xd01f
 
+-- | Address of the Border Color register.
 vicBorderColor :: AddressRef
 vicBorderColor = AddrLit16 0xd020
+-- | Address of the Background Color register.
 vicBackgroundColor :: AddressRef
 vicBackgroundColor = AddrLit16 0xd021
+-- | Address of Background Color 1 register.
 vicBackgroundColor1 :: AddressRef
 vicBackgroundColor1 = AddrLit16 0xd022
+-- | Address of Background Color 2 register.
 vicBackgroundColor2 :: AddressRef
 vicBackgroundColor2 = AddrLit16 0xd023
 -- New comment added
+-- | Address of Background Color 3 register.
 vicBackgroundColor3 :: AddressRef
 vicBackgroundColor3 = AddrLit16 0xd024
 
 
 --; Sprite Multicolor
+-- | Address of Sprite Multicolor Register 0.
 vicSpriteMc0 :: AddressRef; vicSpriteMc0 =  AddrLit16 0xd025 -- 53285
+-- | Address of Sprite Multicolor Register 1.
 vicSpriteMc1 :: AddressRef; vicSpriteMc1 =  AddrLit16 0xd026 -- 53286
 
 --; Sprite color registers
+-- | Address of Sprite 0 Color register.
 vicSprite0Color :: AddressRef; vicSprite0Color = AddrLit16 0xd027 -- 53287
+-- | Address of Sprite 1 Color register.
 vicSprite1Color :: AddressRef; vicSprite1Color = AddrLit16 0xd028 -- 53288
+-- | Address of Sprite 2 Color register.
 vicSprite2Color :: AddressRef; vicSprite2Color = AddrLit16 0xd029 -- 53289
+-- | Address of Sprite 3 Color register.
 vicSprite3Color :: AddressRef; vicSprite3Color = AddrLit16 0xd02a -- 53290
+-- | Address of Sprite 4 Color register.
 vicSprite4Color :: AddressRef; vicSprite4Color = AddrLit16 0xd02b -- 53291
+-- | Address of Sprite 5 Color register.
 vicSprite5Color :: AddressRef; vicSprite5Color = AddrLit16 0xd02c -- 53292
+-- | Address of Sprite 6 Color register.
 vicSprite6Color :: AddressRef; vicSprite6Color = AddrLit16 0xd02d -- 53293
+-- | Address of Sprite 7 Color register.
 vicSprite7Color :: AddressRef; vicSprite7Color = AddrLit16 0xd02e -- 53294
 
 

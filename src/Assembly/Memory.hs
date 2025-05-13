@@ -1,4 +1,5 @@
-{-# LANGUAGE PatternSynonyms #-}
+-- | Provides macros for common memory operations in 6502 assembly.
+{-# LANGUAGE PatternSynonyms, BinaryLiterals #-}
 module Assembly.Memory (
     -- Memory Operations
     addAto16bit,
@@ -53,7 +54,7 @@ dstTemp = AddrLit16 0x14 -- 2
 
 -- --- Memory Operations ---
 
--- Macro for 16-bit addition: Adds the 8-bit value in A to the 16-bit value at accAddr (low byte) and accAddr .+ 1 (high byte)
+-- | Macro for 16-bit addition: Adds the 8-bit value in A to the 16-bit value at accAddr (low byte) and accAddr .+ 1 (high byte)
 -- Uses ZP $00 as temporary storage for A. WARNING: Ensure ZP $00 is safe to use.
 addAto16bit :: AddressRef -> Asm ()
 addAto16bit accAddr = do

@@ -33,6 +33,8 @@ import System.IO (readFile, writeFile) -- Added for file operations
 import Control.Exception (try, IOException) -- Added for exception handling
 
 
+-- | Performs a single fetch-decode-execute cycle of the 6502 emulator.
+-- Returns `True` if emulation should continue, `False` if halted.
 fdxSingleCycle :: FDX Bool -- Returns True if emulation should continue, False if halted
 fdxSingleCycle = do
   -- liftIO $ putStrLn ""
@@ -64,7 +66,7 @@ newMachine = do
   let regs = mkRegisters
   return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty, debugLogPath = Nothing } -- Initialize new fields, including labelMap and debugLogPath
 
--- | The main fetch-decode-execute loop
+-- | The main fetch-decode-execute loop. Runs `fdxSingleCycle` repeatedly until emulation stops.
 runFDXLoop :: FDX ()
 runFDXLoop = do
   continue <- fdxSingleCycle
@@ -77,7 +79,7 @@ runEmulator startPC initialMachine = do
   let machineWithStartPC = initialMachine { mRegs = (mRegs initialMachine) { rPC = startPC } }
   runMachine runFDXLoop machineWithStartPC
 
--- Run the FDX monad, handling debugger state
+-- | Runs the FDX monad, handling debugger state and the main execution loop.
 runMachine :: FDX () -> Machine -> IO ((), Machine)
 runMachine debuggerLoop initialMachine = do
   liftIO $ putStrLn $ "Initial PC in runMachine: $" ++ showHex (rPC (mRegs initialMachine)) ""
@@ -85,6 +87,7 @@ runMachine debuggerLoop initialMachine = do
   saveDebuggerState finalMachine -- Save debugger state on exit
   return (result, finalMachine)
   where
+    -- | The inner loop that manages debugger activation and instruction execution.
     runLoop :: FDX () -> FDX ()
     runLoop debuggerLoopAction = do
       machine <- get
@@ -118,7 +121,8 @@ runMachine debuggerLoop initialMachine = do
                     else
                       runLoop debuggerLoopAction -- Continue the main runLoop (execute next instruction)
 
--- | Sets up the initial state of the machine, including registers and memory
+-- | Sets up the initial state of the machine, including registers and memory.
+-- It also loads debugger state and symbol files if paths are provided.
 -- Note: This function no longer sets the PC, as it's handled by runEmulator
 setupMachine :: Machine -> [(Word16, Word8)] -> Maybe FilePath -> Maybe FilePath -> IO Machine
 setupMachine initialMachine memoryWrites maybeSymPath maybeDebugLogPath = do
@@ -137,7 +141,7 @@ setupMachine initialMachine memoryWrites maybeSymPath maybeDebugLogPath = do
     Just symPath -> snd <$> runStateT (unFDX $ loadSymbolFile symPath) machineWithLoadedState
     Nothing -> return machineWithLoadedState
 
-
+-- | Runs an emulation test with the given start address, load address, and bytecode.
 runTest :: Word16 -> Word16 -> [Word8] -> IO ()
 runTest startAddress actualLoadAddress byteCode = do
   putStrLn $ "Running emulation test starting at $" ++ showHex startAddress ""
@@ -160,7 +164,8 @@ runTest startAddress actualLoadAddress byteCode = do
     putStrLn $ "Instructions Executed: " ++ show (instructionCount finalMachine)
 
 
--- | Initializes the emulator with the given starting address and bytecode, then enters interactive debugger mode
+-- | Initializes the emulator with the given starting address and bytecode, then enters interactive debugger mode.
+-- It also loads symbol files if a path is provided.
 runDebugger :: Word16 -> Word16 -> [Word8] -> Maybe FilePath -> IO Machine
 runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
   putStrLn $ "Initializing debugger with code starting at $" ++ showHex startAddress ""
@@ -180,10 +185,11 @@ runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
     (_, finalMachine) <- runMachine (interactiveLoopHelper "") machineWithStartPC
     return finalMachine
 
-
+-- | The main interactive debugger loop.
 interactiveDebuggerLoop :: FDX ()
 interactiveDebuggerLoop = interactiveLoopHelper "" -- Start with no last command
 
+-- | Helper function for the interactive debugger loop, handling command input and execution.
 interactiveLoopHelper :: String -> FDX ()
 interactiveLoopHelper lastCommand = do
   machine <- get
@@ -283,9 +289,11 @@ interactiveLoopHelper lastCommand = do
         liftIO $ putStrLn "Invalid command."
         interactiveLoopHelper lastCommand -- Don't update last command on invalid input
 
+-- | Prompts the user for input in the debugger.
 prompt :: String -> IO String
 prompt msg = putStr msg >> hFlush stdout >> getLine
 
+-- | Handles breakpoint commands in the debugger.
 handleBreak :: [String] -> String -> FDX ()
 handleBreak args lastCommand = do
   machine <- get
@@ -316,6 +324,7 @@ handleBreak args lastCommand = do
       liftIO $ putStrLn "Invalid use of breakpoint command. Use 'bk' or 'break' to list, or 'bk <address>' to add/remove."
       interactiveLoopHelper lastCommand
 
+-- | Handles memory trace commands in the debugger.
 handleMemTrace :: [String] -> String -> FDX ()
 handleMemTrace args lastCommand = do
   machine <- get
@@ -373,18 +382,19 @@ handleMemTrace args lastCommand = do
       liftIO $ putStrLn "Invalid use of memory trace command. Use 'mem' or 'm' to list, 'mem <start> <end>' to add/remove without name, or 'mem <start> <end> <name>' to add/remove with name."
       interactiveLoopHelper lastCommand
 
--- Helper function to safely parse a hex string to Maybe Word8
+-- | Helper function to safely parse a hex string to Maybe Word8.
 parseHexByte :: String -> Maybe Word8
 parseHexByte s = case readHex s of
   [(val, "")] | val >= 0 && val <= 255 -> Just (fromInteger val) -- Ensure value fits in Word8
   _           -> Nothing
 
--- Helper function to safely parse a hex string to Maybe Word16
+-- | Helper function to safely parse a hex string to Maybe Word16.
 parseHexWord :: String -> Maybe Word16
 parseHexWord s = case readHex s of
   [(val, "")] | val >= 0 && val <= 65535 -> Just (fromInteger val) -- Ensure value fits in Word16
   _           -> Nothing
 
+-- | Handles the fill memory command in the debugger.
 handleFill :: [String] -> String -> FDX ()
 handleFill args lastCommand = do
   case args of
@@ -417,7 +427,7 @@ handleFill args lastCommand = do
       liftIO $ putStrLn "Invalid use of fill command. Use 'fill <start> <end> <byte1> [byte2...]'"
       interactiveLoopHelper lastCommand
 
--- Generic handler for setting 8-bit registers
+-- | Generic handler for setting 8-bit registers in the debugger.
 handleSetReg8 :: (Registers -> Word8 -> Registers) -> String -> String -> String -> FDX ()
 handleSetReg8 regSetter valStr regName lastCommand = do
     case parseHexByte valStr of
@@ -429,7 +439,7 @@ handleSetReg8 regSetter valStr regName lastCommand = do
             liftIO $ putStrLn $ "Invalid hex value for " ++ regName ++ "."
             interactiveLoopHelper lastCommand
 
--- Specific handler for setting the 16-bit PC
+-- | Specific handler for setting the 16-bit PC in the debugger.
 handleSetPC :: String -> String -> FDX ()
 handleSetPC valStr lastCommand = do
     case parseHexWord valStr of
@@ -441,7 +451,7 @@ handleSetPC valStr lastCommand = do
             liftIO $ putStrLn "Invalid hex value for PC."
             interactiveLoopHelper lastCommand
 
--- Handler for disassembling 32 instructions
+-- | Handler for disassembling instructions in the debugger.
 handleDisassemble :: [String] -> String -> FDX ()
 handleDisassemble args lastCommand = do
     machine <- get
@@ -455,7 +465,7 @@ handleDisassemble args lastCommand = do
     modify (\m -> m { lastDisassembledAddr = finalAddr }) -- Update last disassembled address
     interactiveLoopHelper lastCommand
 
--- Helper function to disassemble multiple instructions
+-- | Helper function to disassemble multiple instructions and print them.
 disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address after the last disassembled instruction
 disassembleInstructions currentPC 0 = return currentPC
 disassembleInstructions currentPC remaining = do
@@ -473,7 +483,7 @@ disassembleInstructions currentPC remaining = do
     disassembleInstructions nextPC (remaining - 1)
 
 
--- | Saves the current debugger state (breakpoints and memory trace blocks) to a file
+-- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
 saveDebuggerState :: Machine -> IO ()
 saveDebuggerState machine =
     case debugLogPath machine of
@@ -491,7 +501,7 @@ saveDebuggerState machine =
         Nothing -> return () -- No debug log path specified
 
 
--- | Loads debugger state (breakpoints and memory trace blocks) from a file
+-- | Loads debugger state (breakpoints and memory trace blocks) from a file.
 loadDebuggerState :: FilePath -> IO ([Word16], [(Word16, Word16, Maybe String)])
 loadDebuggerState filePath = liftIO $ do
     fileContentOrError <- try (readFile filePath)
@@ -506,15 +516,19 @@ loadDebuggerState filePath = liftIO $ do
             putStrLn $ "Loaded debugger state from: " ++ filePath
             return (breakpoints, memBlocks)
   where
+    -- | Parses breakpoint addresses from lines of text.
     parseBreakpoints :: [String] -> [Word16]
     parseBreakpoints = concatMap (parseWords . drop 1 . words) . filter (("breakpoints:" ==) . head . words)
 
+    -- | Parses memory trace block definitions from lines of text.
     parseMemBlocks :: [String] -> [(Word16, Word16, Maybe String)]
     parseMemBlocks = concatMap (parseBlock . drop 1 . words) . filter (("memory_trace_blocks:" ==) . head . words)
 
+    -- | Parses hexadecimal words from a list of strings.
     parseWords :: [String] -> [Word16]
     parseWords = mapMaybe (fmap fst . listToMaybe . readHex)
 
+    -- | Parses a single memory trace block definition from a list of strings.
     parseBlock :: [String] -> [(Word16, Word16, Maybe String)]
     parseBlock [] = []
     parseBlock (startStr:endStr:rest) =

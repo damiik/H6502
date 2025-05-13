@@ -1,3 +1,4 @@
+-- | Provides macros for common list operations in 6502 assembly.
 module Assembly.List (
     -- List operations
     iterateWithIndexList,
@@ -26,13 +27,13 @@ import Assembly.EDSLInstr
 import Assembly.Macros (addAto16bit) -- Import the updated macro
 import Prelude
 
--- List creation
+-- | Creates an empty list by setting the length byte to 0.
 createList_ :: AddressRef -> Asm ()
 createList_ addr = do
     lda# 0x00
     sta addr
 
-
+-- | Creates a list with a label and initializes the length to 0.
 createList :: String -> Asm AddressRef
 createList s = do
     l_ s          -- Define the label 's' at the current address
