@@ -7,6 +7,8 @@
 module MOS6502Emulator.Machine
 (Machine(..)
  ,AddressMode(..)
+ ,DebuggerMode(..) -- Export DebuggerMode
+ ,interactiveLoopHelper
 
 ,FDX (..)
 
@@ -21,7 +23,14 @@ module MOS6502Emulator.Machine
 ,writeByteMem
 ,mkWord
 ,toWord
-,loadSymbolFile -- Export new function
+,loadSymbolFile
+,setPC_
+,setAC_
+,setX_
+,setY_
+,setSR_
+,setSP_
+,writeByteMem_
 ) where
 
 -- import MonadLib
@@ -29,7 +38,7 @@ module MOS6502Emulator.Machine
 
 import MOS6502Emulator.Memory (Memory)
 import qualified MOS6502Emulator.Memory as Mem
-import MOS6502Emulator.Registers (Registers, rPC) -- Import rPC
+import MOS6502Emulator.Registers (Registers, rPC, rAC, rX, rY, rSR, rSP) -- Import rPC
 import Control.Monad.Trans.Class (lift)  -- Import lift
 import Control.Monad.Trans.State (StateT, runStateT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -41,6 +50,9 @@ import qualified Data.Map.Strict as Map -- Added for labelMap
 import System.IO (readFile) -- For reading the symbol file
 import Control.Exception (try, IOException) -- For error handling
 
+
+-- | Data type to represent the debugger mode
+data DebuggerMode = CommandMode | VimMode deriving (Show, Eq)
 
 -- | Creates a 16-bit Word from a low byte and a high byte.
 -- In this context, "Word" in an identifier name
@@ -75,6 +87,10 @@ data Machine = Machine
   , lastDisassembledAddr :: Word16 -- ^ The address of the last disassembled instruction.
   , labelMap             :: Map.Map Word16 String -- ^ A map from addresses to labels.
   , debugLogPath         :: Maybe FilePath -- ^ The path for debugger state persistence.
+  , debuggerMode         :: DebuggerMode -- ^ The current mode of the debugger.
+  , pcHistory            :: [Word16] -- ^ History of the Program Counter for stepping back.
+  , redoHistory          :: [Word16] -- ^ History of the Program Counter for stepping forward (after stepping back).
+  , storedAddresses      :: Map.Map Char Word16 -- ^ A map of named stored addresses.
   }
 
 -- | Represents the fetch-decode-execute monad for the emulator.
@@ -189,3 +205,77 @@ loadSymbolFile filePath = do
                     [(addr, "")] -> Map.insert addr (unwords nameRest) acc
                     _            -> acc -- Failed to parse address
             _ -> acc -- Line doesn't fit format
+
+-- | Starts the debugger loop in the current debugger mode.
+runDebugger :: FDX ()
+runDebugger = do
+    modify' $ \m -> m { debuggerActive = True }
+    interactiveLoopHelper ""
+
+-- | Helper function for the interactive debugger loop, handling command input and execution.
+interactiveLoopHelper :: String -> FDX ()
+interactiveLoopHelper lastCommand = do
+    m <- get
+    let mode = debuggerMode m
+    liftIO $ putStr $ if mode == VimMode then "(Vim) " else "(Cmd) "
+    liftIO $ putStrLn "Enter debugger command (step, continue, break, help, etc.):"
+    input <- liftIO getLine
+    let cmd = if null input then lastCommand else input
+    case words cmd of
+        [] -> interactiveLoopHelper lastCommand
+        ("step":_) -> do
+            -- Single step implementation
+            liftIO $ putStrLn "Stepping one instruction..."
+            -- Actual step logic would go here
+            interactiveLoopHelper cmd
+        ("continue":_) -> do
+            -- Continue execution
+            liftIO $ putStrLn "Continuing execution..."
+            modify' $ \m' -> m' { debuggerActive = False }
+        ("break":addrStr:_) -> case readHex addrStr of
+            [(addr, "")] -> do
+                modify' $ \m' -> m' { breakpoints = addr : breakpoints m' }
+                liftIO $ putStrLn $ "Breakpoint set at $" ++ showHex addr ""
+                interactiveLoopHelper cmd
+            _ -> do
+                liftIO $ putStrLn "Invalid address format"
+                interactiveLoopHelper cmd
+        ("help":_) -> do
+            liftIO $ putStrLn "Available commands:"
+            liftIO $ putStrLn "step - Execute one instruction"
+            liftIO $ putStrLn "continue - Continue execution"
+            liftIO $ putStrLn "break <addr> - Set breakpoint at address"
+            liftIO $ putStrLn "help - Show this help"
+            interactiveLoopHelper cmd
+        _ -> do
+            liftIO $ putStrLn $ "Unknown command: " ++ input
+            interactiveLoopHelper lastCommand
+
+-- | Sets the Program Counter register.
+setPC_ :: Word16 -> FDX ()
+setPC_ val = modify' $ \m -> m { mRegs = (mRegs m) { rPC = val } }
+
+-- | Sets the Accumulator register.
+setAC_ :: Word8 -> FDX ()
+setAC_ val = modify' $ \m -> m { mRegs = (mRegs m) { rAC = val } }
+
+-- | Sets the X register.
+setX_ :: Word8 -> FDX ()
+setX_ val = modify' $ \m -> m { mRegs = (mRegs m) { rX = val } }
+
+-- | Sets the Y register.
+setY_ :: Word8 -> FDX ()
+setY_ val = modify' $ \m -> m { mRegs = (mRegs m) { rY = val } }
+
+-- | Sets the Status Register.
+setSR_ :: Word8 -> FDX ()
+setSR_ val = modify' $ \m -> m { mRegs = (mRegs m) { rSR = val } }
+
+-- | Sets the Stack Pointer register.
+setSP_ :: Word8 -> FDX ()
+setSP_ val = modify' $ \m -> m { mRegs = (mRegs m) { rSP = val } }
+
+-- | Writes a byte to the provided address in memory.
+-- This is a direct state modification function, distinct from instruction-based writes.
+writeByteMem_ :: Word16 -> Word8 -> FDX ()
+writeByteMem_ addr b = modify' $ \m -> m { mMem = Mem.writeBytePure addr b (mMem m) }

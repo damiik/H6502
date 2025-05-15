@@ -11,27 +11,30 @@ module MOS6502Emulator
   , instructionCount -- Export instructionCount
   , saveDebuggerState -- Export save function
   , loadDebuggerState -- Export load function
+  , DebuggerMode(..) -- Export DebuggerMode
   ) where
 
-import MOS6502Emulator.Machine
+import MOS6502Emulator.Machine (Machine(..), FDX(..), getRegisters, instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, loadSymbolFile, setPC_, setAC_, setX_, setY_, setSR_, setSP_, writeByteMem_, DebuggerMode(..)) -- Import DebuggerMode from Machine
 import MOS6502Emulator.Instructions
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
-import MOS6502Emulator.Debugger
+import qualified MOS6502Emulator.Debugger as D
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
 import Control.Monad.State (get, modify, put, gets, runStateT) -- Import runStateT
-import Control.Monad (when, unless) -- Import the 'when' function
+import Control.Monad (when, unless, void) -- Import the 'when', 'unless', and 'void' functions
 import Control.Monad.IO.Class (liftIO)
 import Data.Word ( Word8, Word16 )
 import Numeric (showHex, readHex) -- Import showHex and readHex
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, stdout, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, getChar) -- Import hSetBuffering, BufferMode, stdin, hReady, getChar, LineBuffering
 import Data.List (stripPrefix, cycle, take) -- Import stripPrefix, cycle, take
-import Data.Maybe (mapMaybe, listToMaybe) -- Import mapMaybe and listToMaybe
+import Data.Maybe (mapMaybe, listToMaybe, isNothing) -- Import mapMaybe, listToMaybe, and isNothing
 import Data.Bits (Bits, (.&.)) -- Import Bits for status register manipulation if needed
 import qualified Data.Map.Strict as Map -- For Map.empty
 import System.IO (readFile, writeFile) -- Added for file operations
 import Control.Exception (try, IOException) -- Added for exception handling
-
+import System.IO.Error (isEOFError) -- Import isEOFError
+import Control.Exception (catch) -- Import catch
+import Text.Printf
 
 -- | Performs a single fetch-decode-execute cycle of the 6502 emulator.
 -- Returns `True` if emulation should continue, `False` if halted.
@@ -53,18 +56,19 @@ fdxSingleCycle = do
         disassembled <- disassembleInstruction currentPC -- Use the stored PC
         liftIO $ putStrLn ""
         liftIO $ putStrLn (fst disassembled)
-        logRegisters =<< getRegisters
+        D.logRegisters =<< getRegisters
         -- Log all memory trace blocks
-        mapM_ (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machineState)
+        mapM_ (\(start, end, name) -> D.logMemoryRange start end name) (memoryTraceBlocks machineState)
       gets (not . halted)
 
 
+-- | Initializes a new 6502 machine state
 -- | Initializes a new 6502 machine state
 newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty, debugLogPath = Nothing } -- Initialize new fields, including labelMap and debugLogPath
+  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty, debugLogPath = Nothing, debuggerMode = CommandMode, pcHistory = [], storedAddresses = Map.empty, redoHistory = [] } -- Initialize new fields, including debuggerMode, pcHistory, storedAddresses, and redoHistory
 
 -- | The main fetch-decode-execute loop. Runs `fdxSingleCycle` repeatedly until emulation stops.
 runFDXLoop :: FDX ()
@@ -126,20 +130,21 @@ runMachine debuggerLoop initialMachine = do
 -- Note: This function no longer sets the PC, as it's handled by runEmulator
 setupMachine :: Machine -> [(Word16, Word8)] -> Maybe FilePath -> Maybe FilePath -> IO Machine
 setupMachine initialMachine memoryWrites maybeSymPath maybeDebugLogPath = do
-  mem <- foldr (\(addr, val) acc -> acc >>= \m -> writeByte addr val m >> return m) (return $ mMem initialMachine) memoryWrites
-  let machineWithMem = initialMachine { mMem = mem, debugLogPath = maybeDebugLogPath } -- Set debugLogPath here
+    mem <- foldr (\(addr, val) acc -> acc >>= \m -> writeByte addr val m >> return m) (return $ mMem initialMachine) memoryWrites
+    let machineWithMem = initialMachine { mMem = mem, debugLogPath = maybeDebugLogPath } -- Set debugLogPath here
 
-  -- Load debugger state if path is provided
-  (loadedBreakpoints, loadedMemBlocks) <- case maybeDebugLogPath of
-    Just logPath -> loadDebuggerState logPath
-    Nothing -> return ([], [])
+    -- Load debugger state if p:220
+    -- ath is provided
+    (loadedBreakpoints, loadedMemBlocks) <- case maybeDebugLogPath of
+      Just logPath -> loadDebuggerState logPath
+      Nothing -> return ([], [])
 
-  let machineWithLoadedState = machineWithMem { breakpoints = loadedBreakpoints, memoryTraceBlocks = loadedMemBlocks }
+    let machineWithLoadedState = machineWithMem { breakpoints = loadedBreakpoints, memoryTraceBlocks = loadedMemBlocks }
 
-  -- Load symbol file if path is provided
-  case maybeSymPath of
-    Just symPath -> snd <$> runStateT (unFDX $ loadSymbolFile symPath) machineWithLoadedState
-    Nothing -> return machineWithLoadedState
+    -- Load symbol file if path is provided
+    case maybeSymPath of
+      Just symPath -> snd <$> runStateT (unFDX $ loadSymbolFile symPath) machineWithLoadedState
+      Nothing -> return machineWithLoadedState
 
 -- | Runs an emulation test with the given start address, load address, and bytecode.
 runTest :: Word16 -> Word16 -> [Word8] -> IO ()
@@ -194,31 +199,46 @@ interactiveLoopHelper :: String -> FDX ()
 interactiveLoopHelper lastCommand = do
   machine <- get
   unless (halted machine) $ do
-    cmd <- liftIO $ prompt "> "
-    let commandToExecute = if null cmd then lastCommand else cmd
-    let handleStep = fdxSingleCycle >> interactiveLoopHelper commandToExecute
-    let handleRegs = (logRegisters =<< getRegisters) >> interactiveLoopHelper commandToExecute
-    let handleTrace = do
-          let newTraceState = not (enableTrace machine)
-          put (machine { enableTrace = newTraceState })
-          liftIO $ putStrLn $ "Tracing " ++ if newTraceState then "enabled." else "disabled."
-          interactiveLoopHelper commandToExecute
+    case debuggerMode machine of
+      CommandMode -> do
+        cmd <- liftIO $ prompt "> "
+        let commandToExecute = if null cmd then lastCommand else cmd
+        handleCommand commandToExecute
+        interactiveLoopHelper commandToExecute
+      VimMode -> do
+        liftIO $ putStr "> " >> hFlush stdout
+        key <- liftIO getKey
+        handleVimKey key
+        interactiveLoopHelper lastCommand -- In Vim mode, last command is less relevant
 
-    let handleGoto addrStr = do
-          machine <- get
-          if null addrStr then do
-            liftIO $ putStrLn "Address required for goto command."
-            interactiveLoopHelper commandToExecute
-          else case readHex addrStr of
-            [(addr, "")] -> do
-              put (machine { mRegs = (mRegs machine) { rPC = addr } })
-              liftIO $ putStrLn $ "PC set to $" ++ showHex addr ""
-              interactiveLoopHelper commandToExecute
-            _ -> do
-              liftIO $ putStrLn "Invalid address format."
-              interactiveLoopHelper commandToExecute
+-- | Handles commands in CommandMode.
+handleCommand :: String -> FDX ()
+handleCommand commandToExecute = do
+  machine <- get
+  let handleStep :: FDX ()
+      handleStep = void fdxSingleCycle -- Use void to ignore the Bool result
+  let handleRegs :: FDX ()
+      handleRegs = D.logRegisters =<< getRegisters
+  let handleTrace :: FDX ()
+      handleTrace = do
+        let newTraceState = not (enableTrace machine)
+        put (machine { enableTrace = newTraceState })
+        liftIO $ putStrLn $ "Tracing " ++ if newTraceState then "enabled." else "disabled."
 
-    let handleHelp = liftIO $ putStrLn "Available commands:\n\
+  let handleGoto :: String -> FDX ()
+      handleGoto addrStr = do
+        machine <- get
+        if null addrStr then do
+          liftIO $ putStrLn "Address required for goto command."
+        else case readHex addrStr of
+          [(addr, "")] -> do
+            put (machine { mRegs = (mRegs machine) { rPC = addr } })
+            liftIO $ putStrLn $ "PC set to $" ++ showHex addr ""
+          _ -> do
+            liftIO $ putStrLn "Invalid address format."
+
+  let handleHelp :: FDX ()
+      handleHelp = liftIO $ putStrLn "Available commands:\n\
 \step  / z:              execute one instruction cycle\n\
 \regs  / r:              show current register values\n\
 \mem   / m [addr] [end]: add/remove memory range to dispaly\n\
@@ -235,63 +255,228 @@ interactiveLoopHelper lastCommand = do
 \rsr <val>:             set Status Register to hex value\n\
 \rpc <val>:             set Program Counter to hex value\n\
 \d:                     disassemble 32 instructions from current PC"
-    case words commandToExecute of
-      ["help"] -> handleHelp >> interactiveLoopHelper commandToExecute
-      ["h"] -> handleHelp >> interactiveLoopHelper commandToExecute
-      ["goto", addrStr] -> handleGoto addrStr
-      ["g", addrStr] -> handleGoto addrStr
-      "fill":args -> handleFill args commandToExecute
-      "f":args -> handleFill args commandToExecute -- Alias for fill
-      ["step"] -> handleStep
-      ["z"] -> handleStep
-      ["regs"] -> handleRegs
-      ["r"] -> handleRegs
-      "mem":args -> handleMemTrace args commandToExecute
-      "m":args -> handleMemTrace args commandToExecute -- Alias for mem
-      ["log"] -> do
-        -- Need to get the specific memory trace block to log, or just log all of them?
-        -- Based on current behavior, it logs the single range stored in traceMemoryStart/End.
-        -- Let's assume 'log' without args logs all named/unnamed blocks.
-        -- If they want to log the single range, they can use 'mem <start> <end>'.
-        mapM_ (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machine)
-        interactiveLoopHelper commandToExecute
-      ["x"] -> do
-        put (machine { debuggerActive = False }) -- Exit debugger mode
-        liftIO $ putStrLn "Exiting debugger. Continuing execution."
-        -- The runLoop in runMachine will now continue with fdxSingleCycle
-      "bk":args -> handleBreak args commandToExecute
-      "break":args -> handleBreak args commandToExecute -- Alias for bk
-      ["log"] -> do
-        -- This seems like a duplicate 'log' command case. Removing this one.
-        interactiveLoopHelper commandToExecute -- Just continue the loop
-      ["q"] -> modify (\m -> m { halted = True }) -- Set halted flag
-      ["quit"] -> modify (\m -> m { halted = True }) -- Set halted flag
-      ["trace"] -> handleTrace
-      ["t"] -> handleTrace
-      ["addr-range", startAddrStr, endAddrStr] -> do
-        case (readHex startAddrStr :: [(Word16, String)], readHex endAddrStr :: [(Word16, String)]) of
-          ([(startAddr, "")], [(endAddr, "")]) -> do
-            put (machine { traceMemoryStart = startAddr, traceMemoryEnd = endAddr })
-            liftIO $ putStrLn $ "Memory trace range set to $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
-            interactiveLoopHelper commandToExecute
-          _ -> do
-            liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0200 0300)."
-            interactiveLoopHelper lastCommand
-      -- Register setting commands
-      ["ra", valStr] -> handleSetReg8 (\r val -> r { rAC = val }) valStr "Accumulator" commandToExecute
-      ["rx", valStr] -> handleSetReg8 (\r val -> r { rX = val }) valStr "X Register" commandToExecute
-      ["ry", valStr] -> handleSetReg8 (\r val -> r { rY = val }) valStr "Y Register" commandToExecute
-      ["rsp", valStr] -> handleSetReg8 (\r val -> r { rSP = val }) valStr "Stack Pointer" commandToExecute
-      ["rsr", valStr] -> handleSetReg8 (\r val -> r { rSR = val }) valStr "Status Register" commandToExecute
-      ["rpc", valStr] -> handleSetPC valStr commandToExecute
-      "d":args -> handleDisassemble args commandToExecute
-      _      -> do
-        liftIO $ putStrLn "Invalid command."
-        interactiveLoopHelper lastCommand -- Don't update last command on invalid input
+
+  case words commandToExecute of
+    ["help"] -> handleHelp
+    ["h"] -> handleHelp
+    ["goto", addrStr] -> handleGoto addrStr
+    ["g", addrStr] -> handleGoto addrStr
+    "fill":args -> handleFill args commandToExecute -- Pass lastCommand for recursive calls if needed, though fill doesn't use it
+    "f":args -> handleFill args commandToExecute -- Alias for fill
+    ["step"] -> handleStep
+    ["z"] -> handleStep
+    ["regs"] -> handleRegs
+    ["r"] -> handleRegs
+    "mem":args -> handleMemTrace args commandToExecute -- Pass lastCommand
+    "m":args -> handleMemTrace args commandToExecute -- Alias for mem
+    ["log"] -> do
+      mapM_ (\(start, end, name) -> D.logMemoryRange start end name) (memoryTraceBlocks machine)
+    ["x"] -> do
+      put (machine { debuggerActive = False }) -- Exit debugger mode
+      liftIO $ putStrLn "Exiting debugger. Continuing execution."
+    "bk":args -> handleBreak args commandToExecute -- Pass lastCommand
+    "break":args -> handleBreak args commandToExecute -- Alias for bk
+    ["q"] -> modify (\m -> m { halted = True }) -- Set halted flag
+    ["quit"] -> modify (\m -> m { halted = True }) -- Set halted flag
+    ["trace"] -> handleTrace
+    ["t"] -> handleTrace
+    ["addr-range", startAddrStr, endAddrStr] -> do
+      case (readHex startAddrStr :: [(Word16, String)], readHex endAddrStr :: [(Word16, String)]) of
+        ([(startAddr, "")], [(endAddr, "")]) -> do
+          put (machine { traceMemoryStart = startAddr, traceMemoryEnd = endAddr })
+          liftIO $ putStrLn $ "Memory trace range set to $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
+        _ -> do
+          liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0200 0300)."
+    -- Register setting commands
+    ["ra", valStr] -> handleSetReg8 (\r val -> r { rAC = val }) valStr "Accumulator" commandToExecute -- Pass lastCommand
+    ["rx", valStr] -> handleSetReg8 (\r val -> r { rX = val }) valStr "X Register" commandToExecute -- Pass lastCommand
+    ["ry", valStr] -> handleSetReg8 (\r val -> r { rY = val }) valStr "Y Register" commandToExecute -- Pass lastCommand
+    ["rsp", valStr] -> handleSetReg8 (\r val -> r { rSP = val }) valStr "Stack Pointer" commandToExecute -- Pass lastCommand
+    ["rsr", valStr] -> handleSetReg8 (\r val -> r { rSR = val }) valStr "Status Register" commandToExecute -- Pass lastCommand
+    ["rpc", valStr] -> handleSetPC valStr commandToExecute -- Pass lastCommand
+    "d":args -> handleDisassemble args commandToExecute -- Pass lastCommand
+    ["v"] ->       put (machine { debuggerMode = VimMode })
+    _      -> do
+      liftIO $ putStrLn "Invalid command."
+
+-- | Handles key presses in VimMode.
+handleVimKey :: Char -> FDX ()
+handleVimKey key = do
+  machine <- get
+  case key of
+    '\ESC' -> do
+      liftIO $ putStrLn "\nExiting Vim mode."
+      liftIO $ hSetBuffering stdin LineBuffering -- Restore line buffering
+      put (machine { debuggerMode = CommandMode })
+    'y' -> do
+      liftIO $ putStrLn "\nStep forward..."
+      -- Save current PC to history before stepping
+      modify (\m -> m { pcHistory = rPC (mRegs m) : pcHistory m })
+      _ <- fdxSingleCycle -- Execute one instruction and capture result
+      return () -- Result already handled by fdxSingleCycle
+    'k' -> do
+      liftIO $ putStrLn "\nStep backward..."
+      case pcHistory machine of
+        [] -> liftIO $ putStrLn "No PC history to step back."
+        (prevPC:restHistory) -> do
+          put (machine { mRegs = (mRegs machine) { rPC = prevPC }, pcHistory = restHistory })
+          liftIO $ putStrLn $ "PC set to $" ++ showHex prevPC ""
+          -- Re-disassemble at the new PC
+          finalAddr <- disassembleInstructions prevPC 1
+          modify (\m -> m { lastDisassembledAddr = finalAddr })
+          -- Add current PC to redo history
+          modify (\m -> m { redoHistory = rPC (mRegs m) : redoHistory m })
+    'r' -> do
+      liftIO $ putStrLn "\nRegisters:"
+      D.logRegisters =<< getRegisters
+      -- Show flag bits in human-readable format
+      let sr = rSR $ mRegs machine
+      liftIO $ putStrLn $ "Flags: " ++ D.formatStatusFlags sr
+    'm' -> do
+      liftIO $ putStrLn "\n--- Memory Trace Blocks ---"
+      if null (memoryTraceBlocks machine)
+        then liftIO $ putStrLn "No memory trace blocks defined."
+        else mapM_ (\(start, end, name) ->
+                      liftIO $ putStrLn $ "  $" ++ showHex start "" ++ " - $" ++ showHex end "" ++
+                                           case name of
+                                               Just n -> " (" ++ n ++ ")"
+                                               Nothing -> "")
+                    (memoryTraceBlocks machine)
+      liftIO $ putStrLn "---------------------------"
+      liftIO $ putStrLn "  m + a: Add block, m + d: Delete block, m + e: Edit block" -- Updated help
+    'b' -> do
+      liftIO $ putStrLn "\n--- Breakpoints ---"
+      if null (breakpoints machine)
+        then liftIO $ putStrLn "No breakpoints defined."
+        else mapM_ (\bp -> liftIO $ putStrLn $ "  $" ++ showHex bp "") (breakpoints machine)
+      liftIO $ putStrLn "-------------------"
+      -- TODO: Add sub-commands for adding/removing breakpoints (e.g., 'ba' to add, 'bd' to delete)
+    'a' -> do
+      liftIO $ putStrLn "\n--- Stored Addresses ---"
+      if Map.null (storedAddresses machine)
+        then liftIO $ putStrLn "No stored addresses defined."
+        else mapM_ (\(key, addr) -> liftIO $ putStrLn $ "  '" ++ [key] ++ ": $" ++ showHex addr "") (Map.toList (storedAddresses machine))
+      liftIO $ putStrLn "----------------------"
+      liftIO $ putStrLn "  a + s: Store address, a + g: Goto address" -- Add help for sub-commands
+      -- TODO: Implement stored addresses commands (e.g., 'as' to store, 'ag' to goto)
+    'q' -> do
+      liftIO $ putStrLn "\nQuitting..."
+      modify (\m -> m { halted = True }) -- Set halted flag
+    'm' -> handleMemTraceVim -- Delegate to a new handler for 'm' sub-commands
+    'b' -> handleBreakVim -- Delegate to a new handler for 'b' sub-commands
+    'a' -> handleAddressVim -- Delegate to a new handler for 'a' sub-commands
+    _ -> do
+      liftIO $ putStrLn $ "\nUnknown Vim key: " ++ [key]
+      liftIO $ putStrLn "Available keys: y (step), k (back), r (regs), m (mem), b (break), a (addr), q (quit), ESC (cmd mode)"
+
+-- | Handles 'm' sub-commands in VimMode.
+handleMemTraceVim :: FDX ()
+handleMemTraceVim = do
+  liftIO $ putStrLn "\nMemory Trace (a: add, d: delete):"
+  key <- liftIO getKey
+  case key of
+    'a' -> do
+      liftIO $ putStr "Add Memory Trace Block (start end [name]): " >> hFlush stdout
+      input <- liftIO getLine
+      let args = words input
+      case args of
+        [startAddrStr, endAddrStr] -> do
+          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+            (Just startAddr, Just endAddr) -> do
+              modify (\m -> m { memoryTraceBlocks = (startAddr, endAddr, Nothing) : memoryTraceBlocks m })
+              liftIO $ putStrLn $ "Memory trace block added: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
+            _ -> liftIO $ putStrLn "Invalid address format."
+        startAddrStr:endAddrStr:nameWords -> do
+          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+            (Just startAddr, Just endAddr) -> do
+              let name = unwords nameWords
+              modify (\m -> m { memoryTraceBlocks = (startAddr, endAddr, Just name) : memoryTraceBlocks m })
+              liftIO $ putStrLn $ "Memory trace block added: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr "" ++ " (" ++ name ++ ")"
+            _ -> liftIO $ putStrLn "Invalid address format."
+        _ -> liftIO $ putStrLn "Invalid arguments for adding memory trace block."
+    'd' -> do
+      liftIO $ putStr "Delete Memory Trace Block (start end [name]): " >> hFlush stdout
+      input <- liftIO getLine
+      let args = words input
+      case args of
+        [startAddrStr, endAddrStr] -> do
+          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+            (Just startAddr, Just endAddr) -> do
+              modify (\m -> m { memoryTraceBlocks = filter (\(s, e, n) -> not (s == startAddr && e == endAddr && isNothing n)) (memoryTraceBlocks m) })
+              liftIO $ putStrLn $ "Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
+            _ -> liftIO $ putStrLn "Invalid address format."
+        startAddrStr:endAddrStr:nameWords -> do
+          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+            (Just startAddr, Just endAddr) -> do
+              let name = unwords nameWords
+              modify (\m -> m { memoryTraceBlocks = filter (\(s, e, n) -> not (s == startAddr && e == endAddr && Just name == n)) (memoryTraceBlocks m) })
+              liftIO $ putStrLn $ "Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr "" ++ " (" ++ name ++ ")"
+            _ -> liftIO $ putStrLn "Invalid address format."
+        _ -> liftIO $ putStrLn "Invalid arguments for deleting memory trace block."
+    _ -> liftIO $ putStrLn "Invalid Memory Trace command. Press 'm' to view blocks."
+
+-- | Handles 'b' sub-commands in VimMode.
+handleBreakVim :: FDX ()
+handleBreakVim = do
+  liftIO $ putStrLn "\nBreakpoints (a: add, d: delete):"
+  key <- liftIO getKey
+  case key of
+    'a' -> do
+      liftIO $ putStrLn "Add Breakpoint (address):"
+      input <- liftIO getLine
+      let args = words input
+      handleBreak args "" -- Reuse handleBreak logic
+    'd' -> do
+      liftIO $ putStrLn "Delete Breakpoint (address):"
+      input <- liftIO getLine
+      let args = words input
+      handleBreak args "" -- Reuse handleBreak logic
+    _ -> liftIO $ putStrLn "Invalid Breakpoint command."
+
+-- | Handles 'a' sub-commands in VimMode (Stored Addresses).
+handleAddressVim :: FDX ()
+handleAddressVim = do
+  liftIO $ putStrLn "\nStored Addresses (s: store, g: goto):"
+  key <- liftIO getKey
+  case key of
+    's' -> do
+      liftIO $ putStrLn "Store Current PC (key):"
+      keyChar <- liftIO getKey
+      machine <- get
+      let currentPC = rPC (mRegs machine)
+      modify (\m -> m { storedAddresses = Map.insert keyChar currentPC (storedAddresses m) })
+      liftIO $ putStrLn $ "Stored PC $" ++ showHex currentPC "" ++ " at key '" ++ [keyChar] ++ "'"
+    'g' -> do
+      liftIO $ putStrLn "Goto Stored Address (key):"
+      keyChar <- liftIO getKey
+      machine <- get
+      case Map.lookup keyChar (storedAddresses machine) of
+        Just addr -> do
+          put (machine { mRegs = (mRegs machine) { rPC = addr } })
+          liftIO $ putStrLn $ "PC set to $" ++ showHex addr ""
+          -- Re-disassemble at the new PC
+          finalAddr <- disassembleInstructions addr 1
+          modify (\m -> m { lastDisassembledAddr = finalAddr })
+        Nothing -> liftIO $ putStrLn $ "No address stored at key '" ++ [keyChar] ++ "'"
+    _ -> liftIO $ putStrLn "Invalid Stored Address command."
+
 
 -- | Prompts the user for input in the debugger.
 prompt :: String -> IO String
-prompt msg = putStr msg >> hFlush stdout >> getLine
+prompt msg = liftIO $ do
+  putStr msg
+  hFlush stdout
+  getLine
+
+-- | Reads a single character from stdin without buffering.
+getKey :: IO Char
+getKey = catch
+  (do
+    hSetBuffering stdin NoBuffering
+    c <- getChar
+    return c
+  )
+  (\e -> if isEOFError e then return '\n' else ioError e) -- Handle EOF (e.g., Ctrl+D)
 
 -- | Handles breakpoint commands in the debugger.
 handleBreak :: [String] -> String -> FDX ()
@@ -484,21 +669,24 @@ disassembleInstructions currentPC remaining = do
 
 
 -- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
+-- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
+-- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
+-- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
+-- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
 saveDebuggerState :: Machine -> IO ()
-saveDebuggerState machine =
-    case debugLogPath machine of
-        Just filePath -> liftIO $ do
-            let breakpointsStr = "breakpoints: " ++ unwords (map (\bp -> showHex bp "") (breakpoints machine))
-            let memBlocksStr = "memory_trace_blocks: " ++ unlines (map (\(start, end, name) ->
-                                                                        showHex start "" ++ " " ++ showHex end "" ++
-                                                                        case name of
-                                                                            Just n -> " " ++ n
-                                                                            Nothing -> "")
-                                                                   (memoryTraceBlocks machine))
-            try (writeFile filePath (breakpointsStr ++ "\n" ++ memBlocksStr)) >>= \case
-                Left e -> putStrLn $ "Error saving debugger state: " ++ show (e :: IOException)
-                Right _ -> putStrLn $ "Debugger state saved to: " ++ filePath
-        Nothing -> return () -- No debug log path specified
+saveDebuggerState machine = case debugLogPath machine of
+    Just filePath -> liftIO $ do
+        let breakpointsStr = "breakpoints: " ++ unwords [printf "%04X" bp | bp <- breakpoints machine]
+        let memBlocksStr = "memory_trace_blocks: " ++ unlines (map (\(start, end, name) ->
+                                                                    printf "%04X %04X" start end ++
+                                                                    case name of
+                                                                        Just n -> " " ++ n
+                                                                        Nothing -> "")
+                                                               (memoryTraceBlocks machine))
+        try (writeFile filePath (breakpointsStr ++ "\n" ++ memBlocksStr)) >>= \case
+            Left e -> putStrLn $ "Error saving debugger state: " ++ show (e :: IOException)
+            Right _ -> putStrLn $ "Debugger state saved to: " ++ filePath
+    Nothing -> return () -- No debug log path specified
 
 
 -- | Loads debugger state (breakpoints and memory trace blocks) from a file.
