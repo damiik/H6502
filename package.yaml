@@ -69,6 +69,8 @@ library:
   - MOS6502Emulator.Instructions
   - MOS6502Emulator.Debugger
   - MOS6502Emulator.DissAssembler
+  - MOS6502Emulator.Core
+  - MOS6502Emulator.Debugger.VimMode
   other-modules:
   - C64.HelloWorld  # reexported by C64.Examples
   - C64.HorizontalBars # reexported by C64.Examples

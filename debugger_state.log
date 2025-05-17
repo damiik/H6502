@@ -1,2 +1,2 @@
 breakpoints: 1058 104E 112C
-memory_trace_blocks: 0200 020F listAddr
+memory_trace_blocks: 2000 2000 a

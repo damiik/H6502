@@ -1,14 +1,23 @@
--- | Defines the core types and state for the MOS 6502 emulator machine.
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+-- | Defines the core types and state for the MOS 6502 emulator machine.
 module MOS6502Emulator.Machine
 (Machine(..)
  ,AddressMode(..)
  ,DebuggerMode(..) -- Export DebuggerMode
- ,interactiveLoopHelper
+ ,DebuggerAction(ContinueLoop, ExecuteStep, ExitDebugger, QuitEmulator, NoAction, SwitchToVimMode, SwitchToCommandMode) -- Export DebuggerAction constructors
+ ,rPC -- Export rPC field from Registers (needed in VimMode via Machine)
+ ,mRegs -- Export mRegs field from Machine
+ ,pcHistory -- Export pcHistory field from Machine
+ ,redoHistory -- Export redoHistory field from Machine
+ ,breakpoints -- Export breakpoints field from Machine
+ ,memoryTraceBlocks -- Export memoryTraceBlocks field from Machine
+ ,storedAddresses -- Export storedAddresses field from Machine
+ ,lastDisassembledAddr -- Export lastDisassembledAddr field from Machine
+ ,debuggerMode -- Export debuggerMode field from Machine
 
 ,FDX (..)
 
@@ -53,6 +62,9 @@ import Control.Exception (try, IOException) -- For error handling
 
 -- | Data type to represent the debugger mode
 data DebuggerMode = CommandMode | VimMode deriving (Show, Eq)
+
+-- | Data type to represent actions the debugger can take.
+data DebuggerAction = ContinueLoop String | ExecuteStep String | ExitDebugger | QuitEmulator | NoAction | SwitchToVimMode | SwitchToCommandMode deriving (Show, Eq)
 
 -- | Creates a 16-bit Word from a low byte and a high byte.
 -- In this context, "Word" in an identifier name
@@ -206,50 +218,7 @@ loadSymbolFile filePath = do
                     _            -> acc -- Failed to parse address
             _ -> acc -- Line doesn't fit format
 
--- | Starts the debugger loop in the current debugger mode.
-runDebugger :: FDX ()
-runDebugger = do
-    modify' $ \m -> m { debuggerActive = True }
-    interactiveLoopHelper ""
 
--- | Helper function for the interactive debugger loop, handling command input and execution.
-interactiveLoopHelper :: String -> FDX ()
-interactiveLoopHelper lastCommand = do
-    m <- get
-    let mode = debuggerMode m
-    liftIO $ putStr $ if mode == VimMode then "(Vim) " else "(Cmd) "
-    liftIO $ putStrLn "Enter debugger command (step, continue, break, help, etc.):"
-    input <- liftIO getLine
-    let cmd = if null input then lastCommand else input
-    case words cmd of
-        [] -> interactiveLoopHelper lastCommand
-        ("step":_) -> do
-            -- Single step implementation
-            liftIO $ putStrLn "Stepping one instruction..."
-            -- Actual step logic would go here
-            interactiveLoopHelper cmd
-        ("continue":_) -> do
-            -- Continue execution
-            liftIO $ putStrLn "Continuing execution..."
-            modify' $ \m' -> m' { debuggerActive = False }
-        ("break":addrStr:_) -> case readHex addrStr of
-            [(addr, "")] -> do
-                modify' $ \m' -> m' { breakpoints = addr : breakpoints m' }
-                liftIO $ putStrLn $ "Breakpoint set at $" ++ showHex addr ""
-                interactiveLoopHelper cmd
-            _ -> do
-                liftIO $ putStrLn "Invalid address format"
-                interactiveLoopHelper cmd
-        ("help":_) -> do
-            liftIO $ putStrLn "Available commands:"
-            liftIO $ putStrLn "step - Execute one instruction"
-            liftIO $ putStrLn "continue - Continue execution"
-            liftIO $ putStrLn "break <addr> - Set breakpoint at address"
-            liftIO $ putStrLn "help - Show this help"
-            interactiveLoopHelper cmd
-        _ -> do
-            liftIO $ putStrLn $ "Unknown command: " ++ input
-            interactiveLoopHelper lastCommand
 
 -- | Sets the Program Counter register.
 setPC_ :: Word16 -> FDX ()

@@ -1,7 +1,7 @@
-{-# LANGUAGE LambdaCase #-}
 
 module MOS6502Emulator.DissAssembler (
     disassembleInstruction
+  , disassembleInstructions -- Export disassembleInstructions
 ) where
 
 import Data.Word (Word8, Word16)
@@ -121,3 +121,20 @@ formatOperand pc info operands lblMap =
 -- Helper to create a Word16 from low and high bytes
 mkWord :: Word8 -> Word8 -> Word16
 mkWord lo hi = toWord lo .|. (toWord hi `shiftL` 8)
+
+-- | Helper function to disassemble multiple instructions and print them.
+disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address after the last disassembled instruction
+disassembleInstructions currentPC 0 = return currentPC
+disassembleInstructions currentPC remaining = do
+    machine <- gets id -- Get the entire Machine state
+    let lblMap = labelMap machine
+    -- Check if the currentPC has a label and print it
+    case Map.lookup currentPC lblMap of
+        Just lbl -> liftIO $ putStrLn $ "\n\x1b[32m" ++ lbl ++ ":\x1b[0m" -- Print label on a new line if it exists
+        Nothing  -> return ()
+
+    -- Disassemble the current instruction
+    (disassembled, instLen) <- disassembleInstruction currentPC
+    liftIO $ putStrLn disassembled
+    let nextPC = currentPC + (fromIntegral instLen)
+    disassembleInstructions nextPC (remaining - 1)

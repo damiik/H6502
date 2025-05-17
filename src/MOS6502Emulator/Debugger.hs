@@ -1,17 +1,42 @@
 {-# LANGUAGE LambdaCase #-}
-module MOS6502Emulator.Debugger (logRegisters, logMemoryRange, saveDebuggerState, loadDebuggerState, formatStatusFlags) where
+module MOS6502Emulator.Debugger
+  ( DebuggerAction(..) -- Export DebuggerAction
+  , logRegisters
+  , logMemoryRange
+  , saveDebuggerState
+  , loadDebuggerState
+  , formatStatusFlags
+  , handleBreak -- Exporting for use in MOS6502Emulator
+  , handleMemTrace -- Exporting for use in MOS6502Emulator
+  , handleCommand -- Exporting for use in MOS6502Emulator
+  , handleFill -- Exporting for CommandMode
+  , handleSetReg8 -- Exporting for CommandMode
+  , handleSetPC -- Exporting for CommandMode
+  , handleDisassemble -- Exporting for CommandMode
+  , prompt -- Exporting for CommandMode
+  , getKey -- Exporting for VimMode (still needed for prompt in CommandMode)
+  , interactiveLoopHelper -- Exporting for CommandMode
+  , parseHexByte -- Exporting for CommandMode
+  , parseHexWord -- Exporting for CommandMode
+  ) where
 
 import Data.Word (Word16, Word8)
 import Numeric (showHex, readHex)
 import Control.Monad.IO.Class (liftIO)
-import MOS6502Emulator.Machine (Machine(), FDX, getMemory, fetchByteMem, debugLogPath, breakpoints, memoryTraceBlocks, mRegs, storedAddresses, labelMap, lastDisassembledAddr, mMem)
+import Control.Monad (unless)
+import MOS6502Emulator.Machine (Machine(), DebuggerMode(..), FDX, getMemory, fetchByteMem, debugLogPath, breakpoints, memoryTraceBlocks, mRegs, storedAddresses, labelMap, lastDisassembledAddr, mMem, enableTrace, debuggerActive, halted, traceMemoryStart, traceMemoryEnd, debuggerMode, DebuggerAction(..), getRegisters)
 import MOS6502Emulator.Machine (writeByteMem, setPC_)
 import MOS6502Emulator.DissAssembler (disassembleInstruction)
-import MOS6502Emulator.Machine (interactiveLoopHelper)
 import Control.Monad.State (put, get, modify)
 import MOS6502Emulator.Registers
 import MOS6502Emulator.Memory (Memory(), writeByte)
-import Data.Bits
+import System.IO (hFlush, stdout, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, getChar)
+import Data.List (stripPrefix, cycle, take)
+import Data.Maybe (mapMaybe, listToMaybe, isNothing)
+import Data.Bits (Bits, (.&.), testBit)
+import qualified Data.Map.Strict as Map
+import System.IO (readFile, writeFile)
+import Control.Exception (try, IOException)
 import System.IO.Error (isEOFError)
 import Control.Exception (SomeException, IOException, displayException, try, catch)
 import qualified Data.Map as Map
@@ -20,6 +45,28 @@ import qualified Data.Char as Char
 import System.IO (hFlush, stdout, hSetBuffering, stdin, BufferMode(NoBuffering))
 import Data.Maybe (mapMaybe, listToMaybe, isNothing)
 import Data.List (cycle)
+
+-- | Helper function for the interactive debugger loop, handling command input and execution.
+interactiveLoopHelper :: String -> FDX DebuggerAction
+interactiveLoopHelper lastCommand = do
+  machine <- get
+  if halted machine
+    then return QuitEmulator -- Machine halted, return QuitEmulator action
+    else do
+      command <- liftIO $ prompt "> "
+      let commandToExecute = if null command then lastCommand else command
+      action <- handleCommand commandToExecute
+      case action of
+        ContinueLoop _ -> interactiveLoopHelper commandToExecute -- Continue the loop with the new command as last command
+        ExecuteStep _  -> return action -- Return the ExecuteStep action
+        ExitDebugger                 -> put (machine { debuggerActive = False }) >> return action
+        QuitEmulator                 -> put (machine { halted = True }) >> return action
+        NoAction                     -> interactiveLoopHelper commandToExecute -- Continue the loop with the new command as last command
+        SwitchToVimMode              -> modify (\m -> m { debuggerMode = VimMode }) >> return action
+        SwitchToCommandMode          -> interactiveLoopHelper commandToExecute -- Stay in CommandMode and continue loop
+
+
+
 
 -- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
 formatHex8 :: Word8 -> String
@@ -113,103 +160,12 @@ loadDebuggerState filePath = liftIO $ do
     parseBlock :: [String] -> [(Word16, Word16, Maybe String)]
     parseBlock [] = []
     parseBlock (startStr:endStr:rest) =
-        case (readHex startStr, readHex endStr) of
-            ([(startAddr, "")], [(endAddr, "")]) ->
+        case (parseHexWord startStr, parseHexWord endStr) of
+            (Just startAddr, Just endAddr) ->
                 let name = if null rest then Nothing else Just (unwords rest)
                 in [(startAddr, endAddr, name)]
-            _ -> []
-    parseBlock _ = []
-
--- | Handles 'm' sub-commands in VimMode.
-handleMemTraceVim :: FDX ()
-handleMemTraceVim = do
-  liftIO $ putStrLn "\nMemory Trace (a: add, d: delete):"
-  key <- liftIO getKey
-  case key of
-    'a' -> do
-      liftIO $ putStr "Add Memory Trace Block (start end [name]): " >> hFlush stdout
-      input <- liftIO getLine
-      let args = words input
-      case args of
-        [startAddrStr, endAddrStr] -> do
-          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
-            (Just startAddr, Just endAddr) -> do
-              modify (\m -> m { memoryTraceBlocks = (startAddr, endAddr, Nothing) : memoryTraceBlocks m })
-              liftIO $ putStrLn $ "Memory trace block added: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
-            _ -> liftIO $ putStrLn "Invalid address format."
-        startAddrStr:endAddrStr:nameWords -> do
-          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
-            (Just startAddr, Just endAddr) -> do
-              let name = unwords nameWords
-              modify (\m -> m { memoryTraceBlocks = (startAddr, endAddr, Just name) : memoryTraceBlocks m })
-              liftIO $ putStrLn $ "Memory trace block added: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr "" ++ " (" ++ name ++ ")"
-            _ -> liftIO $ putStrLn "Invalid address format."
-        _ -> liftIO $ putStrLn "Invalid arguments for adding memory trace block."
-    'd' -> do
-      liftIO $ putStr "Delete Memory Trace Block (start end [name]): " >> hFlush stdout
-      input <- liftIO getLine
-      let args = words input
-      case args of
-        [startAddrStr, endAddrStr] -> do
-          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
-            (Just startAddr, Just endAddr) -> do
-              modify (\m -> m { memoryTraceBlocks = filter (\(s, e, n) -> not (s == startAddr && e == endAddr && isNothing n)) (memoryTraceBlocks m) })
-              liftIO $ putStrLn $ "Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
-            _ -> liftIO $ putStrLn "Invalid address format."
-        startAddrStr:endAddrStr:nameWords -> do
-          case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
-            (Just startAddr, Just endAddr) -> do
-              let name = unwords nameWords
-              modify (\m -> m { memoryTraceBlocks = filter (\(s, e, n) -> not (s == startAddr && e == endAddr && Just name == n)) (memoryTraceBlocks m) })
-              liftIO $ putStrLn $ "Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr "" ++ " (" ++ name ++ ")"
-            _ -> liftIO $ putStrLn "Invalid address format."
-        _ -> liftIO $ putStrLn "Invalid arguments for deleting memory trace block."
-    _ -> liftIO $ putStrLn "Invalid Memory Trace command. Press 'm' to view blocks."
-
--- | Handles 'b' sub-commands in VimMode.
-handleBreakVim :: FDX ()
-handleBreakVim = do
-  liftIO $ putStrLn "\nBreakpoints (a: add, d: delete):"
-  key <- liftIO getKey
-  case key of
-    'a' -> do
-      liftIO $ putStrLn "Add Breakpoint (address):"
-      input <- liftIO getLine
-      let args = words input
-      handleBreak args "" -- Reuse handleBreak logic
-    'd' -> do
-      liftIO $ putStrLn "Delete Breakpoint (address):"
-      input <- liftIO getLine
-      let args = words input
-      handleBreak args "" -- Reuse handleBreak logic
-    _ -> liftIO $ putStrLn "Invalid Breakpoint command."
-
--- | Handles 'a' sub-commands in VimMode (Stored Addresses).
-handleAddressVim :: FDX ()
-handleAddressVim = do
-  liftIO $ putStrLn "\nStored Addresses (s: store, g: goto):"
-  key <- liftIO getKey
-  case key of
-    's' -> do
-      liftIO $ putStrLn "Store Current PC (key):"
-      keyChar <- liftIO getKey
-      machine <- get
-      let currentPC = rPC (mRegs machine)
-      modify (\m -> m { storedAddresses = Map.insert keyChar currentPC (storedAddresses m) })
-      liftIO $ putStrLn $ "Stored PC $" ++ showHex currentPC "" ++ " at key '" ++ [keyChar] ++ "'"
-    'g' -> do
-      liftIO $ putStrLn "Goto Stored Address (key):"
-      keyChar <- liftIO getKey
-      machine <- get
-      case Map.lookup keyChar (storedAddresses machine) of
-        Just addr -> do
-          put (machine { mRegs = (mRegs machine) { rPC = addr } })
-          liftIO $ putStrLn $ "PC set to $" ++ showHex addr ""
-          -- Re-disassemble at the new PC
-          finalAddr <- disassembleInstructions addr 1
-          modify (\m -> m { lastDisassembledAddr = finalAddr })
-        Nothing -> liftIO $ putStrLn ("No address stored at key '" ++ [keyChar] ++ "'")
-    _ -> liftIO $ putStrLn "Invalid Stored Address command."
+            _ -> [] -- Invalid address format or not enough arguments
+    parseBlock _ = [] -- Invalid block format (e.g., only one address)
 
 
 -- | Prompts the user for input in the debugger.
@@ -230,14 +186,14 @@ getKey = catch
   (\e -> if isEOFError e then return '\n' else ioError e) -- Handle EOF (e.g., Ctrl+D)
 
 -- | Handles breakpoint commands in the debugger.
-handleBreak :: [String] -> String -> FDX ()
+handleBreak :: [String] -> String -> FDX DebuggerAction
 handleBreak args lastCommand = do
   machine <- get
   case args of
     [] -> do -- List breakpoints
       liftIO $ putStrLn "Current breakpoints:"
       mapM_ (\bp -> liftIO $ putStrLn $ "  $" ++ showHex bp "") (breakpoints machine)
-      interactiveLoopHelper lastCommand
+      return (ContinueLoop lastCommand)
     [addrStr] -> do -- Add or remove breakpoint
       case readHex addrStr of
         [(addr, "")] -> do
@@ -247,21 +203,20 @@ handleBreak args lastCommand = do
               let newBreakpoints = filter (/= addr) currentBreakpoints
               put (machine { breakpoints = newBreakpoints })
               liftIO $ putStrLn $ "Breakpoint removed at $" ++ showHex addr ""
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
             else do
               let newBreakpoints = addr : currentBreakpoints
               put (machine { breakpoints = newBreakpoints })
               liftIO $ putStrLn $ "Breakpoint added at $" ++ showHex addr ""
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
         _ -> do
           liftIO $ putStrLn "Invalid address format for breakpoint. Use hex (e.g., bk 0x0400)."
-          interactiveLoopHelper lastCommand
+          return (ContinueLoop lastCommand)
     _ -> do -- Too many arguments
       liftIO $ putStrLn "Invalid use of breakpoint command. Use 'bk' or 'break' to list, or 'bk <address>' to add/remove."
-      interactiveLoopHelper lastCommand
-
+      return (ContinueLoop lastCommand)
 -- | Handles memory trace commands in the debugger.
-handleMemTrace :: [String] -> String -> FDX ()
+handleMemTrace :: [String] -> String -> FDX DebuggerAction
 handleMemTrace args lastCommand = do
   machine <- get
   case args of
@@ -273,10 +228,10 @@ handleMemTrace args lastCommand = do
                                        Just n -> " (" ++ n ++ ")"
                                        Nothing -> "")
             (memoryTraceBlocks machine)
-      interactiveLoopHelper lastCommand
+      return (ContinueLoop lastCommand)
     [startAddrStr, endAddrStr] -> do -- Add or remove memory trace block without name
-      case (readHex startAddrStr, readHex endAddrStr) of
-        ([(startAddr, "")], [(endAddr, "")]) -> do
+      case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+        (Just startAddr, Just endAddr) -> do
           let currentBlocks = memoryTraceBlocks machine
           let newBlock = (startAddr, endAddr, Nothing)
           if newBlock `elem` currentBlocks
@@ -284,15 +239,15 @@ handleMemTrace args lastCommand = do
               let newBlocks = filter (/= newBlock) currentBlocks
               put (machine { memoryTraceBlocks = newBlocks })
               liftIO $ putStrLn $ "Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
             else do
               let newBlocks = newBlock : currentBlocks
               put (machine { memoryTraceBlocks = newBlocks })
               liftIO $ putStrLn $ "Memory trace block added: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
         _ -> do
           liftIO $ putStrLn "Invalid address format for memory trace block. Use hex (e.g., mem 0x0200 0x0300)."
-          interactiveLoopHelper lastCommand
+          return (ContinueLoop lastCommand)
     startAddrStr:endAddrStr:nameWords -> do -- Add or remove memory trace block with name
       case (readHex startAddrStr, readHex endAddrStr) of
         ([(startAddr, "")], [(endAddr, "")]) -> do
@@ -304,19 +259,18 @@ handleMemTrace args lastCommand = do
               let newBlocks = filter (/= newBlock) currentBlocks
               put (machine { memoryTraceBlocks = newBlocks })
               liftIO $ putStrLn $ "Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr "" ++ " (" ++ name ++ ")"
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
             else do
               let newBlocks = newBlock : currentBlocks
               put (machine { memoryTraceBlocks = newBlocks })
               liftIO $ putStrLn $ "Memory trace block added: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr "" ++ " (" ++ name ++ ")"
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
         _ -> do
           liftIO $ putStrLn "Invalid address format for memory trace block. Use hex (e.g., mem 0x0200 0x0300 MyRegion)."
-          interactiveLoopHelper lastCommand
+          return (ContinueLoop lastCommand)
     _ -> do -- Incorrect number of arguments
       liftIO $ putStrLn "Invalid use of memory trace command. Use 'mem' or 'm' to list, 'mem <start> <end>' to add/remove without name, or 'mem <start> <end> <name>' to add/remove with name."
-      interactiveLoopHelper lastCommand
-
+      return (ContinueLoop lastCommand)
 -- | Helper function to safely parse a hex string to Maybe Word8.
 parseHexByte :: String -> Maybe Word8
 parseHexByte s = case readHex s of
@@ -330,7 +284,7 @@ parseHexWord s = case readHex s of
   _           -> Nothing
 
 -- | Handles the fill memory command in the debugger.
-handleFill :: [String] -> String -> FDX ()
+handleFill :: [String] -> String -> FDX DebuggerAction
 handleFill args lastCommand = do
   case args of
     startAddrStr : endAddrStr : byteStrs -> do
@@ -340,11 +294,11 @@ handleFill args lastCommand = do
           if null byteValues
             then do
               liftIO $ putStrLn "No valid byte values provided or parse error."
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
             else if startAddr > endAddr
             then do
               liftIO $ putStrLn "Start address cannot be greater than end address."
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
             else do
               let addressRange = [startAddr .. endAddr]
               let fillBytes = take (length addressRange) (Data.List.cycle byteValues)
@@ -354,40 +308,37 @@ handleFill args lastCommand = do
               liftIO $ mapM_ (\(addr, val) -> writeByte addr val mem) (zip addressRange fillBytes)
               -- Memory is modified in-place, no need to 'put' the machine state back just for this
               liftIO $ putStrLn $ "Memory filled from $" ++ showHex startAddr "" ++ " to $" ++ showHex endAddr ""
-              interactiveLoopHelper lastCommand
+              return (ContinueLoop lastCommand)
         _ -> do
           liftIO $ putStrLn "Invalid address format for fill command. Use hex (e.g., fill 0200 0300 ff 00)."
-          interactiveLoopHelper lastCommand
+          return (ContinueLoop lastCommand)
     _ -> do
       liftIO $ putStrLn "Invalid use of fill command. Use 'fill <start> <end> <byte1> [byte2...]'"
-      interactiveLoopHelper lastCommand
-
+      return (ContinueLoop lastCommand)
 -- | Generic handler for setting 8-bit registers in the debugger.
-handleSetReg8 :: (Registers -> Word8 -> Registers) -> String -> String -> String -> FDX ()
+handleSetReg8 :: (Registers -> Word8 -> Registers) -> String -> String -> String -> FDX DebuggerAction
 handleSetReg8 regSetter valStr regName lastCommand = do
     case parseHexByte valStr of
         Just val -> do
             modify (\m -> m { mRegs = regSetter (mRegs m) val })
             liftIO $ putStrLn $ regName ++ " set to $" ++ showHex val ""
-            interactiveLoopHelper lastCommand
+            return (ContinueLoop lastCommand)
         Nothing -> do
             liftIO $ putStrLn $ "Invalid hex value for " ++ regName ++ "."
-            interactiveLoopHelper lastCommand
-
+            return (ContinueLoop lastCommand)
 -- | Specific handler for setting the 16-bit PC in the debugger.
-handleSetPC :: String -> String -> FDX ()
+handleSetPC :: String -> String -> FDX DebuggerAction
 handleSetPC valStr lastCommand = do
     case parseHexWord valStr of
         Just val -> do
             setPC_ val -- Assuming setPC updates the state directly
             liftIO $ putStrLn $ "PC set to $" ++ showHex val ""
-            interactiveLoopHelper lastCommand
+            return (ContinueLoop lastCommand)
         Nothing -> do
             liftIO $ putStrLn "Invalid hex value for PC."
-            interactiveLoopHelper lastCommand
-
+            return (ContinueLoop lastCommand)
 -- | Handler for disassembling instructions in the debugger.
-handleDisassemble :: [String] -> String -> FDX ()
+handleDisassemble :: [String] -> String -> FDX DebuggerAction
 handleDisassemble args lastCommand = do
     machine <- get
     let startAddr = case args of
@@ -398,8 +349,7 @@ handleDisassemble args lastCommand = do
     liftIO $ putStrLn $ "Disassembling 32 instructions starting at $" ++ showHex startAddr ""
     finalAddr <- disassembleInstructions startAddr 32
     modify (\m -> m { lastDisassembledAddr = finalAddr }) -- Update last disassembled address
-    interactiveLoopHelper lastCommand
-
+    return (ContinueLoop lastCommand)
 -- | Helper function to disassemble multiple instructions and print them.
 disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address after the last disassembled instruction
 disassembleInstructions currentPC 0 = return currentPC
@@ -416,3 +366,104 @@ disassembleInstructions currentPC remaining = do
     liftIO $ putStrLn disassembled
     let nextPC = currentPC + (fromIntegral instLen)
     disassembleInstructions nextPC (remaining - 1)
+
+-- | Handles commands in CommandMode.
+handleCommand :: String -> FDX DebuggerAction
+handleCommand commandToExecute = do
+  machine <- get
+  let handleStep :: FDX DebuggerAction
+      handleStep = return (ExecuteStep commandToExecute)
+  let handleRegs :: FDX DebuggerAction
+      handleRegs = do
+        logRegisters =<< getRegisters
+        return NoAction
+  let handleTrace :: FDX DebuggerAction
+      handleTrace = do
+        let newTraceState = not (enableTrace machine)
+        put (machine { enableTrace = newTraceState })
+        liftIO $ putStrLn $ "Tracing " ++ if newTraceState then "enabled." else "disabled."
+        return NoAction
+
+  let handleGoto :: String -> FDX DebuggerAction
+      handleGoto addrStr = do
+        machine <- get
+        if null addrStr then do
+          liftIO $ putStrLn "Address required for goto command."
+          return NoAction
+        else case readHex addrStr of
+          [(addr, "")] -> do
+            put (machine { mRegs = (mRegs machine) { rPC = addr } })
+            liftIO $ putStrLn $ "PC set to $" ++ showHex addr ""
+            return NoAction
+          _ -> do
+            liftIO $ putStrLn "Invalid address format."
+            return NoAction
+
+  let handleHelp :: FDX DebuggerAction
+      handleHelp = do
+        liftIO $ putStrLn "Available commands:\n\
+\step  / z:              execute one instruction cycle\n\
+\regs  / r:              show current register values\n\
+\mem   / m [addr] [end]: add/remove memory range to dispaly\n\
+\break / bk:             add/remove breakpoint to the list\n\
+\quit  / q:              quit program\n\
+\exit  / e:              exit interactive mode\n\
+\trace / t:              toggle instruction tracing\n\
+\goto  / g <addr>:       set program counter to address\n\
+\fill  / f <start> <end> <byte1> [byte2...]: fill memory range with bytes\n\
+\ra <val>:              set Accumulator to hex value\n\
+\rx <val>:              set X register to hex value\n\
+\ry <val>:              set Y register to hex value\n\
+\rsp <val>:             set Stack Pointer to hex value\n\
+\rsr <val>:             set Status Register to hex value\n\
+\rpc <val>:             set Program Counter to hex value\n\
+\d:                     disassemble 32 instructions from current PC"
+        return NoAction
+
+  case words commandToExecute of
+    ["help"] -> handleHelp
+    ["h"] -> handleHelp
+    ["goto", addrStr] -> handleGoto addrStr
+    ["g", addrStr] -> handleGoto addrStr
+    "fill":args -> handleFill args commandToExecute
+    "f":args -> handleFill args commandToExecute -- Alias for fill
+    ["step"] -> handleStep
+    ["z"] -> handleStep
+    ["regs"] -> handleRegs
+    ["r"] -> handleRegs
+    "mem":args -> handleMemTrace args commandToExecute
+    "m":args -> handleMemTrace args commandToExecute -- Alias for mem
+    ["log"] -> do
+      mapM_ (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machine)
+      return NoAction
+    ["x"] -> do
+      put (machine { debuggerActive = False }) -- Exit debugger mode
+      liftIO $ putStrLn "Exiting debugger. Continuing execution."
+      return ExitDebugger
+    "bk":args -> handleBreak args commandToExecute
+    "break":args -> handleBreak args commandToExecute -- Alias for bk
+    ["q"] -> return QuitEmulator -- Set halted flag
+    ["quit"] -> return QuitEmulator -- Set halted flag
+    ["trace"] -> handleTrace
+    ["t"] -> handleTrace
+    ["addr-range", startAddrStr, endAddrStr] -> do
+      case (readHex startAddrStr :: [(Word16, String)], readHex endAddrStr :: [(Word16, String)]) of
+        ([(startAddr, "")], [(endAddr, "")]) -> do
+          put (machine { traceMemoryStart = startAddr, traceMemoryEnd = endAddr })
+          liftIO $ putStrLn $ "Memory trace range set to $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""
+          return NoAction
+        _ -> do
+          liftIO $ putStrLn "Invalid address format. Use hex (e.g., addr-range 0200 0300)."
+          return NoAction
+    -- Register setting commands
+    ["ra", valStr] -> handleSetReg8 (\r val -> r { rAC = val }) valStr "Accumulator" commandToExecute
+    ["rx", valStr] -> handleSetReg8 (\r val -> r { rX = val }) valStr "X Register" commandToExecute
+    ["ry", valStr] -> handleSetReg8 (\r val -> r { rY = val }) valStr "Y Register" commandToExecute
+    ["rsp", valStr] -> handleSetReg8 (\r val -> r { rSP = val }) valStr "Stack Pointer" commandToExecute
+    ["rsr", valStr] -> handleSetReg8 (\r val -> r { rSR = val }) valStr "Status Register" commandToExecute
+    ["rpc", valStr] -> handleSetPC valStr commandToExecute
+    "d":args -> handleDisassemble args commandToExecute
+    ["v"] -> return SwitchToVimMode
+    _      -> do
+      liftIO $ putStrLn "Invalid command."
+      return NoAction
