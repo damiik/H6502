@@ -9,18 +9,31 @@
 # to be used for project dependencies. For example:
 #
 # snapshot: lts-22.28
-#snapshot: nightly-2025-02-15 # GHC 9.10.1
-#compiler: ghc-9.10.1
+# snapshot: nightly-2025-05-04 # GHC 9.10.1
+# compiler: ghc-9.10.1
+
+#snapshot: lts-23.14
+#snapshot: ghc-9.12.2
 
 
-snapshot: nightly-2025-04-03 # GHC 9.10.1
-compiler: ghc-9.12.2
+# working for: ghcup 0.1.50.2, stack 3.3.1, hls 2.10.0.0, cabal 3.12.1.0, ghc 9.8.2
+# snapshot: nightly-2025-02-15 # GHC 9.10.2
+# compiler: ghc-9.8.2
+
+snapshot: lts-22.44 # GHC 9.10.2
+compiler: ghc-9.6.7
+
+# snapshot: nightly-2025-04-16
+# compiler: ghc-9.10.1
+# snapshot: nightly-2025-05-18 # GHC 9.10.2
+# compiler: ghc-9.10.2
+
 
 extra-deps:
 # Reinstated because pruned
-- Cabal-3.14.1.0
+- Cabal-3.12.1.0
 # Reinstated because pruned
-- Cabal-syntax-3.14.1.0
+- Cabal-syntax-3.12.1.0
 - parsec-3.1.18.0
 # mustache cannot deal with Data.Text.show ambiguity in boot package text-2.1.2
 - text-2.1.1

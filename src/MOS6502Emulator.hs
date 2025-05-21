@@ -11,30 +11,30 @@ module MOS6502Emulator
   , instructionCount -- Export instructionCount
   ) where
 
+import Control.Exception (try, catch, IOException) -- Added for exception handling
+import Control.Monad.State (get, modify, put, gets, runStateT) -- Import runStateT
+import Control.Monad (when, unless, void) -- Import the 'when', 'unless', and 'void' functions
+import Control.Monad.IO.Class (liftIO)
+import Numeric (showHex, readHex) -- Import showHex and readHex
+import Text.Printf
+import System.IO (hSetEcho, hFlush, stdout, hSetBuffering, readFile, writeFile, BufferMode(NoBuffering, LineBuffering), stdin, hReady, getChar) -- Import hSetBuffering, BufferMode, stdin, hReady, getChar, LineBuffering
+import System.IO.Error (isEOFError) -- Import isEOFError
+import Data.Word ( Word8, Word16 )
+import Data.List (stripPrefix, cycle, take) -- Import stripPrefix, cycle, take
+import Data.Maybe (mapMaybe, listToMaybe, isNothing) -- Import mapMaybe, listToMaybe, and isNothing
+import Data.Bits (Bits, (.&.)) -- Import Bits for status register manipulation if needed
+import qualified Data.Map.Strict as Map -- For Map.empty
+
+import MOS6502Emulator.Core (fdxSingleCycle) -- Import fdxSingleCycle from Core
 import MOS6502Emulator.Machine (Machine(..), FDX(..), getRegisters, instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, loadSymbolFile, setPC_, setAC_, setX_, setY_, setSR_, setSP_, writeByteMem_, DebuggerMode(..)) -- Import DebuggerMode from Machine
 import MOS6502Emulator.Instructions
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import qualified MOS6502Emulator.Debugger as D
 import qualified MOS6502Emulator.Debugger.VimMode as V
-import MOS6502Emulator.Debugger (prompt, handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Import prompt, handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, and interactiveLoopHelper, and DebuggerAction
+import MOS6502Emulator.Debugger (handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Import handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, and interactiveLoopHelper, and DebuggerAction
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
-import Control.Monad.State (get, modify, put, gets, runStateT) -- Import runStateT
-import Control.Monad (when, unless, void) -- Import the 'when', 'unless', and 'void' functions
-import Control.Monad.IO.Class (liftIO)
-import Data.Word ( Word8, Word16 )
-import Numeric (showHex, readHex) -- Import showHex and readHex
-import System.IO (hFlush, stdout, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, getChar) -- Import hSetBuffering, BufferMode, stdin, hReady, getChar, LineBuffering
-import Data.List (stripPrefix, cycle, take) -- Import stripPrefix, cycle, take
-import Data.Maybe (mapMaybe, listToMaybe, isNothing) -- Import mapMaybe, listToMaybe, and isNothing
-import Data.Bits (Bits, (.&.)) -- Import Bits for status register manipulation if needed
-import qualified Data.Map.Strict as Map -- For Map.empty
-import System.IO (readFile, writeFile) -- Added for file operations
-import Control.Exception (try, IOException) -- Added for exception handling
-import System.IO.Error (isEOFError) -- Import isEOFError
-import Control.Exception (catch) -- Import catch
-import MOS6502Emulator.Core (fdxSingleCycle) -- Import fdxSingleCycle from Core
-import Text.Printf
+import MOS6502Emulator.Debugger.Console (DebuggerConsoleState, initialConsoleState) -- Import DebuggerConsoleState and initialConsoleState
 
 -- | Initializes a new 6502 machine state
 -- | Initializes a new 6502 machine state
@@ -69,8 +69,10 @@ runLoop = do
           -- liftIO $ putStrLn "\nEntering interactive debugger."
           -- Determine which debugger loop to run and capture the action
           action <- case debuggerMode machine of
-            CommandMode -> D.interactiveLoopHelper ""
-            VimMode     -> V.interactiveLoopHelper ""
+            CommandMode -> D.interactiveLoopHelper initialConsoleState
+            VimMode     -> do
+
+              V.interactiveLoopHelper initialConsoleState
           
           -- Handle the action returned by the debugger loop
           case action of
@@ -119,8 +121,8 @@ handlePostInstructionChecks = do
     then do
       -- Machine was halted, debugger is already active from the calling branch
       case debuggerMode nextMachineState of
-        CommandMode -> void $ D.interactiveLoopHelper "" -- Enter CommandMode loop, discard result
-        VimMode     -> void $ V.interactiveLoopHelper "" -- Enter VimMode loop, discard result
+        CommandMode -> void $ D.interactiveLoopHelper initialConsoleState -- Enter CommandMode loop, discard result
+        VimMode     -> void $ V.interactiveLoopHelper initialConsoleState -- Enter VimMode loop, discard result
     else do
       -- Log registers and memory trace blocks if tracing is enabled
       when (enableTrace nextMachineState) $ do
@@ -128,9 +130,12 @@ handlePostInstructionChecks = do
         disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
         liftIO $ putStrLn ""
         liftIO $ putStrLn (fst disassembled)
-        D.logRegisters (mRegs nextMachineState)
+        let regOutput = D.logRegisters (mRegs nextMachineState) -- Capture register output
+        liftIO $ mapM_ putStrLn regOutput -- Print register output
         -- Log all memory trace blocks
-        mapM_ (\(start, end, name) -> D.logMemoryRange start end name) (memoryTraceBlocks nextMachineState)
+        mapM_ (\(start, end, name) -> do
+                 memOutput <- D.logMemoryRange start end name -- Capture memory trace output
+                 liftIO $ mapM_ putStrLn memOutput) (memoryTraceBlocks nextMachineState) -- Print memory trace output
 
       -- Check for breakpoints after executing the instruction
       let currentPC = rPC (mRegs nextMachineState)
@@ -140,8 +145,8 @@ handlePostInstructionChecks = do
           put (nextMachineState { debuggerActive = True }) -- Activate debugger
           -- Determine which debugger loop to enter based on the current mode
           case debuggerMode nextMachineState of
-            CommandMode -> void $ D.interactiveLoopHelper "" -- Enter CommandMode loop, discard result
-            VimMode     -> void $ V.interactiveLoopHelper "" -- Enter VimMode loop, discard result
+            CommandMode -> void $ D.interactiveLoopHelper initialConsoleState -- Enter CommandMode loop, discard result
+            VimMode     -> void $ V.interactiveLoopHelper initialConsoleState -- Enter VimMode loop, discard result
         else
           runLoop -- Continue the main runLoop (execute next instruction)
 
@@ -216,6 +221,10 @@ runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
     -- Set the starting PC and enter interactive debugger loop
     let machineWithStartPC = setupResult { mRegs = (mRegs setupResult) { rPC = startAddress }, debuggerActive = True } -- Set debuggerActive to True
     putStrLn "\nEntering interactive debugger."
+    hSetBuffering stdin NoBuffering
+    hSetEcho stdin False
+
+
     (_, finalMachine) <- runStateT (unFDX runLoop) machineWithStartPC -- Start the main runLoop
     return finalMachine
 

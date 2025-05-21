@@ -5,19 +5,19 @@
 
 packages:
 - completed:
-    hackage: Cabal-3.14.1.0@sha256:d24c689fd4b56cd12f8225562c00657e97c528849a2fc3d535557a83ca5f8dfc,13720
+    hackage: Cabal-3.12.1.0@sha256:08be296ddd941b3f9be4bd125fbb3e6857f5c707b8d10464f6f1d30c91ca3e5f,13551
     pantry-tree:
-      sha256: 9a6a7521ae2f0d802887ea0198464740ab9717cf0ac5562b4b91402a410e42dd
-      size: 12219
+      sha256: a509c8164a9682e2cbd080ef8446164fbe11a9c5c0f88b61f41094a8167e6a04
+      size: 11798
   original:
-    hackage: Cabal-3.14.1.0
+    hackage: Cabal-3.12.1.0
 - completed:
-    hackage: Cabal-syntax-3.14.1.0@sha256:557a2b20dc85f052c86c5a06dcbd7c6995f2d0391bbff8e62c90b4b5975211da,7380
+    hackage: Cabal-syntax-3.12.1.0@sha256:6dbb06fb08ff77520947fb4c1ef281c9cea5b8dc7fd9a41ad62273fa916cf4b2,7407
     pantry-tree:
-      sha256: b515a5cfb9da09c0aae57ca223281d06dad9d11dfc466fc47d2e83720a078fea
-      size: 10977
+      sha256: 62e4b1bbdf7fe7d5259f45811e6fd0131823a10a8ec8c5eaf25370d444ac263a
+      size: 11051
   original:
-    hackage: Cabal-syntax-3.14.1.0
+    hackage: Cabal-syntax-3.12.1.0
 - completed:
     hackage: parsec-3.1.18.0@sha256:dfbb9835b8abc966b6bbd34340ef5122227b4cf4480062b85ca4c4704f054f98,4535
     pantry-tree:
@@ -34,7 +34,7 @@ packages:
     hackage: text-2.1.1
 snapshots:
 - completed:
-    sha256: 47a4c110af9a5c55e3135bbf7cec3a6e5451ba3bfa50a06f0443012a2642fbc0
-    size: 674536
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2025/4/3.yaml
-  original: nightly-2025-04-03
+    sha256: 238fa745b64f91184f9aa518fe04bdde6552533d169b0da5256670df83a0f1a9
+    size: 721141
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/22/44.yaml
+  original: lts-22.44
