@@ -5,7 +5,7 @@ module MOS6502Emulator.Instructions where
 
 import qualified MOS6502Emulator.Memory as Mem
 import MOS6502Emulator.Registers
-import MOS6502Emulator.Machine
+import MOS6502Emulator.Core
 
 import Control.Applicative ( (<$>) )
 import Control.Monad ( when )

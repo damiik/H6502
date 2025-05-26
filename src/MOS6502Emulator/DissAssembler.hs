@@ -2,17 +2,18 @@
 module MOS6502Emulator.DissAssembler (
     disassembleInstruction
   , disassembleInstructions -- Export disassembleInstructions
+  , InstructionInfo(..)
+  , opcodeMap   -- Export opcodeMap  
 ) where
 
 import Data.Word (Word8, Word16)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (gets) -- To get parts of the state
 import Data.Bits (shiftL, (.|.), testBit) -- Import bitwise operators and testBit
 import Data.Int (Int16) -- Import Int16
-import MOS6502Emulator.Machine (FDX, fetchByteMem, fetchWordMem, toWord, Machine(labelMap)) -- Import labelMap
+import MOS6502Emulator.Core (FDX, fetchByteMem, toWord, Machine(labelMap)) -- Import labelMap
 import Assembly.Instructions6502 (Mnemonic(..), AddressingMode(..), instructionData, getModeSize)
 -- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
 formatHex8 :: Word8 -> String
@@ -122,19 +123,20 @@ formatOperand pc info operands lblMap =
 mkWord :: Word8 -> Word8 -> Word16
 mkWord lo hi = toWord lo .|. (toWord hi `shiftL` 8)
 
--- | Helper function to disassemble multiple instructions and print them.
-disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address after the last disassembled instruction
-disassembleInstructions currentPC 0 = return currentPC
+-- | Helper function to disassemble multiple instructions and return them as a list of strings.
+disassembleInstructions :: Word16 -> Int -> FDX ([String], Word16) -- Return (disassembled lines, address after last instruction)
+disassembleInstructions currentPC 0 = return ([], currentPC)
 disassembleInstructions currentPC remaining = do
     machine <- gets id -- Get the entire Machine state
     let lblMap = labelMap machine
-    -- Check if the currentPC has a label and print it
-    case Map.lookup currentPC lblMap of
-        Just lbl -> liftIO $ putStrLn $ "\n\x1b[32m" ++ lbl ++ ":\x1b[0m" -- Print label on a new line if it exists
-        Nothing  -> return ()
-
+    
     -- Disassemble the current instruction
     (disassembled, instLen) <- disassembleInstruction currentPC
-    liftIO $ putStrLn disassembled
     let nextPC = currentPC + (fromIntegral instLen)
-    disassembleInstructions nextPC (remaining - 1)
+
+    (restOfLines, finalPC) <- disassembleInstructions nextPC (remaining - 1)
+
+    let currentLine = case Map.lookup currentPC lblMap of
+                        Just lbl -> "\n\x1b[32m" ++ lbl ++ ":\x1b[0m" ++ disassembled
+                        Nothing  -> disassembled
+    return (currentLine : restOfLines, finalPC)

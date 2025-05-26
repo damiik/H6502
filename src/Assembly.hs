@@ -25,8 +25,7 @@ import Data.Int (Int8)
 import Data.Bits ((.&.), shiftR, shiftL)
 import qualified Data.Map.Strict as Map
 import Data.Foldable (foldl')
-import Data.Char (ord)
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (fromMaybe)
 import Numeric (showHex, showInt) -- Added showInt
 import qualified Data.Foldable as String -- Alias dla String.length
 import qualified Data.ByteString as BS

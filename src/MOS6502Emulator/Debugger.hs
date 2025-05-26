@@ -14,15 +14,13 @@ module MOS6502Emulator.Debugger
   , handleSetPC -- Exporting for CommandMode
   , handleDisassemble -- Exporting for CommandMode
   , interactiveLoopHelper -- Exporting for CommandMode
-  , parseHexByte -- Exporting for CommandMode
-  , parseHexWord -- Exporting for CommandMode
   ) where
 
 import Numeric (showHex, readHex)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (unless)
 import Control.Monad.State (put, get, modify)
-import Data.Maybe (mapMaybe, listToMaybe, isNothing)
+import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Word (Word16, Word8)
 import Data.List (stripPrefix, cycle, take)
 import Data.Bits (Bits, (.&.), testBit)
@@ -34,7 +32,8 @@ import Text.Printf (printf)
 import qualified Data.Char as Char
 import System.IO (hFlush, stdout, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, readFile, writeFile, hSetEcho)
 
-import MOS6502Emulator.Machine (writeByteMem, setPC_, Machine(), DebuggerMode(..), FDX, getMemory, fetchByteMem, debugLogPath, breakpoints, memoryTraceBlocks, mRegs, storedAddresses, labelMap, lastDisassembledAddr, mMem, enableTrace, debuggerActive, halted, traceMemoryStart, traceMemoryEnd, debuggerMode, DebuggerAction(..), getRegisters)
+import MOS6502Emulator.Core 
+import MOS6502Emulator.Machine
 import MOS6502Emulator.DissAssembler (disassembleInstruction)
 import MOS6502Emulator.Registers
 import MOS6502Emulator.Memory (Memory(), writeByte)
@@ -46,12 +45,14 @@ import qualified System.Console.ANSI as ANSI -- Import qualified System.Console.
 
 -- | Helper function for the interactive debugger loop, handling command input and execution.
 interactiveLoopHelper :: DebuggerConsoleState -> FDX DebuggerAction
-interactiveLoopHelper initialConsoleState = do
+interactiveLoopHelper consoleState = do
   machine <- get
   if halted machine
     then return QuitEmulator -- Machine halted, return QuitEmulator action
     else do
-      liftIO $ renderScreen machine initialConsoleState -- Render the screen initially
+      -- Set the input buffer with the prompt before rendering
+      let consoleStateWithPrompt = consoleState { inputBuffer = "> ", cursorPosition = 2 }
+      liftIO $ renderScreen machine consoleStateWithPrompt -- Render the screen initially
 
       -- Temporarily enable echo for command input and use getLine
       liftIO $ hSetEcho stdin True
@@ -62,12 +63,12 @@ interactiveLoopHelper initialConsoleState = do
       (action, output) <- handleCommand commandToExecute -- Process the command
 
       -- Update console state after command execution
-      -- Note: inputBuffer and cursorPosition are not used with getLine approach for main command input
-      let newOutputLines = outputLines initialConsoleState ++ ["> " ++ commandToExecute] ++ output -- Add command and captured output
-      let updatedConsoleState = initialConsoleState { outputLines = newOutputLines, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
+      -- The command itself is now part of the output, not the input buffer
+      let newOutputLines = outputLines consoleState ++ ["> " ++ commandToExecute] ++ output -- Add command and captured output
+      let updatedConsoleState = consoleState { outputLines = newOutputLines, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
 
-      liftIO ANSI.clearScreen -- Clear screen before next render
-
+      -- The renderScreen function itself handles clearing the screen, so no need to clear here.
+      -- The next call to interactiveLoopHelper will render the updated state.
       case action of
         ContinueLoop _ -> interactiveLoopHelper updatedConsoleState -- Continue the loop with updated state
         ExecuteStep _  -> return action -- Return the ExecuteStep action
@@ -267,17 +268,6 @@ handleMemTrace args lastCommand = do
     _ -> do -- Incorrect number of arguments
       let output = ["Invalid use of memory trace command. Use 'mem' or 'm' to list, 'mem <start> <end>' to add/remove without name, or 'mem <start> <end> <name>' to add/remove with name."]
       return (ContinueLoop lastCommand, output)
--- | Helper function to safely parse a hex string to Maybe Word8.
-parseHexByte :: String -> Maybe Word8
-parseHexByte s = case readHex s of
-  [(val, "")] | val >= 0 && val <= 255 -> Just (fromInteger val) -- Ensure value fits in Word8
-  _           -> Nothing
-
--- | Helper function to safely parse a hex string to Maybe Word16.
-parseHexWord :: String -> Maybe Word16
-parseHexWord s = case readHex s of
-  [(val, "")] | val >= 0 && val <= 65535 -> Just (fromInteger val) -- Ensure value fits in Word16
-  _           -> Nothing
 
 -- | Handles the fill memory command in the debugger.
 handleFill :: [String] -> String -> FDX (DebuggerAction, [String])
@@ -342,28 +332,27 @@ handleDisassemble args lastCommand = do
                                      Just addr -> addr
                                      Nothing -> lastDisassembledAddr machine -- Use last disassembled address on invalid input
                       _         -> lastDisassembledAddr machine -- Use last disassembled address if no argument
-    let outputLines = ["Disassembling 32 instructions starting at $" ++ showHex startAddr ""]
-    finalAddr <- disassembleInstructions startAddr 32 -- disassembleInstructions still prints directly for now
+    (disassembledOutput, finalAddr) <- disassembleInstructions startAddr 32
     modify (\m -> m { lastDisassembledAddr = finalAddr }) -- Update last disassembled address
-    -- Note: disassembleInstructions currently prints directly. We would need to capture its output
-    -- if we want to add it to the console state's outputLines. For now, we'll just return the initial message.
-    return (ContinueLoop lastCommand, outputLines)
--- | Helper function to disassemble multiple instructions and print them.
-disassembleInstructions :: Word16 -> Int -> FDX Word16 -- Return the address after the last disassembled instruction
-disassembleInstructions currentPC 0 = return currentPC
+    let output = ("Disassembling 32 instructions starting at $" ++ showHex startAddr "") : disassembledOutput
+    return (ContinueLoop lastCommand, output)
+-- | Helper function to disassemble multiple instructions and return them as a list of strings.
+disassembleInstructions :: Word16 -> Int -> FDX ([String], Word16) -- Return (disassembled lines, address after last instruction)
+disassembleInstructions currentPC 0 = return ([], currentPC)
 disassembleInstructions currentPC remaining = do
     machine <- get
     let lblMap = labelMap machine
-    -- Check if the currentPC has a label and print it
-    case Map.lookup currentPC lblMap of
-        Just lbl -> liftIO $ putOutput $ "\n\x1b[32m" ++ lbl ++ ":\x1b[0m" -- Print label on a new line if it exists
-        Nothing  -> return ()
-
+    
     -- Disassemble the current instruction
     (disassembled, instLen) <- disassembleInstruction currentPC
-    liftIO $ putOutput disassembled
     let nextPC = currentPC + (fromIntegral instLen)
-    disassembleInstructions nextPC (remaining - 1)
+
+    (restOfLines, finalPC) <- disassembleInstructions nextPC (remaining - 1)
+
+    let currentLine = case Map.lookup currentPC lblMap of
+                        Just lbl -> "\n\x1b[32m" ++ lbl ++ ":\x1b[0m" ++ disassembled
+                        Nothing  -> disassembled
+    return (currentLine : restOfLines, finalPC)
 
 -- | Handles commands in CommandMode.
 handleCommand :: String -> FDX (DebuggerAction, [String])
