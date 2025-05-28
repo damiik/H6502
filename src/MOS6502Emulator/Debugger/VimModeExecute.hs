@@ -19,8 +19,8 @@ import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo, d
 import Data.Map (Map)
 import MOS6502Emulator.Machine
 -- | Execute an action with a motion
-executeAction :: Action -> Word16 -> FDX (Word16, [String])
-executeAction action currentPos = do
+executeAction :: Action -> Word16 -> VimState -> FDX (Word16, [String])
+executeAction action currentPos vimState = do
   machine <- get
   case action of
     Set newByte -> do
@@ -89,7 +89,7 @@ executeAction action currentPos = do
       return (currentPos, ["Yanked " ++ show (length bytes) ++ " bytes from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
     
     Paste forward -> do
-      let yankBuffer = Map.lookup '"' (vsYankBuffer initialVimState) -- Ideally, use vimState
+      let yankBuffer = Map.lookup (vsRegister vimState) (vsYankBuffer vimState)
       case yankBuffer of
         Nothing -> return (currentPos, ["No data in yank buffer"])
         Just bytes -> do
@@ -109,15 +109,26 @@ executeMotion motion currentPos = do
   machine <- get
   let maxAddr = 0xFFFF -- Maximum address for 6502
   case motion of
+    -- NextInstruction n -> do
+    --   liftIO $ putStrLn "Nowa pozycja.. "
+    -- NextInstruction n -> do
+    --   foldM (\pos _ -> do
+    --       if pos >= maxAddr then return pos
+    --       else do
+    --         (_, instLen) <- disassembleInstruction pos
+    --         let newPos = pos + fromIntegral instLen
+    --         liftIO $ putStrLn $ "Nowa pozycja: " ++ show newPos ++ " maxAddr: " ++ show maxAddr
+    --         return newPos
+    --     ) currentPos [1..n]
     NextInstruction n -> do
-      -- Move n instructions forward by disassembling
       foldM (\pos _ -> do
           if pos >= maxAddr then return pos
           else do
             (_, instLen) <- disassembleInstruction pos
-            return $ pos + fromIntegral instLen
-        ) currentPos [1..n]
-    
+            let newPos = pos + fromIntegral instLen
+            liftIO $ putStrLn $ "Nowa pozycja: " ++ show newPos ++ " maxAddr: " ++ show maxAddr
+            return newPos
+        ) currentPos [1..n]  
     PrevInstruction n -> do
       -- Search backward to find instruction boundaries
       let searchBack pos count = if count <= 0 || pos == 0
@@ -195,4 +206,3 @@ findByteInMemory startPos targetByte forward = do
       if byte == targetByte
         then return addr
         else findFirst rest
-

@@ -202,18 +202,40 @@ interactiveLoopHelper consoleState = do
   if halted machine
     then return (QuitEmulator, vimState machine) -- Return QuitEmulator action if halted
     else do
-      -- Initialize vim state with current PC (ideally, load from Machine)
-      let vimState = initialVimState { vsCursor = rPC (mRegs machine), vsViewStart = rPC (mRegs machine) }
-      liftIO $ renderVimScreen machine consoleState vimState
+      -- Use the vimState from the machine for the current iteration.
+      -- This ensures that the state persists across loop iterations.
+      let currentVimState = vimState machine 
+      liftIO $ renderVimScreen machine consoleState currentVimState
       key <- liftIO getKey
-      (action, output, newVimState) <- handleVimKey key vimState
+      (action, output, newVimState) <- handleVimKey key currentVimState
       let updatedConsoleState = consoleState { outputLines = outputLines consoleState ++ output }
+      
+      -- Always update the machine's vimState with the newVimState before the next iteration
+      put (machine { vimState = newVimState }) 
+
       case action of
         ContinueLoop _ -> interactiveLoopHelper updatedConsoleState
-        ExecuteStep _ -> return (action, newVimState)
+        ExecuteStep _ -> do
+          machineAfterExecution <- get -- Get the machine state *after* the step has been executed by the main loop
+          return (action, newVimState { vsCursor = rPC (mRegs machineAfterExecution), vsViewStart = rPC (mRegs machineAfterExecution) })
         ExitDebugger -> return (action, newVimState)  
         QuitEmulator -> return (action, newVimState)
-        NoAction -> interactiveLoopHelper updatedConsoleState
+        -- NoAction -> do
+        --       machine' <- get
+        --       liftIO $ putStrLn $ "newVimState.vsCursor przed put: " ++ show (vsCursor newVimState)
+        --       put (machine' { vimState = newVimState })
+        --       machine'' <- get
+        --       liftIO $ putStrLn $ "vsCursor po put: " ++ show (vsCursor $ vimState machine'')
+        --       interactiveLoopHelper updatedConsoleState
+        NoAction -> do
+                -- Debug prints (optional, can be removed after verification)
+                liftIO $ putStrLn $ "newVimState.vsCursor przed put: " ++ show (vsCursor newVimState)
+                liftIO $ putStrLn $ "vsCursor po put: " ++ show (vsCursor newVimState)
+                -- Renderowanie po zaktualizowaniu stanu
+                liftIO $ renderVimScreen machine updatedConsoleState newVimState
+                interactiveLoopHelper updatedConsoleState
+
+
         SwitchToCommandMode -> return (action, newVimState)
         SwitchToVimMode -> interactiveLoopHelper updatedConsoleState
 
@@ -221,6 +243,7 @@ interactiveLoopHelper consoleState = do
 -- | Render screen with vim-specific cursor and status
 renderVimScreen :: Machine -> DebuggerConsoleState -> VimState -> IO ()
 renderVimScreen machine consoleState vimState = do
+  putStrLn $ "Renderowanie z vsCursor: " ++ show (vsCursor vimState)
   ANSI.hideCursor
   ANSI.clearScreen
   ANSI.setCursorPosition 0 0

@@ -4,6 +4,7 @@ module MOS6502Emulator.Debugger.VimModeCore
       Motion(..)
     , Action(..)
     , ViewMode(..)
+    , RepeatableCommand(..) -- Export new data type
     , initialVimState
     , parseCount
     ) where
@@ -12,6 +13,14 @@ module MOS6502Emulator.Debugger.VimModeCore
 import Data.Word
 import qualified Data.Map as Map
 import Data.Char (isDigit)
+
+
+-- | Commands that can be repeated with '.'
+data RepeatableCommand =
+    RepeatAction Action
+  | RepeatMotion Motion
+  | RepeatStep
+  deriving (Show, Eq)
 
 
 
@@ -65,6 +74,7 @@ data VimState = VimState
   , vsCommandBuffer :: String    -- For : commands
   , vsSearchBuffer :: String     -- For / searches
   , vsMessage :: String          -- Status message
+  , vsLastChange :: Maybe RepeatableCommand -- For repeating last change with '.'
   } deriving (Show)
 
 data ViewMode = 
@@ -90,6 +100,7 @@ initialVimState = VimState
   , vsCommandBuffer = ""
   , vsSearchBuffer = ""
   , vsMessage = ""
+  , vsLastChange = Nothing
   }
 
 -- | Parse count prefix (like 5dd, 10j)
@@ -97,6 +108,3 @@ parseCount :: String -> Maybe Int
 parseCount s = if all isDigit s && not (null s) 
                then Just (read s) 
                else Nothing
-
-
-

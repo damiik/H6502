@@ -103,15 +103,7 @@ runLoop = do
             SwitchToVimMode -> do
               modify (\m -> m { debuggerMode = VimMode }) -- Switch to VimMode
               runLoop -- Continue the main runLoop
-            NoAction -> do
-              -- Update vimState if the action came from VimMode
-              case debuggerMode machine of
-                VimMode -> do
-                  -- Extract new VimState from interactiveLoopHelper's return
-                  (_, _, newState) <- handleVimKey undefined (vimState machine) 
-                  put (machine { vimState = newState })
-                _ -> return ()
-              runLoop -- Continue the main runLoop
+            NoAction -> runLoop -- Simply continue the main runLoop, as vimState is already updated
         else do
           continue <- fdxSingleCycle -- Execute one instruction
           nextMachineState <- get -- Get state after instruction execution
@@ -287,7 +279,11 @@ runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
     putStrLn "Emulator machine setup complete."
 
     -- Set the starting PC and enter interactive debugger loop
-    let machineWithStartPC = setupResult { mRegs = (mRegs setupResult) { rPC = startAddress }, debuggerActive = True } -- Set debuggerActive to True
+    let machineWithStartPC = setupResult { 
+          mRegs = (mRegs setupResult) { rPC = startAddress }, 
+          debuggerActive = True,
+          vimState = (vimState setupResult) { vsCursor = startAddress, vsViewStart = startAddress } -- Initialize vsCursor and vsViewStart
+        }
     putStrLn "\nEntering interactive debugger."
     hSetBuffering stdin NoBuffering
     hSetEcho stdin False

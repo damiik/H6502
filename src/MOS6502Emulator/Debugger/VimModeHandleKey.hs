@@ -17,7 +17,7 @@ import MOS6502Emulator.Machine (setPC_)
 import MOS6502Emulator.Registers(Registers(..))
 import MOS6502Emulator.DissAssembler(disassembleInstructions, disassembleInstruction, InstructionInfo(..), opcodeMap)
 import MOS6502Emulator.Debugger(handleMemTrace, handleBreak, handleDisassemble, handleSetPC, handleSetReg8, handleFill, logRegisters )
-import MOS6502Emulator.Debugger.VimModeCore ( VimState(..), Motion(..), Action(..), ViewMode(..), parseCount)-- | Enhanced vim key handler with composition support
+import MOS6502Emulator.Debugger.VimModeCore ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), parseCount)-- | Enhanced vim key handler with composition support
 import MOS6502Emulator.Debugger.VimModeExecute (executeMotion, executeAction)
 import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight)
 
@@ -36,11 +36,11 @@ handleVimKey key vimState = do
             "c" -> Change (NextInstruction count)
             "y" -> Yank (NextInstruction count)
             _ -> error "Invalid operator" -- Shouldn't happen
-      (newPos', output) <- executeAction action currentPos
+      (newPos', output) <- executeAction action currentPos vimState
       let newYankBuffer = if op == "y"
             then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
             else vsYankBuffer vimState
-      return (NoAction, output, vimState { vsCursor = newPos', vsCount = Nothing, vsOperator = Nothing, vsYankBuffer = newYankBuffer })
+      return (NoAction, output, vimState { vsCursor = newPos', vsCount = Nothing, vsOperator = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action) })
     
     (Just op, 'k') | op `elem` ["d", "c", "y"] -> do
       newPos <- executeMotion (PrevInstruction count) currentPos
@@ -49,11 +49,11 @@ handleVimKey key vimState = do
             "c" -> Change (PrevInstruction count)
             "y" -> Yank (PrevInstruction count)
             _ -> error "Invalid operator"
-      (newPos', output) <- executeAction action currentPos
+      (newPos', output) <- executeAction action currentPos vimState
       let newYankBuffer = if op == "y"
             then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
             else vsYankBuffer vimState
-      return (NoAction, output, vimState { vsCursor = newPos', vsCount = Nothing, vsOperator = Nothing, vsYankBuffer = newYankBuffer })
+      return (NoAction, output, vimState { vsCursor = newPos', vsCount = Nothing, vsOperator = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action) })
     
     -- Escape - clear pending operations or switch to CommandMode
     (Nothing, '\x1b') -> return (SwitchToCommandMode, ["Switching to Command Mode"], vimState { vsOperator = Nothing, vsCount = Nothing })
@@ -68,72 +68,103 @@ handleVimKey key vimState = do
     -- Operator commands
     (Nothing, c) | c `elem` ['d', 'c', 'y'] -> do
       return (NoAction, [""], vimState { vsOperator = Just [c] })
+
+    -- Repeat last change
+    (Nothing, '.') -> case vsLastChange vimState of
+      Just (RepeatAction act) -> do
+        (newPos, output) <- executeAction act currentPos vimState
+        return (NoAction, output, vimState { vsCursor = newPos, vsMessage = head output })
+      Just (RepeatMotion mot) -> do
+        newPos <- executeMotion mot currentPos
+        let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 3
+              then newPos - fromIntegral ((termHeight - 3) * 2)
+              else vsViewStart vimState
+        return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing })
+      Just RepeatStep -> do
+        return (ExecuteStep "step", [], vimState { vsCount = Nothing, vsMessage = "Stepped one instruction" })
+      Nothing -> return (NoAction, ["No previous change to repeat"], vimState { vsMessage = "No previous change to repeat" })
     
     -- Movement commands
     (Nothing, 'j') -> do
-      newPos <- executeMotion (NextInstruction count) currentPos
+      liftIO $ putStrLn "Naciśnięto 'j'" -- Debugowanie
+      let motion = NextInstruction count
+      newPos <- executeMotion motion currentPos
       let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 3
             then newPos - fromIntegral ((termHeight - 3) * 2)
             else vsViewStart vimState
-      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing })
+      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'k') -> do
-      newPos <- executeMotion (PrevInstruction count) currentPos
+      let motion = PrevInstruction count
+      newPos <- executeMotion motion currentPos
       let newViewStart = if newPos < vsViewStart vimState
             then max 0 (newPos - fromIntegral (termHeight - 3))
             else vsViewStart vimState
-      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing })
+      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'h') -> do
-      newPos <- executeMotion (PrevByte count) currentPos
+      let motion = PrevByte count
+      newPos <- executeMotion motion currentPos
       let newViewStart = if newPos < vsViewStart vimState
             then max 0 (newPos - fromIntegral (termHeight - 3) * 16)
             else vsViewStart vimState
-      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing })
+      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'l') -> do
-      newPos <- executeMotion (NextByte count) currentPos
+      let motion = NextByte count
+      newPos <- executeMotion motion currentPos
       let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 16
             then newPos - fromIntegral ((termHeight - 3) * 8)
             else vsViewStart vimState
-      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing })
+      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'w') -> do
-      newPos <- executeMotion (WordForward count) currentPos
-      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing })
+      let motion = WordForward count
+      newPos <- executeMotion motion currentPos
+      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'b') -> do
-      newPos <- executeMotion (WordBackward count) currentPos
-      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing })
+      let motion = WordBackward count
+      newPos <- executeMotion motion currentPos
+      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'G') -> do
       case vsCount vimState of
         Just addr -> do
           let newPos = fromIntegral addr
-          return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing })
+          let motion = GotoAddress newPos
+          return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
         Nothing -> do
           let newPos = rPC (mRegs machine)
-          return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing })
+          let motion = GotoPC
+          return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'g') -> do
       nextKey <- liftIO getKey
       case nextKey of
         'g' -> do
           let newPos = rPC (mRegs machine)
-          return (NoAction, ["Goto PC"], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing })
+          let motion = GotoPC
+          return (NoAction, ["Goto PC"], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
         _ -> return (NoAction, ["Invalid g command"], vimState { vsCount = Nothing })
     
     (Nothing, 'H') -> do
-      newPos <- executeMotion TopOfPage currentPos
-      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing })
+      let motion = TopOfPage
+      newPos <- executeMotion motion currentPos
+      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'M') -> do
-      newPos <- executeMotion MiddlePage currentPos
-      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing })
+      let motion = MiddlePage
+      newPos <- executeMotion motion currentPos
+      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     (Nothing, 'L') -> do
-      newPos <- executeMotion EndOfPage currentPos
-      return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing })
+      let motion = EndOfPage
+      newPos <- executeMotion motion currentPos
+      let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 16
+            then newPos - fromIntegral ((termHeight - 3) * 8)
+            else vsViewStart vimState
+      return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
     
     -- Action commands
     (Nothing, 'r') -> do
@@ -143,17 +174,20 @@ handleVimKey key vimState = do
       liftIO $ hSetEcho stdin False
       case parseHexByte hexStr of
         Just newByte -> do
-          (newPos, output) <- executeAction (Set newByte) currentPos
-          return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output })
+          let action = Set newByte
+          (newPos, output) <- executeAction action currentPos vimState
+          return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
         Nothing -> return (NoAction, ["Invalid hex byte"], vimState { vsCount = Nothing, vsMessage = "Invalid hex byte" })
     
     (Nothing, '+') -> do
-      (newPos, output) <- executeAction (Increment count) currentPos
-      return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output })
+      let action = Increment count
+      (newPos, output) <- executeAction action currentPos vimState
+      return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
     
     (Nothing, '-') -> do
-      (newPos, output) <- executeAction (Decrement count) currentPos
-      return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output })
+      let action = Decrement count
+      (newPos, output) <- executeAction action currentPos vimState
+      return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
     
     (Nothing, '~') -> do
       liftIO $ putStr "Bit number (0-7): " >> hFlush stdout
@@ -162,17 +196,20 @@ handleVimKey key vimState = do
       liftIO $ hSetEcho stdin False
       case parseCount bitStr of
         Just bit -> do
-          (newPos, output) <- executeAction (ToggleBit bit) currentPos
-          return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output })
+          let action = ToggleBit bit
+          (newPos, output) <- executeAction action currentPos vimState
+          return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
         Nothing -> return (NoAction, ["Invalid bit number"], vimState { vsCount = Nothing, vsMessage = "Invalid bit number" })
     
     (Nothing, 'B') -> do
-      (newPos, output) <- executeAction AddBreakpoint currentPos
-      return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output })
+      let action = AddBreakpoint
+      (newPos, output) <- executeAction action currentPos vimState
+      return (NoAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
     
     (Nothing, '\r') -> do
-      (newPos, output) <- executeAction ExecuteToHere currentPos
-      return (ExecuteStep "execute-to-here", output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output })
+      let action = ExecuteToHere
+      (newPos, output) <- executeAction action currentPos vimState
+      return (ExecuteStep "execute-to-here", output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
     
     -- Find commands
     (Nothing, 'f') -> do
@@ -247,7 +284,7 @@ handleVimKey key vimState = do
       return (NoAction, ["Switched to " ++ show newViewMode], vimState { vsViewMode = newViewMode, vsMessage = "Switched to " ++ show newViewMode })
     
     -- Step execution
-    (Nothing, 's') -> return (ExecuteStep [key], [], vimState { vsCount = Nothing, vsMessage = "Stepped one instruction" })
+    (Nothing, 's') -> return (ExecuteStep [key], [], vimState { vsCount = Nothing, vsMessage = "Stepped one instruction", vsLastChange = Just RepeatStep })
     
     -- Continue execution
     (Nothing, 'c') -> return (ExecuteStep "continue", [], vimState { vsCount = Nothing, vsMessage = "Continuing execution" })
@@ -290,23 +327,16 @@ handleBreakVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleBreakVim vimState = do
   liftIO $ putStr "\nBreakpoints (a: add, d: delete):" >> hFlush stdout
   key <- liftIO getKey
+  let currentPos = vsCursor vimState
   case key of
     'a' -> do
-      liftIO $ putStr "Add Breakpoint (address):" >> hFlush stdout
-      liftIO $ hSetEcho stdin True
-      input <- liftIO getInput
-      liftIO $ hSetEcho stdin False
-      let args = words input
-      (action, output) <- handleBreak args ""
-      return (action, ["Breakpoints (a: add, d: delete): " ++ [key], "Add Breakpoint (address): " ++ input] ++ output, vimState { vsMessage = last output })
+      let action = AddBreakpoint
+      (newPos, output) <- executeAction action currentPos vimState
+      return (NoAction, ("Breakpoints (a: add, d: delete): " ++ [key]) : output, vimState { vsCursor = newPos, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
     'd' -> do
-      liftIO $ putStr "Delete Breakpoint (address):" >> hFlush stdout
-      liftIO $ hSetEcho stdin True
-      input <- liftIO getInput
-      liftIO $ hSetEcho stdin False
-      let args = words input
-      (action, output) <- handleBreak args ""
-      return (action, ["Breakpoints (a: add, d: delete): " ++ [key], "Delete Breakpoint (address): " ++ input] ++ output, vimState { vsMessage = last output })
+      let action = RemoveBreakpoint
+      (newPos, output) <- executeAction action currentPos vimState
+      return (NoAction, ("Breakpoints (a: add, d: delete): " ++ [key]) : output, vimState { vsCursor = newPos, vsMessage = head output, vsLastChange = Just (RepeatAction action) })
     _ -> return (NoAction, ["Invalid Breakpoint command"], vimState { vsMessage = "Invalid Breakpoint command" })
 
 -- | Handle memory trace commands
@@ -382,7 +412,8 @@ handleColonCommand command vimState = do
         Nothing -> return (NoAction, ["Invalid address"], vimState { vsMessage = "Invalid address" })
     ["set", "pc", addrStr] -> do
       (action, output) <- handleSetPC addrStr ""
-      return (action, output, vimState { vsCursor = vsCursor vimState, vsMessage = head output })
+      machineAfterSetPC <- get -- Get the machine state after setPC_
+      return (action, output, vimState { vsCursor = rPC (mRegs machineAfterSetPC), vsViewStart = rPC (mRegs machineAfterSetPC), vsMessage = head output })
     ["ra", valStr] -> do
       (action, output) <- handleSetReg8 (\r val -> r { rAC = val }) valStr "Accumulator" ""
       return (action, output, vimState { vsMessage = head output })
@@ -447,4 +478,4 @@ handleColonCommand command vimState = do
     ["d", addrStr] -> do
       (action, output) <- handleDisassemble [addrStr] ""
       return (action, output, vimState { vsMessage = last output })
-    _ -> return (NoAction, ["Unknown command: " ++ command], vimState { vsMessage = "Unknown command: " ++ command })
+    _ -> return (NoAction, ["Unknown command: " ++ command], vimState { vsCount = Nothing, vsMessage = "Unknown command: " ++ command })
