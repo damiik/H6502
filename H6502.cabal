@@ -50,7 +50,7 @@ library
       MOS6502Emulator.Debugger.VimModeEnhanced
       MOS6502Emulator.Debugger.VimModeHandleKey
       MOS6502Emulator.Debugger.VimModeExecute
-
+      MOS6502Emulator.Debugger.Types
       MOS6502Emulator.Debugger.Console
   other-modules:
       C64.HelloWorld

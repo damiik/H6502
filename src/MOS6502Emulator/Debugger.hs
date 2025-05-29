@@ -37,22 +37,23 @@ import MOS6502Emulator.Machine
 import MOS6502Emulator.DissAssembler (disassembleInstruction)
 import MOS6502Emulator.Registers
 import MOS6502Emulator.Memory (Memory(), writeByte)
-import MOS6502Emulator.Debugger.Console (renderScreen, getInput, putOutput, getKey) -- Import console I/O functions
-
+import MOS6502Emulator.Debugger.Console (renderScreen, getInput, putOutput, putString, getKey) -- Import console I/O functions, added putString
+import MOS6502Emulator.Debugger.Types (DebuggerConsoleState(..), initialConsoleState, DebuggerAction(..), DebuggerMode(..)) -- Import from Types
 import System.Console.ANSI (clearScreen) -- Import clearScreen
-import MOS6502Emulator.Debugger.Console (DebuggerConsoleState(..), initialConsoleState, renderScreen, getKey) -- Import DebuggerConsoleState, initialConsoleState, and getKey
 import qualified System.Console.ANSI as ANSI -- Import qualified System.Console.ANSI
 
 -- | Helper function for the interactive debugger loop, handling command input and execution.
-interactiveLoopHelper :: DebuggerConsoleState -> FDX DebuggerAction
-interactiveLoopHelper consoleState = do
+interactiveLoopHelper :: FDX DebuggerAction -- Changed signature
+interactiveLoopHelper = do
   machine <- get
   if halted machine
     then return QuitEmulator -- Machine halted, return QuitEmulator action
     else do
-      -- Set the input buffer with the prompt before rendering
-      let consoleStateWithPrompt = consoleState { inputBuffer = "> ", cursorPosition = 2 }
-      liftIO $ renderScreen machine consoleStateWithPrompt -- Render the screen initially
+      -- Get console state from machine and set the input buffer with the prompt before rendering
+      let currentConsoleState = mConsoleState machine
+      let consoleStateWithPrompt = currentConsoleState { inputBuffer = "> ", cursorPosition = 2 }
+      modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
+      renderScreen machine -- Render the screen initially (renderScreen now takes Machine directly)
 
       -- Temporarily enable echo for command input and use getLine
       liftIO $ hSetEcho stdin True
@@ -64,19 +65,18 @@ interactiveLoopHelper consoleState = do
 
       -- Update console state after command execution
       -- The command itself is now part of the output, not the input buffer
-      let newOutputLines = outputLines consoleState ++ ["> " ++ commandToExecute] ++ output -- Add command and captured output
-      let updatedConsoleState = consoleState { outputLines = newOutputLines, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
+      modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } })
 
       -- The renderScreen function itself handles clearing the screen, so no need to clear here.
       -- The next call to interactiveLoopHelper will render the updated state.
       case action of
-        ContinueLoop _ -> interactiveLoopHelper updatedConsoleState -- Continue the loop with updated state
+        ContinueLoop _ -> interactiveLoopHelper -- Continue the loop with updated state
         ExecuteStep _  -> return action -- Return the ExecuteStep action
-        ExitDebugger                 -> put (machine { debuggerActive = False }) >> return action
-        QuitEmulator                 -> put (machine { halted = True }) >> return action
-        NoAction                     -> interactiveLoopHelper updatedConsoleState -- Continue the loop with updated state
+        ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
+        QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
+        NoAction                     -> interactiveLoopHelper -- Continue the loop with updated state
         SwitchToVimMode              -> modify (\m -> m { debuggerMode = VimMode }) >> return action
-        SwitchToCommandMode          -> interactiveLoopHelper updatedConsoleState -- Stay in CommandMode and continue loop
+        SwitchToCommandMode          -> interactiveLoopHelper -- Stay in CommandMode and continue loop
 
 
 
@@ -134,25 +134,30 @@ logMemoryRange start end name = do
     ]
 
 -- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
-saveDebuggerState :: Machine -> IO ()
+saveDebuggerState :: Machine -> FDX () -- Changed to FDX
 saveDebuggerState machine = case debugLogPath machine of
-    Just filePath -> liftIO $ do
-        let breakpointsStr = "breakpoints: " ++ unwords [printf "%04X" bp | bp <- breakpoints machine]
-        let memBlocksStr = "memory_trace_blocks: " ++ unlines (map (\(start, end, name) ->
+    Just filePath -> do
+        let content = "breakpoints: " ++ unwords [printf "%04X" bp | bp <- breakpoints machine] ++ "\n" ++
+                      "memory_trace_blocks: " ++ unlines (map (\(start, end, name) ->
                                                                     printf "%04X %04X" start end ++
                                                                     case name of
                                                                         Just n -> " " ++ n
                                                                         Nothing -> "")
                                                                    (memoryTraceBlocks machine))
-        try (writeFile filePath (breakpointsStr ++ "\n" ++ memBlocksStr)) >>= \case
-            Left e -> putOutput $ "Error saving debugger state: " ++ show (e :: IOException)
-            Right _ -> putOutput $ "Debugger state saved to: " ++ filePath
+        result <- liftIO (try (writeFile filePath content) :: IO (Either IOException ()))
+        case result of
+            Left e -> do
+                putOutput $ "Error saving debugger state: " ++ displayException e
+                return ()
+            Right _ -> do
+                putOutput $ "Debugger state saved to: " ++ filePath
+                return ()
     Nothing -> return ()
 
 -- | Loads debugger state (breakpoints and memory trace blocks) from a file.
-loadDebuggerState :: FilePath -> IO ([Word16], [(Word16, Word16, Maybe String)])
-loadDebuggerState filePath = liftIO $ do
-    fileContentOrError <- try (readFile filePath)
+loadDebuggerState :: FilePath -> FDX ([Word16], [(Word16, Word16, Maybe String)]) -- Changed to FDX
+loadDebuggerState filePath = do
+    fileContentOrError <- liftIO $ try (readFile filePath)
     case fileContentOrError of
         Left e -> do
             putOutput $ "Error loading debugger state: " ++ show (e :: IOException)
@@ -359,7 +364,7 @@ handleCommand :: String -> FDX (DebuggerAction, [String])
 handleCommand commandToExecute = do
   machine <- get
   let handleStep :: FDX (DebuggerAction, [String])
-      handleStep = return (ExecuteStep commandToExecute, []) -- Step doesn't produce immediate output
+      handleStep = return (ExecuteStep commandToExecute, [])
   let handleRegs :: FDX (DebuggerAction, [String])
       handleRegs = do
         -- logRegisters =<< getRegisters -- logRegisters prints directly
@@ -404,10 +409,10 @@ handleCommand commandToExecute = do
 
   let handleHelp :: FDX (DebuggerAction, [String])
       handleHelp = do
-        let output = ["Available commands:\n\
+        let output = "Available commands:\n\
 \step  / z:              execute one instruction cycle\n\
 \regs  / r:              show current register values\n\
-\mem   / m [addr] [end]: add/remove memory range to dispaly\n\
+\mem   / m [addr] [end]: add/remove memory range to display\n\
 \break / bk:             add/remove breakpoint to the list\n\
 \quit  / q:              quit program\n\
 \exit  / e:              exit interactive mode\n\
@@ -420,8 +425,9 @@ handleCommand commandToExecute = do
 \rsp <val>:             set Stack Pointer to hex value\n\
 \rsr <val>:             set Status Register to hex value\n\
 \rpc <val>:             set Program Counter to hex value\n\
-\d:                     disassemble 32 instructions from current PC"]
-        return (NoAction, output)
+\d:                     disassemble 32 instructions from current PC"
+        mapM_ putOutput (lines output)
+        return (NoAction, [])
 
   case words commandToExecute of
     ["help"] -> handleHelp
@@ -437,11 +443,12 @@ handleCommand commandToExecute = do
     "mem":args -> handleMemTrace args commandToExecute
     "m":args -> handleMemTrace args commandToExecute -- Alias for mem
     ["log"] -> do
-      -- logMemoryRange prints directly, need to refactor
-      mapM_ (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machine)
-      return (NoAction, ["Memory trace blocks logged (output above)."]) -- Placeholder output
+      -- logMemoryRange now returns [String], so we can add it to outputLines
+      outputLinesFromLog <- mapM (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machine)
+      let outputLinesFromLog' = concat outputLinesFromLog
+      return (NoAction, "Memory trace blocks:" : outputLinesFromLog')
     ["x"] -> do
-      put (machine { debuggerActive = False }) -- Exit debugger mode
+      modify (\m -> m { debuggerActive = False }) -- Exit debugger mode
       let output = ["Exiting debugger. Continuing execution."]
       return (ExitDebugger, output)
     "bk":args -> handleBreak args commandToExecute

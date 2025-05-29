@@ -1,45 +1,40 @@
 module MOS6502Emulator.Debugger.Console
-  ( DebuggerConsoleState(..) -- Export the new data type
-  , initialConsoleState -- Export the initial state
-  , renderScreen
+  ( renderScreen
   , getKey
   , getInput
   , putOutput
   , putString
   , termHeight
   , termWidth
+  , DebuggerConsoleState
+  , initialConsoleState
   ) where
 
 import qualified System.Console.ANSI as ANSI
 import Numeric (showHex)
 import Data.Word (Word16) -- Import Word16
-import MOS6502Emulator.Core (Machine(..), DebuggerMode(..), mRegs, debuggerMode, FDX(..)) -- Import Machine, DebuggerMode, and FDX
+import MOS6502Emulator.Core (Machine(..), FDX(..), mRegs, mConsoleState) -- Updated import from Core, removed debuggerMode as it's from Types
+import MOS6502Emulator.Debugger.Types (DebuggerConsoleState(..), initialConsoleState, DebuggerMode(..)) -- New import from Types, exporting constructors and fields
 import MOS6502Emulator.Registers (rAC, rX, rY, rPC) -- Import register fields
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
-import Control.Monad.State (runStateT) -- Import runStateT
+import Control.Monad.State (runStateT, get, modify) -- Import runStateT, get, modify
 import Control.Monad.IO.Class (liftIO) -- Import liftIO
 import System.IO (hFlush, stdout) -- Import hFlush and stdout
+import Data.List (findIndex, splitAt, foldl')
+import Control.Monad (forM_, unless)
 
--- | Represents the state of the debugger console.
-data DebuggerConsoleState = DebuggerConsoleState
-  { outputLines :: [String] -- Lines of output to display
-  , inputBuffer :: String -- Current input buffer
-  , cursorPosition :: Int -- Cursor position in the input buffer
-  , lastCommand :: String -- The last executed command
-  } deriving (Show)
-
--- | The initial state of the debugger console.
-initialConsoleState :: DebuggerConsoleState
-initialConsoleState = DebuggerConsoleState
-  { outputLines = []
-  , inputBuffer = ""
-  , cursorPosition = 0
-  , lastCommand = ""
-  }
+-- | Strips ANSI escape codes from a string to calculate its visual length.
+stripAnsiCodes :: String -> String
+stripAnsiCodes [] = []
+stripAnsiCodes ('\ESC':'[':xs) = 
+  let dropped = dropWhile (\c -> c /= 'm' && c /= 'K' && c /= 'G' && c /= 'H' && c /= 'f' && c /= 'J') xs
+      remaining = if null dropped then [] else tail dropped
+  in stripAnsiCodes remaining
+stripAnsiCodes (x:xs) = x : stripAnsiCodes xs
 
 -- Placeholder for terminal dimensions, replace with actual values or functions to get them
 termWidth :: Int
-termWidth = 80
+termWidth = 120 -- Reverting to 120 as per user's initial request for total screen width
 
 termHeight :: Int
 termHeight = 24
@@ -47,68 +42,113 @@ termHeight = 24
 getKey :: IO Char
 getKey = getChar
 
--- Render the debugger screen with status line and input line
-renderScreen :: Machine -> DebuggerConsoleState -> IO ()
-renderScreen machine consoleState = do
-  ANSI.hideCursor
-  ANSI.saveCursor
-  ANSI.clearScreen
-  ANSI.setCursorPosition 0 0
+-- | Prints two columns of text separated by a vertical bar.
+printTwoColumns :: Int -> [String] -> [String] -> IO ()
+printTwoColumns _ leftLines rightLines = do -- 'width' parameter is now ignored as widths are fixed
+  let leftColumnWidth = 60   -- Accommodates disassembly lines
+      rightColumnWidth = 59  -- Allows full command descriptions (60+1+59=120)
+      maxLines = max (length leftLines) (length rightLines)
 
-  let availableContentHeight = termHeight - 2 -- Space for disassembled code and output lines
-  let maxOutputLines = availableContentHeight - 1 -- Reserve 1 line for the input prompt
+      -- Helper function to wrap text to a specified width
+      wrapText :: Int -> String -> [String]
+      wrapText _ "" = [""]
+      wrapText width s =
+        if length cleanStr <= width
+        then [s]
+        else let (first, rest) = splitAt width cleanStr
+                 -- Find last space to break at word boundary
+                 lastSpace = findLastSpace first
+                 (before, after) = if lastSpace > 0
+                                   then splitAt lastSpace cleanStr
+                                   else (cleanStr, "")
+                 -- Re-add ANSI codes to wrapped segments
+                 wrappedBefore = addAnsiCodes s before
+                 wrappedAfter = drop (length before) s
+             in [wrappedBefore] <> wrapText width wrappedAfter
+        where
+          cleanStr = stripAnsiCodes s
+          findLastSpace str =
+            case findIndex (==' ') (reverse str) of
+              Just pos -> length str - pos - 1
+              Nothing  -> 0
+          addAnsiCodes original stripped =
+            -- Simple implementation: preserve ANSI codes by reapplying to each segment
+            -- For better implementation we'd need full ANSI state machine
+            if null original then original
+            else take (length stripped) original
+
+      padString s targetWidth =
+        let visualLen = length (stripAnsiCodes s)
+            paddingNeeded = targetWidth - visualLen
+        in if paddingNeeded > 0
+           then s ++ replicate paddingNeeded ' '
+           else s  -- Rely on wrapping to prevent overflow
+
+  forM_ [0..maxLines-1] $ \i -> do
+    let l = if fromIntegral i < length leftLines then leftLines !! i else ""
+        r = if fromIntegral i < length rightLines then rightLines !! i else ""
+    
+    let paddedL = padString l leftColumnWidth
+    let paddedR = padString r rightColumnWidth
+
+    ANSI.setCursorPosition (fromIntegral i) 0
+    putStr $ paddedL ++ "|" ++ paddedR
+    hFlush stdout -- Flush after each line to ensure immediate display
+
+-- Render the debugger screen with status line and input line
+renderScreen :: Machine -> FDX () -- Changed signature
+renderScreen machine = do
+  liftIO ANSI.hideCursor
+  liftIO ANSI.saveCursor
+  liftIO ANSI.clearScreen
+  liftIO $ ANSI.setCursorPosition 0 0 -- Keep $ for setCursorPosition as it takes two args
+
+  let consoleState = mConsoleState machine -- Get console state from machine
+
+  let availableContentHeight = termHeight - 2 -- Space for two columns and status line
+  let maxOutputLines = availableContentHeight -- All available height for output
 
   let truncatedOutputLines = reverse $ take maxOutputLines $ reverse (outputLines consoleState)
-  let remainingHeightForDisassembly = availableContentHeight - length truncatedOutputLines
 
-  -- Display disassembled code
+  -- Display disassembled code (left column)
   let currentPC = rPC (mRegs machine)
-  ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines remainingHeightForDisassembly currentPC) machine
+  ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines availableContentHeight currentPC) machine
   
-  -- Print disassembled lines with explicit cursor positioning
-  mapM_ (\(line, row) -> do
-    ANSI.setCursorPosition row 0
-    putStr line
-    hFlush stdout) (zip disassembledLines [0..])
-
-  -- Print output lines with explicit cursor positioning
-  mapM_ (\(line, row) -> do
-    ANSI.setCursorPosition (length disassembledLines + row) 0
-    putStr line
-    hFlush stdout) (zip truncatedOutputLines [0..])
+  -- Print two columns
+  liftIO $ printTwoColumns termWidth disassembledLines truncatedOutputLines
 
   -- Status line (with background color)
-  ANSI.setCursorPosition (termHeight - 2) 0
-  ANSI.setSGR [ANSI.SetColor ANSI.Background ANSI.Vivid ANSI.Black, ANSI.SetColor ANSI.Foreground ANSI.Vivid ANSI.Green]
+  liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
+  liftIO $ ANSI.setSGR [ANSI.SetColor ANSI.Background ANSI.Vivid ANSI.Black, ANSI.SetColor ANSI.Foreground ANSI.Vivid ANSI.Green]
   let modeDisplay = case debuggerMode machine of
         CommandMode -> " COMMAND "
         VimMode -> " VIM "
-  putStr modeDisplay
+  liftIO $ putStr modeDisplay -- Keep $ for putStr as it takes one arg
 
   -- Debugger status (registers)
   let regs = mRegs machine
   let regDisplay = "A=" ++ showHex (rAC regs) "" ++ " X=" ++ showHex (rX regs) "" ++ " Y=" ++ showHex (rY regs) "" ++ " PC=" ++ showHex (rPC regs) ""
-  putStr regDisplay
+  liftIO $ putStr regDisplay -- Keep $ for putStr as it takes one arg
 
   -- Placeholder for other status info (filename, modified, position)
   let fileSection = " [No Name] " ++ " "
-  putStr fileSection
+  liftIO $ putStr fileSection -- Keep $ for putStr as it takes one arg
 
   -- Middle spacer
   let spacerLength = max 0 (termWidth - length modeDisplay - length regDisplay - length fileSection)
-  putStr $ replicate spacerLength ' '
-  hFlush stdout
+  liftIO $ putStr $ replicate spacerLength ' ' -- Keep $ for putStr as it takes one arg
+  liftIO $ hFlush stdout
 
   -- Command/message line (with normal background)
-  ANSI.setCursorPosition (termHeight - 1) 0
-  ANSI.setSGR [ANSI.Reset]
-  putStr (inputBuffer consoleState)
-  hFlush stdout
+  liftIO $ ANSI.setCursorPosition (termHeight - 1) 0
+  liftIO $ ANSI.setSGR [ANSI.Reset]
+  liftIO $ putStr (inputBuffer consoleState) -- Keep $ for putStr as it takes one arg
+  liftIO $ hFlush stdout
 
   -- Position cursor at the end of the input buffer
-  ANSI.setCursorPosition (termHeight - 1) (length (inputBuffer consoleState))
-  ANSI.showCursor
-  hFlush stdout
+  liftIO $ ANSI.setCursorPosition (termHeight - 1) (length (inputBuffer consoleState))
+  liftIO ANSI.showCursor
+  liftIO $ hFlush stdout
 
 -- Helper function to disassemble a given number of lines and return them as a list of strings.
 disassembleLines :: Int -> Word16 -> FDX ([String], Word16) -- Return (disassembled lines, address after last instruction)
@@ -124,9 +164,10 @@ disassembleLines count currentPC
 getInput :: IO String
 getInput = getLine
 
--- Basic output function (will be replaced by updating console state)
-putOutput :: String -> IO ()
-putOutput = putStrLn
+-- | Adds a string to the console output lines.
+putOutput :: String -> FDX ()
+putOutput s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ [s] } })
 
-putString :: String -> IO ()
-putString = putStr
+-- | Adds a string to the console output lines (without newline).
+putString :: String -> FDX ()
+putString s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ [s] } })

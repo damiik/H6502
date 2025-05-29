@@ -76,6 +76,7 @@ library:
   - MOS6502Emulator.Debugger.Console
   - MOS6502Emulator.Debugger.VimModeHandleKey
   - MOS6502Emulator.Debugger.VimModeExecute
+  - MOS6502Emulator.Debugger.Types
 
 
   other-modules:

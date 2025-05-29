@@ -10,17 +10,19 @@ import qualified Data.Map as Map
 import Numeric (showHex)
 import System.IO (hFlush, stdout, stdin, hSetEcho)
 
-import Control.Monad.State (get, put, MonadIO (liftIO))
+import Control.Monad.State (get, put, MonadIO (liftIO), modify) -- Added modify
 import Control.Monad.Trans.State (runStateT)
-import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, DebuggerAction (..), getRegisters, parseHexWord, unFDX)
+import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, getRegisters, parseHexWord, unFDX, mConsoleState) -- Removed DebuggerAction
 import MOS6502Emulator.Registers (Registers(..), rPC) 
 import MOS6502Emulator.Debugger.VimModeCore
 import MOS6502Emulator.Debugger.VimModeHandleKey
-import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth, DebuggerConsoleState (..))
+import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth, putOutput, putString) -- Updated import
+import MOS6502Emulator.Debugger.Types (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..)) -- New import, ensuring DebuggerAction is here
 import MOS6502Emulator.DissAssembler(disassembleInstructions)
 import MOS6502Emulator.Debugger (handleBreak, handleMemTrace, logRegisters, handleSetPC, handleSetReg8, handleFill, handleDisassemble)
 import MOS6502Emulator.Machine (setPC_)
 import qualified System.Console.ANSI as ANSI
+import Control.Monad (void) -- Added void
 
 -- | Parse a hex string to a byte value
 -- parseHexByte :: String -> Maybe Word8
@@ -33,11 +35,11 @@ import qualified System.Console.ANSI as ANSI
 -- | Handle breakpoint commands (similar to handleBreakVim from VimMode.hs)
 handleBreakVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleBreakVim vimState = do
-  liftIO $ putStr "\nBreakpoints (a: add, d: delete):" >> hFlush stdout
+  putString "\nBreakpoints (a: add, d: delete):" -- Changed to putString
   key <- liftIO getKey
   case key of
     'a' -> do
-      liftIO $ putStr "Add Breakpoint (address):" >> hFlush stdout
+      putString "Add Breakpoint (address):" -- Changed to putString
       liftIO $ hSetEcho stdin True
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
@@ -45,7 +47,7 @@ handleBreakVim vimState = do
       (action, output) <- handleBreak args ""
       return (action, ["Breakpoints (a: add, d: delete): " ++ [key], "Add Breakpoint (address): " ++ input] ++ output, vimState { vsMessage = last output })
     'd' -> do
-      liftIO $ putStr "Delete Breakpoint (address):" >> hFlush stdout
+      putString "Delete Breakpoint (address):" -- Changed to putString
       liftIO $ hSetEcho stdin True
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
@@ -57,11 +59,11 @@ handleBreakVim vimState = do
 -- | Handle memory trace commands
 handleMemTraceVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleMemTraceVim vimState = do
-  liftIO $ putStr "\nMemory Trace (a: add, d: delete):" >> hFlush stdout
+  putString "\nMemory Trace (a: add, d: delete):" -- Changed to putString
   key <- liftIO getKey
   case key of
     'a' -> do
-      liftIO $ putStr "Add Memory Trace Block (start end [name]): " >> hFlush stdout
+      putString "Add Memory Trace Block (start end [name]): " -- Changed to putString
       liftIO $ hSetEcho stdin True
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
@@ -69,7 +71,7 @@ handleMemTraceVim vimState = do
       (action, output) <- handleMemTrace args ""
       return (action, ["Memory Trace (a: add, d: delete): " ++ [key], "Add Memory Trace Block (start end [name]): " ++ input] ++ output, vimState { vsMessage = last output })
     'd' -> do
-      liftIO $ putStr "Delete Memory Trace Block (start end [name]): " >> hFlush stdout
+      putString "Delete Memory Trace Block (start end [name]): " -- Changed to putString
       liftIO $ hSetEcho stdin True
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
@@ -81,18 +83,18 @@ handleMemTraceVim vimState = do
 -- | Handle stored address commands
 handleAddressVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleAddressVim vimState = do
-  liftIO $ putStr "\nStored Addresses (s: store, g: goto):" >> hFlush stdout
+  putString "\nStored Addresses (s: store, g: goto):" -- Changed to putString
   key <- liftIO getKey
   case key of
     's' -> do
-      liftIO $ putStr "Store Current PC (key):" >> hFlush stdout
+      putString "Store Current PC (key):" -- Changed to putString
       keyChar <- liftIO getKey
       machine <- get
       let currentPC = rPC (mRegs machine)
       put (machine { storedAddresses = Map.insert keyChar currentPC (storedAddresses machine) })
       return (NoAction, ["Stored Addresses (s: store, g: goto): " ++ [key], "Stored PC $" ++ showHex currentPC "" ++ " at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "Stored PC at '" ++ [keyChar] ++ "'" })
     'g' -> do
-      liftIO $ putStr "Goto Stored Address (key):" >> hFlush stdout
+      putString "Goto Stored Address (key):" -- Changed to putString
       keyChar <- liftIO getKey
       machine <- get
       case Map.lookup keyChar (storedAddresses machine) of
@@ -194,10 +196,10 @@ handleColonCommand command vimState = do
       return (action, output, vimState { vsMessage = last output })
     _ -> return (NoAction, ["Unknown command: " ++ command], vimState { vsMessage = "Unknown command: " ++ command })
 
-interactiveLoopHelper :: DebuggerConsoleState -> FDX (DebuggerAction, VimState)
+interactiveLoopHelper :: FDX (DebuggerAction, VimState) -- Changed signature
 -- | Enhanced interactive loop with vim state management
 -- interactiveLoopHelper :: DebuggerConsoleState -> FDX DebuggerAction
-interactiveLoopHelper consoleState = do
+interactiveLoopHelper = do -- Removed consoleState argument
   machine <- get
   if halted machine
     then return (QuitEmulator, vimState machine) -- Return QuitEmulator action if halted
@@ -205,16 +207,18 @@ interactiveLoopHelper consoleState = do
       -- Use the vimState from the machine for the current iteration.
       -- This ensures that the state persists across loop iterations.
       let currentVimState = vimState machine 
-      liftIO $ renderVimScreen machine consoleState currentVimState
+      renderVimScreen machine currentVimState -- Removed consoleState argument
       key <- liftIO getKey
       (action, output, newVimState) <- handleVimKey key currentVimState
-      let updatedConsoleState = consoleState { outputLines = outputLines consoleState ++ output }
+      
+      -- Update console output lines in the machine's console state
+      modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ output } })
       
       -- Always update the machine's vimState with the newVimState before the next iteration
       put (machine { vimState = newVimState }) 
 
       case action of
-        ContinueLoop _ -> interactiveLoopHelper updatedConsoleState
+        ContinueLoop _ -> interactiveLoopHelper
         ExecuteStep _ -> do
           machineAfterExecution <- get -- Get the machine state *after* the step has been executed by the main loop
           return (action, newVimState { vsCursor = rPC (mRegs machineAfterExecution), vsViewStart = rPC (mRegs machineAfterExecution) })
@@ -232,21 +236,21 @@ interactiveLoopHelper consoleState = do
                 liftIO $ putStrLn $ "newVimState.vsCursor przed put: " ++ show (vsCursor newVimState)
                 liftIO $ putStrLn $ "vsCursor po put: " ++ show (vsCursor newVimState)
                 -- Renderowanie po zaktualizowaniu stanu
-                liftIO $ renderVimScreen machine updatedConsoleState newVimState
-                interactiveLoopHelper updatedConsoleState
+                renderVimScreen machine newVimState -- Removed consoleState argument
+                interactiveLoopHelper
 
 
         SwitchToCommandMode -> return (action, newVimState)
-        SwitchToVimMode -> interactiveLoopHelper updatedConsoleState
+        SwitchToVimMode -> interactiveLoopHelper
 
 
 -- | Render screen with vim-specific cursor and status
-renderVimScreen :: Machine -> DebuggerConsoleState -> VimState -> IO ()
-renderVimScreen machine consoleState vimState = do
-  putStrLn $ "Renderowanie z vsCursor: " ++ show (vsCursor vimState)
-  ANSI.hideCursor
-  ANSI.clearScreen
-  ANSI.setCursorPosition 0 0
+renderVimScreen :: Machine -> VimState -> FDX () -- Changed signature
+renderVimScreen machine vimState = do -- Removed consoleState argument
+  liftIO $ putStrLn $ "Renderowanie z vsCursor: " ++ show (vsCursor vimState)
+  liftIO ANSI.hideCursor
+  liftIO ANSI.clearScreen
+  liftIO $ ANSI.setCursorPosition 0 0
 
   let linesPerPage = termHeight - 3 -- Reserve 2 lines for status, 1 for message
   let cursorPos = vsCursor vimState
@@ -268,14 +272,14 @@ renderVimScreen machine consoleState vimState = do
   -- Render content based on view mode
   case vsViewMode vimState of
     CodeView -> do
-      ((disassembledLines, _), _) <- runStateT (unFDX $ disassembleInstructions adjustedViewStart linesPerPage) machine
+      ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleInstructions adjustedViewStart linesPerPage) machine
       let linesWithCursor = zipWith (\line addr -> 
                       if addr == cursorPos
                       then "\x1b[7m" ++ line ++ "\x1b[0m" -- Highlight cursor line
                       else line
                     ) disassembledLines [adjustedViewStart ..]
       -- Print lines with cursor highlighting
-      mapM_ (\(line, row) -> do
+      liftIO $ mapM_ (\(line, row) -> do
         ANSI.setCursorPosition row 0
         putStr line
         hFlush stdout) (zip linesWithCursor [0..])
@@ -283,22 +287,22 @@ renderVimScreen machine consoleState vimState = do
     MemoryView -> do
       let startAddr = adjustedViewStart
       let endAddr = min 0xFFFF (startAddr + fromIntegral (linesPerPage * 16 - 1))
-      bytes <- runStateT (unFDX $ mapM fetchByteMem [startAddr .. endAddr]) machine
+      bytes <- liftIO $ runStateT (unFDX $ mapM fetchByteMem [startAddr .. endAddr]) machine
       let byteLines = chunkBytes (fst bytes) 16
       let linesWithAddr = zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [startAddr, startAddr + 16 ..] byteLines
       let linesWithCursor = zipWith (\line addr -> if cursorPos >= addr && cursorPos < addr + 16
             then let offset = fromIntegral (cursorPos - addr) * 3
                  in take offset line ++ "\x1b[7m" ++ take 2 (drop offset line) ++ "\x1b[0m" ++ drop (offset + 2) line
             else line) linesWithAddr [startAddr, startAddr + 16 ..]
-      mapM_ (\(line, row) -> do
+      liftIO $ mapM_ (\(line, row) -> do
         ANSI.setCursorPosition row 0
         putStr line
         hFlush stdout) (zip linesWithCursor [0..])
 
     RegisterView -> do
-      regs <- runStateT (unFDX getRegisters) machine
+      regs <- liftIO $ runStateT (unFDX getRegisters) machine
       let output = logRegisters (fst regs)
-      mapM_ (\(line, row) -> do
+      liftIO $ mapM_ (\(line, row) -> do
         ANSI.setCursorPosition row 0
         putStr line
         hFlush stdout) (zip output [0..])
@@ -307,50 +311,50 @@ renderVimScreen machine consoleState vimState = do
       let sp = rSP (mRegs machine)
       let stackStart = fromIntegral sp + 0x0100
       let stackEnd = min 0x01FF (stackStart + fromIntegral (linesPerPage * 16 - 1))
-      bytes <- runStateT (unFDX $ mapM fetchByteMem [stackStart .. stackEnd]) machine
+      bytes <- liftIO $ runStateT (unFDX $ mapM fetchByteMem [stackStart .. stackEnd]) machine
       let byteLines = chunkBytes (fst bytes) 16
       let linesWithAddr = zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [stackStart, stackStart + 16 ..] byteLines
       let linesWithCursor = zipWith (\line addr -> if cursorPos >= addr && cursorPos < addr + 16
             then let offset = fromIntegral (cursorPos - addr) * 3
                  in take offset line ++ "\x1b[7m" ++ take 2 (drop offset line) ++ "\x1b[0m" ++ drop (offset + 2) line
             else line) linesWithAddr [stackStart, stackStart + 16 ..]
-      mapM_ (\(line, row) -> do
+      liftIO $ mapM_ (\(line, row) -> do
         ANSI.setCursorPosition row 0
         putStr line
         hFlush stdout) (zip linesWithCursor [0..])
 
   -- Status line
-  ANSI.setCursorPosition (termHeight - 2) 0
-  ANSI.setSGR [ANSI.SetColor ANSI.Background ANSI.Vivid ANSI.Black, ANSI.SetColor ANSI.Foreground ANSI.Vivid ANSI.Green]
+  liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
+  liftIO $ ANSI.setSGR [ANSI.SetColor ANSI.Background ANSI.Vivid ANSI.Black, ANSI.SetColor ANSI.Foreground ANSI.Vivid ANSI.Green]
   let modeDisplay = case vsViewMode vimState of
         CodeView -> " CODE "
         MemoryView -> " MEMORY "
         RegisterView -> " REGISTERS "
         StackView -> " STACK "
-  putStr modeDisplay
+  liftIO $ putStr modeDisplay
   let regs = mRegs machine
   let regDisplay = "A=" ++ showHex (rAC regs) "" ++ " X=" ++ showHex (rX regs) "" ++ " Y=" ++ showHex (rY regs) "" ++ " PC=" ++ showHex (rPC regs) ""
-  putStr regDisplay
+  liftIO $ putStr regDisplay
   let cursorDisplay = " $" ++ showHex cursorPos ""
-  putStr cursorDisplay
+  liftIO $ putStr cursorDisplay
   let countDisplay = case vsCount vimState of
         Just n -> " [" ++ show n ++ "]"
         Nothing -> ""
-  putStr countDisplay
+  liftIO $ putStr countDisplay
   let operatorDisplay = case vsOperator vimState of
         Just op -> " " ++ op
         Nothing -> ""
-  putStr operatorDisplay
+  liftIO $ putStr operatorDisplay
   let spacerLength = max 0 (termWidth - length modeDisplay - length regDisplay - length cursorDisplay - length countDisplay - length operatorDisplay)
-  putStr $ replicate spacerLength ' '
-  ANSI.setSGR [ANSI.Reset]
-  hFlush stdout
+  liftIO $ putStr $ replicate spacerLength ' '
+  liftIO $ ANSI.setSGR [ANSI.Reset]
+  liftIO $ hFlush stdout
 
   -- Message line
-  ANSI.setCursorPosition (termHeight - 1) 0
-  putStr (vsMessage vimState)
-  hFlush stdout
-  ANSI.showCursor
+  liftIO $ ANSI.setCursorPosition (termHeight - 1) 0
+  liftIO $ putStr (vsMessage vimState)
+  liftIO $ hFlush stdout
+  liftIO ANSI.showCursor
 
 -- | Helper to format Word8 as two-character hex
 formatHex8 :: Word8 -> String

@@ -33,7 +33,7 @@ import qualified MOS6502Emulator.Debugger as D
 -- import qualified MOS6502Emulator.Debugger.VimMode as V
 import MOS6502Emulator.Debugger (handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Import handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, and interactiveLoopHelper, and DebuggerAction
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
-import MOS6502Emulator.Debugger.Console (DebuggerConsoleState, initialConsoleState) -- Import DebuggerConsoleState and initialConsoleState
+import MOS6502Emulator.Debugger.Console (DebuggerConsoleState, initialConsoleState, putOutput) -- Import putOutput
 import MOS6502Emulator.Debugger.VimModeCore (initialVimState, VimState(..)) -- Import Motion, Action, and ViewMode
 import qualified MOS6502Emulator.Debugger.VimModeEnhanced as V
 import MOS6502Emulator.Debugger.VimModeEnhanced (handleVimKey)
@@ -44,7 +44,7 @@ newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty, debugLogPath = Nothing, debuggerMode = CommandMode, pcHistory = [], storedAddresses = Map.empty, redoHistory = [], vimState = initialVimState} -- Initialize new fields, including debuggerMode, pcHistory, storedAddresses, and redoHistory
+  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty, debugLogPath = Nothing, debuggerMode = CommandMode, pcHistory = [], storedAddresses = Map.empty, redoHistory = [], vimState = initialVimState, mConsoleState = initialConsoleState} -- Initialize new fields, including debuggerMode, pcHistory, storedAddresses, redoHistory, and mConsoleState
 
 -- | The main fetch-decode-execute loop. Runs `fdxSingleCycle` repeatedly until emulation stops.
 runFDXLoop :: FDX ()
@@ -71,17 +71,17 @@ runLoop = do
         then do
           -- Determine which debugger loop to run and capture the action
           action <- case debuggerMode machine of
-            CommandMode -> D.interactiveLoopHelper initialConsoleState
+            CommandMode -> D.interactiveLoopHelper
             VimMode -> do
               let currentVimState = vimState machine -- Use stored vimState
-              (dbgAction, newVimState) <- V.interactiveLoopHelper initialConsoleState -- Pass consoleState only
+              (dbgAction, newVimState) <- V.interactiveLoopHelper
               put (machine { vimState = newVimState }) -- Store newVimState in the machine for later use
               return dbgAction
         --else do
           -- Handle the action returned by the debugger loop
           case action of
             ContinueLoop _ -> runLoop -- Continue the main runLoop
-            ExecuteStep _ -> do
+            ExecuteStep _  -> do
               continue <- fdxSingleCycle -- Execute one instruction
               nextMachineState <- get -- Get state after instruction execution
               -- Check if the machine is halted after executing the instruction
@@ -93,17 +93,17 @@ runLoop = do
                 else if not continue
                   then return () -- Stop if fdxSingleCycle returns False
                   else handlePostInstructionChecks -- Call helper
-            ExitDebugger -> do
+            ExitDebugger   -> do
               modify (\m -> m { debuggerActive = False }) -- Exit debugger mode
               runLoop -- Continue the main runLoop
-            QuitEmulator -> modify (\m -> m { halted = True }) -- Halt the emulator
+            QuitEmulator   -> modify (\m -> m { halted = True }) -- Halt the emulator
             SwitchToCommandMode -> do
               modify (\m -> m { debuggerMode = CommandMode }) -- Switch to CommandMode
               runLoop -- Continue the main runLoop
             SwitchToVimMode -> do
               modify (\m -> m { debuggerMode = VimMode }) -- Switch to VimMode
               runLoop -- Continue the main runLoop
-            NoAction -> runLoop -- Simply continue the main runLoop, as vimState is already updated
+            NoAction       -> runLoop -- Simply continue the main runLoop, as vimState is already updated
         else do
           continue <- fdxSingleCycle -- Execute one instruction
           nextMachineState <- get -- Get state after instruction execution
@@ -114,7 +114,7 @@ runLoop = do
               put (nextMachineState { debuggerActive = True }) -- Activate debugger
               handlePostInstructionChecks -- Call helper
             else if not continue
-              then return () -- Stop if fdxSingleCycle returns False
+              then return () -- Stop if fdxSingleCycle returns False (not halted, but some other stop condition)
               else handlePostInstructionChecks -- Call helper
 
 -- -- | The inner loop that manages debugger activation and instruction execution.
@@ -181,21 +181,21 @@ handlePostInstructionChecks = do
     then do
       -- Machine was halted, debugger is already active from the calling branch
       case debuggerMode nextMachineState of
-        CommandMode -> void $ D.interactiveLoopHelper initialConsoleState -- Enter CommandMode loop, discard result
-        VimMode     -> void $ V.interactiveLoopHelper initialConsoleState -- Enter VimMode loop, discard result
+        CommandMode -> void D.interactiveLoopHelper -- Enter CommandMode loop, discard result
+        VimMode     -> void V.interactiveLoopHelper -- Enter VimMode loop, discard result
     else do
       -- Log registers and memory trace blocks if tracing is enabled
       when (enableTrace nextMachineState) $ do
-        let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
-        disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
-        liftIO $ putStrLn ""
-        liftIO $ putStrLn (fst disassembled)
-        let regOutput = D.logRegisters (mRegs nextMachineState) -- Capture register output
-        liftIO $ mapM_ putStrLn regOutput -- Print register output
-        -- Log all memory trace blocks
-        mapM_ (\(start, end, name) -> do
-                 memOutput <- D.logMemoryRange start end name -- Capture memory trace output
-                 liftIO $ mapM_ putStrLn memOutput) (memoryTraceBlocks nextMachineState) -- Print memory trace output
+          let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
+          disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
+          putOutput "" -- Use console output instead of direct print
+          putOutput (fst disassembled) -- Use console output instead of direct print
+          let regOutput = D.logRegisters (mRegs nextMachineState) -- Capture register output
+          mapM_ putOutput regOutput -- Use console output instead of direct print
+          -- Log all memory trace blocks
+          mapM_ (\(start, end, name) -> do
+                   memOutput <- D.logMemoryRange start end name -- Capture memory trace output
+                   mapM_ putOutput memOutput) (memoryTraceBlocks nextMachineState) -- Use console output
 
       -- Check for breakpoints after executing the instruction
       let currentPC = rPC (mRegs nextMachineState)
@@ -205,8 +205,8 @@ handlePostInstructionChecks = do
           put (nextMachineState { debuggerActive = True }) -- Activate debugger
           -- Determine which debugger loop to enter based on the current mode
           case debuggerMode nextMachineState of
-            CommandMode -> void $ D.interactiveLoopHelper initialConsoleState -- Enter CommandMode loop, discard result
-            VimMode     -> void $ V.interactiveLoopHelper initialConsoleState -- Enter VimMode loop, discard result
+            CommandMode -> void D.interactiveLoopHelper -- Enter CommandMode loop, discard result
+            VimMode     -> void V.interactiveLoopHelper -- Enter VimMode loop, discard result
         else
           runLoop -- Continue the main runLoop (execute next instruction)
 
@@ -216,7 +216,7 @@ runMachine :: Machine -> IO ((), Machine)
 runMachine initialMachine = do
   liftIO $ putStrLn $ "Initial PC in runMachine: $" ++ showHex (rPC (mRegs initialMachine)) ""
   (result, finalMachine) <- runStateT (unFDX runLoop) initialMachine
-  saveDebuggerState finalMachine -- Save debugger state on exit
+  _ <- runStateT (unFDX (saveDebuggerState finalMachine)) finalMachine
   return (result, finalMachine)
 
 
@@ -230,8 +230,8 @@ setupMachine initialMachine memoryWrites maybeSymPath maybeDebugLogPath = do
 
     -- ath is provided
     (loadedBreakpoints, loadedMemBlocks) <- case maybeDebugLogPath of
-      Just logPath -> loadDebuggerState logPath
-      Nothing -> return ([], [])
+        Just logPath -> fst <$> runStateT (unFDX (loadDebuggerState logPath)) initialMachine
+        Nothing -> return ([], [])
 
     let machineWithLoadedState = machineWithMem { breakpoints = loadedBreakpoints, memoryTraceBlocks = loadedMemBlocks }
 

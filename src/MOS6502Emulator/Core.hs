@@ -4,7 +4,7 @@
 {-# LANGUAGE DeriveTraversable#-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module MOS6502Emulator.Core where
+module MOS6502Emulator.Core (Machine (..), FDX (..), getRegisters, instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, parseHexByte, parseHexWord, DebuggerMode (..), AddressMode (..)) where
 
 import Control.Monad.Trans.State (StateT)
 import Control.Monad.State(MonadState, get, put)
@@ -16,14 +16,8 @@ import Data.Bits (shiftL)
 import MOS6502Emulator.Registers (Registers(..))
 import qualified MOS6502Emulator.Memory as Mem
 import MOS6502Emulator.Debugger.VimModeCore (VimState) -- Import VimState type
+import MOS6502Emulator.Debugger.Types (DebuggerConsoleState, initialConsoleState, DebuggerMode(..), DebuggerAction(..)) -- Import from new Types module
 import Numeric (readHex)
-
-
--- | Data type to represent the debugger mode
-data DebuggerMode = CommandMode | VimMode deriving (Show, Eq)
-
--- | Data type to represent actions the debugger can take.
-data DebuggerAction = ContinueLoop String | ExecuteStep String | ExitDebugger | QuitEmulator | NoAction | SwitchToVimMode | SwitchToCommandMode deriving (Show, Eq)
 
 -- | Represents the addressing modes of the 6502.
 data AddressMode =
@@ -91,6 +85,7 @@ data Machine = Machine
   , redoHistory          :: [Word16] -- ^ History of the Program Counter for stepping forward (after stepping back).
   , storedAddresses      :: Map.Map Char Word16 -- ^ A map of named stored addresses.
   , vimState             :: VimState -- New field
+  , mConsoleState        :: DebuggerConsoleState -- ^ The state of the debugger console.
   }
 
 newtype FDX a = FDX { unFDX :: StateT Machine IO a }

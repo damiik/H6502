@@ -50,6 +50,7 @@ import qualified MOS6502Emulator.Memory as Mem
 import MOS6502Emulator.Registers (Registers, rPC, rAC, rSP, rSR, rX, rY ) -- Import rPC
 import MOS6502Emulator.Core
 import MOS6502Emulator.Debugger.VimModeCore (VimState) -- Import VimState type
+import MOS6502Emulator.Debugger.Types (DebuggerAction(..)) -- Import DebuggerAction
 import MOS6502Emulator.DissAssembler
 
 
