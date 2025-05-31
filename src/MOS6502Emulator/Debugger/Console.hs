@@ -8,6 +8,7 @@ module MOS6502Emulator.Debugger.Console
   , termWidth
   , DebuggerConsoleState
   , initialConsoleState
+  , printTwoColumns -- Export printTwoColumns
   ) where
 
 import qualified System.Console.ANSI as ANSI
@@ -123,6 +124,7 @@ renderScreen machine = do
   let modeDisplay = case debuggerMode machine of
         CommandMode -> " COMMAND "
         VimMode -> " VIM "
+        VimCommandMode -> " VIM COMMAND "
   liftIO $ putStr modeDisplay -- Keep $ for putStr as it takes one arg
 
   -- Debugger status (registers)
@@ -142,11 +144,18 @@ renderScreen machine = do
   -- Command/message line (with normal background)
   liftIO $ ANSI.setCursorPosition (termHeight - 1) 0
   liftIO $ ANSI.setSGR [ANSI.Reset]
-  liftIO $ putStr (inputBuffer consoleState) -- Keep $ for putStr as it takes one arg
+  let commandLineContent = case debuggerMode machine of
+        VimCommandMode -> ":" ++ inputBuffer consoleState
+        _ -> inputBuffer consoleState
+  liftIO $ putStr commandLineContent
   liftIO $ hFlush stdout
 
   -- Position cursor at the end of the input buffer
-  liftIO $ ANSI.setCursorPosition (termHeight - 1) (length (inputBuffer consoleState))
+  let bufferLength = length (inputBuffer consoleState)
+  let cursorCol = case debuggerMode machine of
+        VimCommandMode -> 1 + bufferLength
+        _ -> bufferLength
+  liftIO $ ANSI.setCursorPosition (termHeight - 1) cursorCol
   liftIO ANSI.showCursor
   liftIO $ hFlush stdout
 

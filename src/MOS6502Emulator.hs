@@ -33,10 +33,10 @@ import qualified MOS6502Emulator.Debugger as D
 -- import qualified MOS6502Emulator.Debugger.VimMode as V
 import MOS6502Emulator.Debugger (handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Import handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, and interactiveLoopHelper, and DebuggerAction
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
-import MOS6502Emulator.Debugger.Console (DebuggerConsoleState, initialConsoleState, putOutput) -- Import putOutput
+import MOS6502Emulator.Debugger.Console (DebuggerConsoleState, initialConsoleState, putOutput, renderScreen) -- Import renderScreen
 import MOS6502Emulator.Debugger.VimModeCore (initialVimState, VimState(..)) -- Import Motion, Action, and ViewMode
 import qualified MOS6502Emulator.Debugger.VimModeEnhanced as V
-import MOS6502Emulator.Debugger.VimModeEnhanced (handleVimKey)
+-- import MOS6502Emulator.Debugger.VimModeEnhanced (handleVimKey) -- Removed as it's no longer exported
 
 -- | Initializes a new 6502 machine state
 -- | Initializes a new 6502 machine state
@@ -71,11 +71,24 @@ runLoop = do
         then do
           -- Determine which debugger loop to run and capture the action
           action <- case debuggerMode machine of
-            CommandMode -> D.interactiveLoopHelper
+            CommandMode -> do
+              action <- D.interactiveLoopHelper
+              case action of
+                SwitchToVimMode -> do
+                  put (machine { debuggerMode = VimMode })
+                  return action
+                _ -> return action
             VimMode -> do
-              let currentVimState = vimState machine -- Use stored vimState
-              (dbgAction, newVimState) <- V.interactiveLoopHelper
-              put (machine { vimState = newVimState }) -- Store newVimState in the machine for later use
+              liftIO $ putStrLn $ "DEBUG: runLoop (VimMode) - halted before V.interactiveLoopHelper: " ++ show (halted machine)
+              -- V.interactiveLoopHelper already handles putting the updated machine state
+              (dbgAction, _) <- V.interactiveLoopHelper -- Discard newVimState as it's already put
+              liftIO $ putStrLn $ "DEBUG: runLoop (VimMode) - dbgAction from V.interactiveLoopHelper: " ++ show dbgAction
+              return dbgAction
+            VimCommandMode -> do
+              liftIO $ putStrLn $ "DEBUG: runLoop (VimCommandMode) - halted before V.interactiveLoopHelper: " ++ show (halted machine)
+              -- V.interactiveLoopHelper already handles putting the updated machine state
+              (dbgAction, _) <- V.interactiveLoopHelper -- Discard newVimState as it's already put
+              liftIO $ putStrLn $ "DEBUG: runLoop (VimCommandMode) - dbgAction from V.interactiveLoopHelper: " ++ show dbgAction
               return dbgAction
         --else do
           -- Handle the action returned by the debugger loop
@@ -102,6 +115,8 @@ runLoop = do
               runLoop -- Continue the main runLoop
             SwitchToVimMode -> do
               modify (\m -> m { debuggerMode = VimMode }) -- Switch to VimMode
+              machineAfterModeChange <- get -- Get the machine state after mode change
+              renderScreen machineAfterModeChange -- Render the screen immediately
               runLoop -- Continue the main runLoop
             NoAction       -> runLoop -- Simply continue the main runLoop, as vimState is already updated
         else do
@@ -183,6 +198,7 @@ handlePostInstructionChecks = do
       case debuggerMode nextMachineState of
         CommandMode -> void D.interactiveLoopHelper -- Enter CommandMode loop, discard result
         VimMode     -> void V.interactiveLoopHelper -- Enter VimMode loop, discard result
+        VimCommandMode -> void V.interactiveLoopHelper -- Enter VimCommandMode loop, discard result
     else do
       -- Log registers and memory trace blocks if tracing is enabled
       when (enableTrace nextMachineState) $ do

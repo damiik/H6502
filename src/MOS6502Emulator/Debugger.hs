@@ -42,6 +42,27 @@ import MOS6502Emulator.Debugger.Types (DebuggerConsoleState(..), initialConsoleS
 import System.Console.ANSI (clearScreen) -- Import clearScreen
 import qualified System.Console.ANSI as ANSI -- Import qualified System.Console.ANSI
 
+-- Helper to read a command line, optionally leaving the newline in the buffer
+readCommand :: FDX (String, Bool) -- Returns (command, shouldConsumeNewline)
+readCommand = do
+  liftIO $ hSetEcho stdin False -- Turn off echo for raw input
+  (cmd, consumeNewline) <- readChars ""
+  liftIO $ hSetEcho stdin True -- Turn echo back on
+  return (cmd, consumeNewline)
+  where
+    readChars :: String -> FDX (String, Bool)
+    readChars currentInput = do
+      c <- liftIO getKey
+      liftIO $ putChar c -- Echo the character back to the console
+      liftIO $ hFlush stdout
+      if c == '\n'
+        then do
+          -- If the command is "v", we don't consume the newline here.
+          -- The VimMode's interactiveLoopHelper will consume it.
+          let shouldConsumeNewline = (currentInput /= "v")
+          return (currentInput, shouldConsumeNewline)
+        else readChars (currentInput ++ [c])
+
 -- | Helper function for the interactive debugger loop, handling command input and execution.
 interactiveLoopHelper :: FDX DebuggerAction -- Changed signature
 interactiveLoopHelper = do
@@ -55,17 +76,16 @@ interactiveLoopHelper = do
       modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
       renderScreen machine -- Render the screen initially (renderScreen now takes Machine directly)
 
-      -- Temporarily enable echo for command input and use getLine
-      liftIO $ hSetEcho stdin True
-      commandToExecute <- liftIO getLine -- Read the full command input line
-      -- Disable echo again
-      liftIO $ hSetEcho stdin False
+      (commandToExecute, consumeNewline) <- readCommand -- Use the new readCommand function
 
       (action, output) <- handleCommand commandToExecute -- Process the command
+      
+      -- Get the machine state *after* handleCommand has potentially modified it
+      machineAfterCommand <- get 
 
-      -- Update console state after command execution
-      -- The command itself is now part of the output, not the input buffer
-      modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } })
+      -- Update console state on the machine state that already includes changes from handleCommand
+      let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+      put updatedMachine -- Put the fully updated machine state back
 
       -- The renderScreen function itself handles clearing the screen, so no need to clear here.
       -- The next call to interactiveLoopHelper will render the updated state.
@@ -75,7 +95,11 @@ interactiveLoopHelper = do
         ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
         QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
         NoAction                     -> interactiveLoopHelper -- Continue the loop with updated state
-        SwitchToVimMode              -> modify (\m -> m { debuggerMode = VimMode }) >> return action
+        SwitchToVimMode              -> do
+          -- If the newline was not consumed by readCommand, it will be the next character.
+          -- The VimMode's interactiveLoopHelper should handle it.
+          -- No need to explicitly consume it here.
+          modify (\m -> m { debuggerMode = VimMode }) >> return action
         SwitchToCommandMode          -> interactiveLoopHelper -- Stay in CommandMode and continue loop
 
 
@@ -240,6 +264,8 @@ handleMemTrace args lastCommand = do
             then do
               let newBlocks = filter (/= newBlock) currentBlocks
               put (machine { memoryTraceBlocks = newBlocks })
+              let newBlocks = filter (/= newBlock) currentBlocks
+              put (machine { memoryTraceBlocks = newBlocks })
               let output = ["Memory trace block removed: $" ++ showHex startAddr "" ++ " - $" ++ showHex endAddr ""]
               return (ContinueLoop lastCommand, output)
             else do
@@ -251,8 +277,8 @@ handleMemTrace args lastCommand = do
           let output = ["Invalid address format for memory trace block. Use hex (e.g., mem 0x0200 0x0300)."]
           return (ContinueLoop lastCommand, output)
     startAddrStr:endAddrStr:nameWords -> do -- Add or remove memory trace block with name
-      case (readHex startAddrStr, readHex endAddrStr) of
-        ([(startAddr, "")], [(endAddr, "")]) -> do
+      case (parseHexWord startAddrStr, parseHexWord endAddrStr) of
+        (Just startAddr, Just endAddr) -> do
           let currentBlocks = memoryTraceBlocks machine
           let name = unwords nameWords
           let newBlock = (startAddr, endAddr, Just name)
@@ -273,6 +299,18 @@ handleMemTrace args lastCommand = do
     _ -> do -- Incorrect number of arguments
       let output = ["Invalid use of memory trace command. Use 'mem' or 'm' to list, 'mem <start> <end>' to add/remove without name, or 'mem <start> <end> <name>' to add/remove with name."]
       return (ContinueLoop lastCommand, output)
+
+-- Removed: Helper function to format memory trace blocks for debugging output
+-- Removed: formatMemTraceBlocks :: [(Word16, Word16, Maybe String)] -> String
+-- Removed: formatMemTraceBlocks blocks =
+-- Removed:   "[" ++ unwords (map formatBlock blocks) ++ "]"
+-- Removed:   where
+-- Removed:     formatBlock (start, end, name) =
+-- Removed:       "($" ++ showHex start "" ++ " - $" ++ showHex end "" ++
+-- Removed:       case name of
+-- Removed:         Just n -> " " ++ n
+-- Removed:         Nothing -> ""
+-- Removed:       ++ ")"
 
 -- | Handles the fill memory command in the debugger.
 handleFill :: [String] -> String -> FDX (DebuggerAction, [String])
@@ -426,8 +464,7 @@ handleCommand commandToExecute = do
 \rsr <val>:             set Status Register to hex value\n\
 \rpc <val>:             set Program Counter to hex value\n\
 \d:                     disassemble 32 instructions from current PC"
-        mapM_ putOutput (lines output)
-        return (NoAction, [])
+        return (NoAction, lines output)
 
   case words commandToExecute of
     ["help"] -> handleHelp

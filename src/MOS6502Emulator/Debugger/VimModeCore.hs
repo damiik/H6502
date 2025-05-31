@@ -13,6 +13,7 @@ module MOS6502Emulator.Debugger.VimModeCore
 import Data.Word
 import qualified Data.Map as Map
 import Data.Char (isDigit)
+import MOS6502Emulator.Debugger.Types (DebuggerMode)
 
 
 -- | Commands that can be repeated with '.'
@@ -75,6 +76,7 @@ data VimState = VimState
   , vsSearchBuffer :: String     -- For / searches
   , vsMessage :: String          -- Status message
   , vsLastChange :: Maybe RepeatableCommand -- For repeating last change with '.'
+  , vsInCommandMode :: Bool -- New field to indicate if in ':' command mode
   } deriving (Show)
 
 data ViewMode = 
@@ -101,6 +103,7 @@ initialVimState = VimState
   , vsSearchBuffer = ""
   , vsMessage = ""
   , vsLastChange = Nothing
+  , vsInCommandMode = False -- Initialize new field
   }
 
 -- | Parse count prefix (like 5dd, 10j)
