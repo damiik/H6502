@@ -12,12 +12,13 @@ import Control.Monad.State (get, put)
 import Control.Monad.IO.Class (liftIO)
 import System.IO (hFlush, stdout, stdin, hSetEcho)
 import MOS6502Emulator.Core (Machine(..),FDX, fetchByteMem, writeByteMem, parseHexByte)
-import MOS6502Emulator.Debugger.VimModeCore (Action(..), Motion(..), ViewMode(..), VimState (..), initialVimState)
+import MOS6502Emulator.Debugger.VimModeCore(Action(..), Motion(..), ViewMode(..), VimState (..), initialVimState)
 import MOS6502Emulator.Debugger.Console (getInput, termHeight)
 import Control.Monad (foldM)
 import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo, disassembleInstructions, opcodeMap)
 import Data.Map (Map)
 import MOS6502Emulator.Machine
+
 -- | Execute an action with a motion
 executeAction :: Action -> Word16 -> VimState -> FDX (Word16, [String])
 executeAction action currentPos vimState = do
@@ -145,7 +146,7 @@ executeMotion motion currentPos = do
     NextByte n -> return $ min maxAddr (currentPos + fromIntegral n)
     PrevByte n -> return $ max 0 (currentPos - fromIntegral n)
     
-    GotoAddress addr -> return $ min maxAddr addr
+    GotoAddressMotion addr -> return $ min maxAddr addr
     GotoPC -> return $ rPC (mRegs machine)
     
     WordForward n -> executeMotion (NextInstruction n) currentPos
@@ -177,9 +178,11 @@ executeMotion motion currentPos = do
       newPos <- findByteInMemory currentPos byte forward
       return $ if forward then max 0 (newPos - 1) else min maxAddr (newPos + 1)
     
-    RepeatFind forward -> case vsLastFind initialVimState of -- Ideally, use vimState
-      Just (byte, _) -> findByteInMemory currentPos byte forward
-      Nothing -> return currentPos
+    RepeatFind forward -> do
+        machine <- get
+        case vsLastFind (vimState machine) of
+          Just (byte, _) -> findByteInMemory currentPos byte forward
+          Nothing -> return currentPos
 
 
 -- | Find the first valid instruction start among candidate addresses

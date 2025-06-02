@@ -16,10 +16,17 @@ import MOS6502Emulator.Debugger.Types (DebuggerAction(..), DebuggerConsoleState(
 import MOS6502Emulator.Registers(Registers(..))
 import MOS6502Emulator.DissAssembler(disassembleInstructions, disassembleInstruction, InstructionInfo(..), opcodeMap)
 import MOS6502Emulator.Debugger(handleMemTrace, handleBreak, handleDisassemble, handleSetPC, handleSetReg8, handleFill, logRegisters )
-import MOS6502Emulator.Debugger.VimModeCore ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), parseCount)
+import MOS6502Emulator.Debugger.VimModeCore ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..))
 import MOS6502Emulator.Debugger.VimModeExecute (executeMotion, executeAction)
 import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth, putOutput, putString)
 import qualified System.Console.ANSI as ANSI
+
+-- | Parse count prefix (like 5dd, 10j)
+parseCount :: String -> Maybe Int
+parseCount s = if all isDigit s && not (null s) 
+               then Just (read s) 
+               else Nothing
+
 
 handleVimNormalModeKey :: Char -> VimState -> FDX (DebuggerAction, [String], VimState) -- Renamed
 handleVimNormalModeKey key vimState = do
@@ -135,7 +142,7 @@ handleVimNormalModeKey key vimState = do
       case vsCount vimState of
         Just addr -> do
           let newPos = fromIntegral addr
-          let motion = GotoAddress newPos
+          let motion = GotoAddressMotion newPos
           return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) })
         Nothing -> do
           let newPos = rPC (mRegs machine)

@@ -15,7 +15,6 @@ module MOS6502Emulator.Debugger
   , handleDisassemble -- Exporting for CommandMode
   , interactiveLoopHelper -- Exporting for CommandMode
   ) where
-
 import Numeric (showHex, readHex)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (unless)
@@ -39,6 +38,7 @@ import MOS6502Emulator.Registers
 import MOS6502Emulator.Memory (Memory(), writeByte)
 import MOS6502Emulator.Debugger.Console (renderScreen, getInput, putOutput, putString, getKey) -- Import console I/O functions, added putString
 import MOS6502Emulator.Debugger.Types (DebuggerConsoleState(..), initialConsoleState, DebuggerAction(..), DebuggerMode(..)) -- Import from Types
+import MOS6502Emulator.Debugger.VimModeCore (vimModeHelp) -- Import VimMode help
 import System.Console.ANSI (clearScreen) -- Import clearScreen
 import qualified System.Console.ANSI as ANSI -- Import qualified System.Console.ANSI
 
@@ -75,18 +75,13 @@ interactiveLoopHelper = do
       let consoleStateWithPrompt = currentConsoleState { inputBuffer = "> ", cursorPosition = 2 }
       modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
       renderScreen machine -- Render the screen initially (renderScreen now takes Machine directly)
-
       (commandToExecute, consumeNewline) <- readCommand -- Use the new readCommand function
-
       (action, output) <- handleCommand commandToExecute -- Process the command
-      
       -- Get the machine state *after* handleCommand has potentially modified it
       machineAfterCommand <- get 
-
       -- Update console state on the machine state that already includes changes from handleCommand
       let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
       put updatedMachine -- Put the fully updated machine state back
-
       -- The renderScreen function itself handles clearing the screen, so no need to clear here.
       -- The next call to interactiveLoopHelper will render the updated state.
       case action of
@@ -102,32 +97,21 @@ interactiveLoopHelper = do
           modify (\m -> m { debuggerMode = VimMode }) >> return action
         SwitchToCommandMode          -> interactiveLoopHelper -- Stay in CommandMode and continue loop
 
-
-
-
 -- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
 formatHex8 :: Word8 -> String
 formatHex8 b =
   let hexStr = showHex b ""
   in if length hexStr < 2 then '0' : hexStr else hexStr
-
 -- | Formats a Word16 as a four-character hexadecimal string, padding with leading zeros if necessary.
 formatHex16 :: Word16 -> String
 formatHex16 w =
   let hexStr = showHex w ""
   in replicate (4 - length hexStr) '0' ++ hexStr
-
 -- | Formats the status flags of the status register (SR) into a human-readable string.
 formatStatusFlags :: Word8 -> String
 formatStatusFlags sr =
   let getFlagBit r b = if testBit r b then '*' else ' '
-  in [getFlagBit sr 7, 'N', ' ',
-      getFlagBit sr 6, 'V', '-',
-      getFlagBit sr 4, 'B', ' ',
-      getFlagBit sr 3, 'D', ' ',
-      getFlagBit sr 2, 'I', ' ',
-      getFlagBit sr 1, 'Z', ' ',
-      getFlagBit sr 0, 'C']
+  in [getFlagBit sr 7, 'N', ' ', getFlagBit sr 6, 'V', '-', getFlagBit sr 4, 'B', ' ', getFlagBit sr 3, 'D', ' ', getFlagBit sr 2, 'I', ' ', getFlagBit sr 1, 'Z', ' ', getFlagBit sr 0, 'C']
 
 -- | Logs the current register values as a list of strings.
 logRegisters :: Registers -> [String]
@@ -211,7 +195,6 @@ loadDebuggerState filePath = do
                 in [(startAddr, endAddr, name)]
             _ -> [] -- Invalid address format or not enough arguments
     parseBlock _ = [] -- Invalid block format (e.g., only one address)
-
 
 -- | Handles breakpoint commands in the debugger.
 handleBreak :: [String] -> String -> FDX (DebuggerAction, [String])
@@ -299,18 +282,6 @@ handleMemTrace args lastCommand = do
     _ -> do -- Incorrect number of arguments
       let output = ["Invalid use of memory trace command. Use 'mem' or 'm' to list, 'mem <start> <end>' to add/remove without name, or 'mem <start> <end> <name>' to add/remove with name."]
       return (ContinueLoop lastCommand, output)
-
--- Removed: Helper function to format memory trace blocks for debugging output
--- Removed: formatMemTraceBlocks :: [(Word16, Word16, Maybe String)] -> String
--- Removed: formatMemTraceBlocks blocks =
--- Removed:   "[" ++ unwords (map formatBlock blocks) ++ "]"
--- Removed:   where
--- Removed:     formatBlock (start, end, name) =
--- Removed:       "($" ++ showHex start "" ++ " - $" ++ showHex end "" ++
--- Removed:       case name of
--- Removed:         Just n -> " " ++ n
--- Removed:         Nothing -> ""
--- Removed:       ++ ")"
 
 -- | Handles the fill memory command in the debugger.
 handleFill :: [String] -> String -> FDX (DebuggerAction, [String])
@@ -432,39 +403,41 @@ handleCommand commandToExecute = do
 
   let handleGoto :: String -> FDX (DebuggerAction, [String])
       handleGoto addrStr = do
-        machine <- get
+        currentMachine <- get
         if null addrStr then do
           let output = ["Address required for goto command."]
           return (NoAction, output)
         else case readHex addrStr of
           [(addr, "")] -> do
-            put (machine { mRegs = (mRegs machine) { rPC = addr } })
+            put (currentMachine { mRegs = (mRegs currentMachine) { rPC = addr } })
             let output = ["PC set to $" ++ showHex addr ""]
             return (NoAction, output)
           _ -> do
             let output = ["Invalid address format."]
             return (NoAction, output)
 
+
+
   let handleHelp :: FDX (DebuggerAction, [String])
       handleHelp = do
         let output = "Available commands:\n\
-\step  / z:              execute one instruction cycle\n\
-\regs  / r:              show current register values\n\
-\mem   / m [addr] [end]: add/remove memory range to display\n\
-\break / bk:             add/remove breakpoint to the list\n\
-\quit  / q:              quit program\n\
-\exit  / e:              exit interactive mode\n\
-\trace / t:              toggle instruction tracing\n\
-\goto  / g <addr>:       set program counter to address\n\
-\fill  / f <start> <end> <byte1> [byte2...]: fill memory range with bytes\n\
-\ra <val>:              set Accumulator to hex value\n\
-\rx <val>:              set X register to hex value\n\
-\ry <val>:              set Y register to hex value\n\
-\rsp <val>:             set Stack Pointer to hex value\n\
-\rsr <val>:             set Status Register to hex value\n\
-\rpc <val>:             set Program Counter to hex value\n\
-\d:                     disassemble 32 instructions from current PC"
-        return (NoAction, lines output)
+          \step  / z:              execute one instruction cycle\n\
+          \regs  / r:              show current register values\n\
+          \mem   / m [addr] [end]: add/remove memory range to display\n\
+          \break / bk:             add/remove breakpoint to the list\n\
+          \quit  / q:              quit program\n\
+          \exit  / e:              exit interactive mode\n\
+          \trace / t:              toggle instruction tracing\n\
+          \goto  / g <addr>:       set program counter to address\n\
+          \fill  / f <start> <end> <byte1> [byte2...]: fill memory range with bytes\n\
+          \ra <val>:              set Accumulator to hex value\n\
+          \rx <val>:              set X register to hex value\n\
+          \ry <val>:              set Y register to hex value\n\
+          \rsp <val>:             set Stack Pointer to hex value\n\
+          \rsr <val>:             set Status Register to hex value\n\
+          \rpc <val>:             set Program Counter to hex value\n\
+          \d:                     disassemble 32 instructions from current PC"
+        return (NoAction, lines output ++ [""] ++ lines vimModeHelp)
 
   case words commandToExecute of
     ["help"] -> handleHelp
