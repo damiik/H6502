@@ -124,22 +124,40 @@ handleVimCommandModeKey key machine vimState = do
   let currentCommandBuffer = vsCommandBuffer vimState
   let currentConsoleState = mConsoleState machine
   let currentDebuggerMode = debuggerMode machine
+  let availableContentHeight = termHeight - 2 -- Space for two columns and status line
 
   case key of
     '\n' -> do -- Enter key
-      liftIO $ hSetEcho stdin False -- Disable echo after command execution
-      let commandToExecute = drop 1 currentCommandBuffer -- Remove leading ':'
-      (action, output) <- handleCommand commandToExecute
-      liftIO $ putStrLn $ "DEBUG: handleCommand returned action: " ++ show action
-      
-      -- Get the machine state *after* handleCommand has potentially modified it
-      machineAfterCommand <- get 
+      let helpTextLines = helpLines currentConsoleState
+      let helpTextScrollPos = helpScrollPos currentConsoleState
 
-      let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
-      -- Use machineAfterCommand to get the latest console state
-      let newConsoleState = (mConsoleState machineAfterCommand) { vimCommandInputBuffer = "", inputBuffer = "" }
-      let newDebuggerMode = VimMode -- Switch back to VimMode
-      return (action, output, newVimState, newConsoleState, newDebuggerMode)
+      if not (null helpTextLines) then do
+        -- If help is being displayed, scroll it
+        let newScrollPos = helpTextScrollPos + availableContentHeight
+        if newScrollPos >= length helpTextLines then do
+          -- Reached end of help, clear help state
+          let newConsoleState = currentConsoleState { helpLines = [], helpScrollPos = 0, vimCommandInputBuffer = "", inputBuffer = "" }
+          let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
+          return (NoAction, [], newVimState, newConsoleState, VimMode)
+        else do
+          -- Scroll to next page of help
+          let newConsoleState = currentConsoleState { helpScrollPos = newScrollPos, vimCommandInputBuffer = "", inputBuffer = "" }
+          return (NoAction, [], vimState, newConsoleState, currentDebuggerMode)
+      else do
+        -- No help being displayed, execute command
+        liftIO $ hSetEcho stdin False -- Disable echo after command execution
+        let commandToExecute = drop 1 currentCommandBuffer -- Remove leading ':'
+        (action, output) <- handleCommand commandToExecute
+        liftIO $ putStrLn $ "DEBUG: handleCommand returned action: " ++ show action
+        
+        -- Get the machine state *after* handleCommand has potentially modified it
+        machineAfterCommand <- get 
+
+        let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
+        -- Use machineAfterCommand to get the latest console state
+        let newConsoleState = (mConsoleState machineAfterCommand) { vimCommandInputBuffer = "", inputBuffer = "" }
+        let newDebuggerMode = VimMode -- Switch back to VimMode
+        return (action, output, newVimState, newConsoleState, newDebuggerMode)
     '\DEL' -> do -- Backspace key
       if length currentCommandBuffer > 1
         then do
@@ -290,7 +308,13 @@ renderVimScreen machine vimState = do
         Nothing -> ""
   liftIO $ putStr countDisplay
   let operatorDisplay = case vsOperator vimState of
-        Just op -> " " ++ op
+
+        Just op -> 
+          case op of
+            DeleteOp -> " d"
+            ChangeOp -> " c"
+            YankOp -> " y"
+          -- Just op -> 
         Nothing -> ""
   liftIO $ putStr operatorDisplay
   let spacerLength = max 0 (termWidth - length modeDisplay - length regDisplay - length cursorDisplay - length countDisplay - length operatorDisplay)

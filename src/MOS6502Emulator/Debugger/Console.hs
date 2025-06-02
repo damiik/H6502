@@ -109,14 +109,20 @@ renderScreen machine = do
   let availableContentHeight = termHeight - 2 -- Space for two columns and status line
   let maxOutputLines = availableContentHeight -- All available height for output
 
-  let truncatedOutputLines = reverse $ take maxOutputLines $ reverse (outputLines consoleState)
+  let currentOutputLines = outputLines consoleState
+  let helpTextLines = helpLines consoleState
+  let helpTextScrollPos = helpScrollPos consoleState
 
+  let rightColumnContent = if null helpTextLines
+                           then reverse $ take maxOutputLines $ reverse currentOutputLines
+                           else take maxOutputLines $ drop helpTextScrollPos helpTextLines
+  
   -- Display disassembled code (left column)
   let currentPC = rPC (mRegs machine)
   ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines availableContentHeight currentPC) machine
   
   -- Print two columns
-  liftIO $ printTwoColumns termWidth disassembledLines truncatedOutputLines
+  liftIO $ printTwoColumns termWidth disassembledLines rightColumnContent
 
   -- Status line (with background color)
   liftIO $ ANSI.setCursorPosition (termHeight - 2) 0

@@ -36,7 +36,7 @@ import MOS6502Emulator.Machine
 import MOS6502Emulator.DissAssembler (disassembleInstruction)
 import MOS6502Emulator.Registers
 import MOS6502Emulator.Memory (Memory(), writeByte)
-import MOS6502Emulator.Debugger.Console (renderScreen, getInput, putOutput, putString, getKey) -- Import console I/O functions, added putString
+import MOS6502Emulator.Debugger.Console (renderScreen, getInput, putOutput, putString, getKey, termHeight) -- Import console I/O functions, added putString and termHeight
 import MOS6502Emulator.Debugger.Types (DebuggerConsoleState(..), initialConsoleState, DebuggerAction(..), DebuggerMode(..)) -- Import from Types
 import MOS6502Emulator.Debugger.VimModeCore (vimModeHelp) -- Import VimMode help
 import System.Console.ANSI (clearScreen) -- Import clearScreen
@@ -70,32 +70,66 @@ interactiveLoopHelper = do
   if halted machine
     then return QuitEmulator -- Machine halted, return QuitEmulator action
     else do
-      -- Get console state from machine and set the input buffer with the prompt before rendering
       let currentConsoleState = mConsoleState machine
       let consoleStateWithPrompt = currentConsoleState { inputBuffer = "> ", cursorPosition = 2 }
       modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
-      renderScreen machine -- Render the screen initially (renderScreen now takes Machine directly)
-      (commandToExecute, consumeNewline) <- readCommand -- Use the new readCommand function
-      (action, output) <- handleCommand commandToExecute -- Process the command
-      -- Get the machine state *after* handleCommand has potentially modified it
-      machineAfterCommand <- get 
-      -- Update console state on the machine state that already includes changes from handleCommand
-      let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
-      put updatedMachine -- Put the fully updated machine state back
-      -- The renderScreen function itself handles clearing the screen, so no need to clear here.
-      -- The next call to interactiveLoopHelper will render the updated state.
-      case action of
-        ContinueLoop _ -> interactiveLoopHelper -- Continue the loop with updated state
-        ExecuteStep _  -> return action -- Return the ExecuteStep action
-        ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
-        QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
-        NoAction                     -> interactiveLoopHelper -- Continue the loop with updated state
-        SwitchToVimMode              -> do
-          -- If the newline was not consumed by readCommand, it will be the next character.
-          -- The VimMode's interactiveLoopHelper should handle it.
-          -- No need to explicitly consume it here.
-          modify (\m -> m { debuggerMode = VimMode }) >> return action
-        SwitchToCommandMode          -> interactiveLoopHelper -- Stay in CommandMode and continue loop
+      renderScreen machine -- Render the screen initially
+
+      -- Check if help is currently displayed and if Enter is pressed
+      let helpTextLines = helpLines (mConsoleState machine)
+      let helpTextScrollPos = helpScrollPos (mConsoleState machine)
+      
+      if not (null helpTextLines) then do
+        key <- liftIO getKey -- Read a single key
+        if key == '\n' then do
+          let availableContentHeight = termHeight - 2
+          let newScrollPos = helpTextScrollPos + availableContentHeight
+          if newScrollPos >= length helpTextLines then do
+            -- Reached end of help, clear help state
+            modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = [], helpScrollPos = 0, inputBuffer = "", cursorPosition = 0 } })
+          else do
+            -- Scroll to next page of help
+            modify (\m -> m { mConsoleState = (mConsoleState m) { helpScrollPos = newScrollPos, inputBuffer = "", cursorPosition = 0 } })
+          
+          updatedMachine <- get -- Get the updated machine state
+          renderScreen updatedMachine -- Re-render with new help scroll position
+          interactiveLoopHelper -- Continue the loop
+        else do
+          -- If help is displayed but not Enter, clear help and process as normal command
+          modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = [], helpScrollPos = 0 } })
+          -- Now proceed with command input
+          (commandToExecute, consumeNewline) <- readCommand
+          (action, output) <- handleCommand commandToExecute
+          machineAfterCommand <- get 
+          let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+          put updatedMachine
+          renderScreen updatedMachine
+          case action of
+            ContinueLoop _ -> interactiveLoopHelper
+            ExecuteStep _  -> return action
+            ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
+            QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
+            NoAction                     -> interactiveLoopHelper
+            SwitchToVimMode              -> do
+              modify (\m -> m { debuggerMode = VimMode }) >> return action
+            SwitchToCommandMode          -> interactiveLoopHelper
+      else do
+        -- No help being displayed, proceed with normal command input
+        (commandToExecute, consumeNewline) <- readCommand
+        (action, output) <- handleCommand commandToExecute
+        machineAfterCommand <- get 
+        let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+        put updatedMachine
+        renderScreen updatedMachine
+        case action of
+          ContinueLoop _ -> interactiveLoopHelper
+          ExecuteStep _  -> return action
+          ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
+          QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
+          NoAction                     -> interactiveLoopHelper
+          SwitchToVimMode              -> do
+            modify (\m -> m { debuggerMode = VimMode }) >> return action
+          SwitchToCommandMode          -> interactiveLoopHelper
 
 -- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
 formatHex8 :: Word8 -> String
@@ -420,24 +454,29 @@ handleCommand commandToExecute = do
 
   let handleHelp :: FDX (DebuggerAction, [String])
       handleHelp = do
-        let output = "Available commands:\n\
-          \step  / z:              execute one instruction cycle\n\
-          \regs  / r:              show current register values\n\
-          \mem   / m [addr] [end]: add/remove memory range to display\n\
-          \break / bk:             add/remove breakpoint to the list\n\
-          \quit  / q:              quit program\n\
-          \exit  / e:              exit interactive mode\n\
-          \trace / t:              toggle instruction tracing\n\
-          \goto  / g <addr>:       set program counter to address\n\
-          \fill  / f <start> <end> <byte1> [byte2...]: fill memory range with bytes\n\
-          \ra <val>:              set Accumulator to hex value\n\
-          \rx <val>:              set X register to hex value\n\
-          \ry <val>:              set Y register to hex value\n\
-          \rsp <val>:             set Stack Pointer to hex value\n\
-          \rsr <val>:             set Status Register to hex value\n\
-          \rpc <val>:             set Program Counter to hex value\n\
-          \d:                     disassemble 32 instructions from current PC"
-        return (NoAction, lines output ++ [""] ++ lines vimModeHelp)
+        let standardCommands =
+              [ "Available commands:"
+              , "  step  / z:              execute one instruction cycle"
+              , "  regs  / r:              show current register values"
+              , "  mem   / m [addr] [end]: add/remove memory range to display"
+              , "  break / bk:             add/remove breakpoint to the list"
+              , "  quit  / q:              quit program"
+              , "  exit  / e:              exit interactive mode"
+              , "  trace / t:              toggle instruction tracing"
+              , "  goto  / g <addr>:       set program counter to address"
+              , "  fill  / f <start> <end> <byte1> [byte2...]: fill memory range with bytes"
+              , "  ra <val>:              set Accumulator to hex value"
+              , "  rx <val>:              set X register to hex value"
+              , "  ry <val>:              set Y register to hex value"
+              , "  rsp <val>:             set Stack Pointer to hex value"
+              , "  rsr <val>:             set Status Register to hex value"
+              , "  rpc <val>:             set Program Counter to hex value"
+              , "  d:                     disassemble 32 instructions from current PC"
+              ]
+        let fullHelpText = standardCommands ++ [""] ++ lines vimModeHelp
+        modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = fullHelpText, helpScrollPos = 0 } })
+        putOutput "Displaying help. Press Enter to scroll."
+        return (NoAction, [])
 
   case words commandToExecute of
     ["help"] -> handleHelp

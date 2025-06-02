@@ -20,6 +20,8 @@ data DebuggerConsoleState = DebuggerConsoleState
   , cursorPosition :: Int -- Cursor position in the input buffer
   , lastCommand :: String -- The last executed command
   , vimCommandInputBuffer :: String -- New field for Vim command mode input
+  , helpLines :: [String] -- Added: Stores lines of help text for pagination
+  , helpScrollPos :: Int  -- Added: Current scroll position for help text
   } deriving (Show)
 
 -- | The initial state of the debugger console.
@@ -30,4 +32,6 @@ initialConsoleState = DebuggerConsoleState
   , cursorPosition = 0
   , lastCommand = ""
   , vimCommandInputBuffer = "" -- Initialize new field
+  , helpLines = [] -- Initialize helpLines as empty
+  , helpScrollPos = 0  -- Initialize helpScrollPos to 0
   }
