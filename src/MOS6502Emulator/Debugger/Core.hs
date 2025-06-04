@@ -1,12 +1,15 @@
-module MOS6502Emulator.Debugger.Types
+module MOS6502Emulator.Debugger.Core
   ( DebuggerMode(..)
   , DebuggerAction(..)
   , DebuggerConsoleState(..)
   , initialConsoleState
+  , parseCount
   ) where
 
-import Data.Word (Word16) -- Import Word16
-
+import Data.Word (Word8, Word16) -- Import Word16
+import Data.Char (isDigit)
+import Data.Bits (testBit)
+import Numeric (showHex)
 -- | Data type to represent the debugger mode
 data DebuggerMode = CommandMode | VimMode | VimCommandMode deriving (Show, Eq)
 
@@ -35,3 +38,10 @@ initialConsoleState = DebuggerConsoleState
   , helpLines = [] -- Initialize helpLines as empty
   , helpScrollPos = 0  -- Initialize helpScrollPos to 0
   }
+
+
+-- | Parse count prefix (like 5dd, 10j)
+parseCount :: String -> Maybe Int
+parseCount s = if all isDigit s && not (null s) 
+               then Just (read s) 
+               else Nothing

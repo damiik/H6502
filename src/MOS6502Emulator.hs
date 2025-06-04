@@ -24,18 +24,20 @@ import Data.List (stripPrefix, cycle, take) -- Import stripPrefix, cycle, take
 import Data.Bits (Bits, (.&.)) -- Import Bits for status register manipulation if needed
 import qualified Data.Map.Strict as Map -- For Map.empty
 
-import MOS6502Emulator.Machine (fdxSingleCycle, loadSymbolFile, setPC_, setAC_, setX_, setY_, setSR_, setSP_, writeByteMem_) -- Import fdxSingleCycle from Core
-import MOS6502Emulator.Core (Machine(..), FDX(..), getRegisters, instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, DebuggerMode(..)) -- Import DebuggerMode from Machine
+import MOS6502Emulator.Machine (fdxSingleCycle, loadSymbolFile, setAC_, setX_, setY_, setSR_, setSP_, writeByteMem_) -- Removed setPC_
+import MOS6502Emulator.Core (Machine(..), FDX(..), instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, DebuggerMode(..)) -- Removed getRegisters, parseHexWord
 import MOS6502Emulator.Instructions
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import qualified MOS6502Emulator.Debugger as D
 -- import qualified MOS6502Emulator.Debugger.VimMode as V
-import MOS6502Emulator.Debugger (handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Import handleCommand, handleBreak, handleMemTrace, saveDebuggerState, loadDebuggerState, and interactiveLoopHelper, and DebuggerAction
+import MOS6502Emulator.Debugger (saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Removed handleCommand, handleBreak, handleMemTrace
+import MOS6502Emulator.Debugger.Commands (handleCommand, handleBreak, handleMemTrace) -- Imported handle* functions from Commands
+import MOS6502Emulator.Debugger.Utils (parseHexWord, getRegisters, setPC_, logMemoryRange) -- Imported from Utils
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
 import MOS6502Emulator.Debugger.Console (DebuggerConsoleState, initialConsoleState, putOutput, renderScreen) -- Import renderScreen
-import MOS6502Emulator.Debugger.VimModeCore (initialVimState, VimState(..)) -- Import Motion, Action, and ViewMode
-import qualified MOS6502Emulator.Debugger.VimModeEnhanced as V
+import MOS6502Emulator.Debugger.VimMode.Core (initialVimState, VimState(..)) -- Import Motion, Action, and ViewMode
+import qualified MOS6502Emulator.Debugger.VimMode.Enhanced as V
 -- import MOS6502Emulator.Debugger.VimModeEnhanced (handleVimKey) -- Removed as it's no longer exported
 
 -- | Initializes a new 6502 machine state
@@ -210,7 +212,7 @@ handlePostInstructionChecks = do
           mapM_ putOutput regOutput -- Use console output instead of direct print
           -- Log all memory trace blocks
           mapM_ (\(start, end, name) -> do
-                   memOutput <- D.logMemoryRange start end name -- Capture memory trace output
+                   memOutput <- logMemoryRange start end name -- Capture memory trace output
                    mapM_ putOutput memOutput) (memoryTraceBlocks nextMachineState) -- Use console output
 
       -- Check for breakpoints after executing the instruction

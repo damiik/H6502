@@ -18,19 +18,8 @@ import Data.Bits
 import Data.Maybe ( isJust )
 import Numeric (showHex) -- Import showHex for debugging output
 
-import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembler
+import MOS6502Emulator.DissAssembler (disassembleInstruction, formatHex16, formatHex8) -- Import disassembler
 
--- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
-formatHex8 :: Word8 -> String
-formatHex8 b =
-  let hexStr = showHex b ""
-  in if length hexStr < 2 then "0" ++ hexStr else hexStr
-
--- | Formats a Word16 as a four-character hexadecimal string, padding with leading zeros if necessary.
-formatHex16 :: Word16 -> String
-formatHex16 w =
-  let hexStr = showHex w ""
-  in replicate (4 - length hexStr) '0' ++ hexStr
 
 -- | Gets a specific register value from the machine state.
 getReg :: (Registers -> a) -> FDX a

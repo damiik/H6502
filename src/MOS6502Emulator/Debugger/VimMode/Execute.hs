@@ -1,4 +1,4 @@
-module MOS6502Emulator.Debugger.VimModeExecute
+module MOS6502Emulator.Debugger.VimMode.Execute
     ( executeAction
     , executeMotion
     ) where
@@ -12,7 +12,7 @@ import Control.Monad.State (get, put)
 import Control.Monad.IO.Class (liftIO)
 import System.IO (hFlush, stdout, stdin, hSetEcho)
 import MOS6502Emulator.Core (Machine(..),FDX, fetchByteMem, writeByteMem, parseHexByte)
-import MOS6502Emulator.Debugger.VimModeCore(Action(..), Motion(..), ViewMode(..), VimState (..), initialVimState)
+import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..), VimState (..), initialVimState)
 import MOS6502Emulator.Debugger.Console (getInput, termHeight)
 import Control.Monad (foldM)
 import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo, disassembleInstructions, opcodeMap)

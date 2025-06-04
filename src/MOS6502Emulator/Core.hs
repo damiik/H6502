@@ -15,8 +15,8 @@ import Data.Bits (shiftL)
 
 import MOS6502Emulator.Registers (Registers(..))
 import qualified MOS6502Emulator.Memory as Mem
-import MOS6502Emulator.Debugger.VimModeCore (VimState) -- Import VimState type
-import MOS6502Emulator.Debugger.Types (DebuggerConsoleState, initialConsoleState, DebuggerMode(..), DebuggerAction(..)) -- Import from new Types module
+import MOS6502Emulator.Debugger.VimMode.Core (VimState) -- Import VimState type
+import MOS6502Emulator.Debugger.Core (DebuggerConsoleState, initialConsoleState, DebuggerMode(..), DebuggerAction(..)) -- Import from new Types module
 import Numeric (readHex)
 
 -- | Represents the addressing modes of the 6502.

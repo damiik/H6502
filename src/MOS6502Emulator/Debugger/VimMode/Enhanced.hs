@@ -1,4 +1,4 @@
-module MOS6502Emulator.Debugger.VimModeEnhanced (
+module MOS6502Emulator.Debugger.VimMode.Enhanced (
     interactiveLoopHelper
     , renderVimScreen
 ) where
@@ -12,15 +12,16 @@ import Data.List (stripPrefix) -- Added for stripPrefix
 
 import Control.Monad.State (get, put, MonadIO (liftIO), modify) -- Added modify
 import Control.Monad.Trans.State (runStateT)
-import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, getRegisters, parseHexWord, unFDX, mConsoleState) -- Removed DebuggerAction
+import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, unFDX, mConsoleState) -- Removed getRegisters, parseHexWord
 import MOS6502Emulator.Registers (Registers(..), rPC) 
-import MOS6502Emulator.Debugger.VimModeCore
-import MOS6502Emulator.Debugger.VimModeHandleKey (handleVimNormalModeKey) -- Changed import
+import MOS6502Emulator.Debugger.VimMode.Core
+import MOS6502Emulator.Debugger.VimMode.HandleKey (handleVimNormalModeKey) -- Changed import
 import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth, putOutput, putString, printTwoColumns) -- Updated import
-import MOS6502Emulator.Debugger.Types (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..)) -- New import, ensuring DebuggerAction is here
-import MOS6502Emulator.DissAssembler(disassembleInstructions)
-import MOS6502Emulator.Debugger (handleBreak, handleMemTrace, logRegisters, handleSetPC, handleSetReg8, handleFill, handleDisassemble, handleCommand)
-import MOS6502Emulator.Machine (setPC_)
+import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..)) -- New import, ensuring DebuggerAction is here
+import MOS6502Emulator.DissAssembler(disassembleInstructions, formatHex16, formatHex8, unwords)
+import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleSetPC, handleSetReg8, handleFill, handleDisassemble, handleCommand) -- Moved handle* imports
+import MOS6502Emulator.Debugger (logRegisters) -- logRegisters remains in Debugger.hs
+import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, setPC_, getRegisters) -- Import from Debugger.Utils
 import qualified System.Console.ANSI as ANSI
 import Control.Monad (void) -- Added void
 
@@ -107,16 +108,13 @@ handleAddressVim vimState = do
 
 -- | Main dispatcher for Vim key presses.
 handleVimKey :: Char -> Machine -> VimState -> FDX (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode)
-handleVimKey key machine vimState = do
-  if key == '\n' && vsInCommandMode vimState
+handleVimKey key machine vimState = 
+  if key == '\n' && vsInCommandMode vimState || vsInCommandMode vimState
     then handleVimCommandModeKey key machine vimState
-    else if vsInCommandMode vimState
-      then handleVimCommandModeKey key machine vimState
-      else do
-        (action, output, newVimState) <- handleVimNormalModeKey key vimState'
-        return (action, output, newVimState, mConsoleState machine, debuggerMode machine)
-  where
-    vimState' = vimState { vsMessage = "" }
+    else do
+      let vimState' = vimState { vsMessage = "" }
+      (action, output, newVimState, updatedConsoleState, updatedDebuggerMode) <- handleVimNormalModeKey key vimState' (mConsoleState machine) (debuggerMode machine)
+      return (action, output, newVimState, updatedConsoleState, updatedDebuggerMode)
 
 -- | Handles key presses when in Vim Command Mode (after ':').
 handleVimCommandModeKey :: Char -> Machine -> VimState -> FDX (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode)
@@ -136,7 +134,11 @@ handleVimCommandModeKey key machine vimState = do
         let newScrollPos = helpTextScrollPos + availableContentHeight
         if newScrollPos >= length helpTextLines then do
           -- Reached end of help, clear help state
-          let newConsoleState = currentConsoleState { helpLines = [], helpScrollPos = 0, vimCommandInputBuffer = "", inputBuffer = "" }
+          let newConsoleState = currentConsoleState {
+                                  outputLines = outputLines currentConsoleState ++ helpTextLines, -- Add help to output
+                                  helpLines = [],
+                                  helpScrollPos = 0,
+                                  vimCommandInputBuffer = "", inputBuffer = "" }
           let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
           return (NoAction, [], newVimState, newConsoleState, VimMode)
         else do
@@ -188,13 +190,23 @@ interactiveLoopHelper = do
       key <- liftIO getKey
       (action, output, newVimState, newConsoleState, newDebuggerMode) <- handleVimKey key machine currentVimState
 
+      -- Determine if helpLines should be cleared
+      let shouldClearHelpNow =
+            not (null (helpLines newConsoleState)) && -- Help is currently displayed
+            key /= '\n' &&                            -- The key pressed was not for scrolling help
+            newDebuggerMode == VimMode                -- We are in VimMode (not VimCommandMode where :h is entered)
+
+      let consoleStateToUse =
+            if shouldClearHelpNow
+            then newConsoleState { helpLines = [], helpScrollPos = 0 }
+            else newConsoleState
  
       -- Get the machine state *after* handleVimKey (which may have called handleCommand and modified global state)
       machineAfterHandleKey <- get
     
       -- Apply the specific components returned from handleVimKey to the latest machine state
       let finalMachineState = machineAfterHandleKey {
-                mConsoleState = newConsoleState { outputLines = outputLines newConsoleState ++ output },
+                mConsoleState = consoleStateToUse { outputLines = outputLines consoleStateToUse ++ output },
                 vimState = newVimState,
                 debuggerMode = newDebuggerMode
               }
@@ -239,7 +251,13 @@ renderVimScreen machine vimState = do
   let consoleState = mConsoleState machine
   let availableContentHeight = termHeight - 2 -- Space for two columns and status line
   let maxOutputLines = availableContentHeight
-  let truncatedOutputLines = reverse $ take maxOutputLines $ reverse (outputLines consoleState)
+  
+  let helpTextLines = helpLines consoleState
+  let helpTextScrollPos = helpScrollPos consoleState
+
+  let rightColumnContent = if null helpTextLines
+                           then reverse $ take maxOutputLines $ reverse (outputLines consoleState)
+                           else take maxOutputLines $ drop helpTextScrollPos helpTextLines
 
   let linesPerPage = availableContentHeight -- Use available content height for main view
   let cursorPos = vsCursor vimState
@@ -288,7 +306,7 @@ renderVimScreen machine vimState = do
       return $ zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [stackStart, stackStart + 16 ..] byteLines
 
   -- Print two columns
-  liftIO $ printTwoColumns termWidth leftColumnLines truncatedOutputLines
+  liftIO $ printTwoColumns termWidth leftColumnLines rightColumnContent
 
   -- Status line
   liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
@@ -335,14 +353,6 @@ renderVimScreen machine vimState = do
       liftIO $ ANSI.setCursorPosition (termHeight - 1) (length (vsMessage vimState))
   liftIO $ hFlush stdout
   liftIO ANSI.showCursor
-
--- | Helper to format Word8 as two-character hex
-formatHex8 :: Word8 -> String
-formatHex8 b = let hexStr = showHex b "" in if length hexStr < 2 then "0" ++ hexStr else hexStr
-
--- | Helper to format Word16 as four-character hex
-formatHex16 :: Word16 -> String
-formatHex16 w = let hexStr = showHex w "" in replicate (4 - length hexStr) '0' ++ hexStr
 
 -- | Chunk a list into sublists of given size
 chunkBytes :: [Word8] -> Int -> [[Word8]]

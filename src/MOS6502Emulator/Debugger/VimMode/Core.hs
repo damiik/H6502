@@ -1,4 +1,4 @@
-module MOS6502Emulator.Debugger.VimModeCore
+module MOS6502Emulator.Debugger.VimMode.Core
   ( Motion(..)
   , Action(..)
   , OperatorType(..)

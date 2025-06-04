@@ -5,19 +5,18 @@
 
 -- | Defines the core types and state for the MOS 6502 emulator machine.
 module MOS6502Emulator.Machine
-(
-
- DebuggerAction(ContinueLoop, ExecuteStep, ExitDebugger, QuitEmulator, NoAction, SwitchToVimMode, SwitchToCommandMode) -- Export DebuggerAction constructors
- ,rPC -- Export rPC field from Registers (needed in VimMode via Machine)
- ,mRegs -- Export mRegs field from Machine
- ,pcHistory -- Export pcHistory field from Machine
- ,redoHistory -- Export redoHistory field from Machine
- ,breakpoints -- Export breakpoints field from Machine
- ,memoryTraceBlocks -- Export memoryTraceBlocks field from Machine
- ,storedAddresses -- Export storedAddresses field from Machine
- ,lastDisassembledAddr -- Export lastDisassembledAddr field from Machine
- ,debuggerMode -- Export debuggerMode field from Machine
- ,fdxSingleCycle
+( Machine(..) -- Export Machine type and its constructors/fields
+, DebuggerAction(ContinueLoop, ExecuteStep, ExitDebugger, QuitEmulator, NoAction, SwitchToVimMode, SwitchToCommandMode) -- Export DebuggerAction constructors
+,rPC -- Export rPC field from Registers (needed in VimMode via Machine)
+,mRegs -- Export mRegs field from Machine
+,pcHistory -- Export pcHistory field from Machine
+,redoHistory -- Export redoHistory field from Machine
+,breakpoints -- Export breakpoints field from Machine
+,memoryTraceBlocks -- Export memoryTraceBlocks field from Machine
+,storedAddresses -- Export storedAddresses field from Machine
+,lastDisassembledAddr -- Export lastDisassembledAddr field from Machine
+,debuggerMode -- Export debuggerMode field from Machine
+,fdxSingleCycle
 ,instructionCount
 ,loadSymbolFile
 ,setPC_
@@ -49,8 +48,8 @@ import MOS6502Emulator.Memory (Memory)
 import qualified MOS6502Emulator.Memory as Mem
 import MOS6502Emulator.Registers (Registers, rPC, rAC, rSP, rSR, rX, rY ) -- Import rPC
 import MOS6502Emulator.Core
-import MOS6502Emulator.Debugger.VimModeCore (VimState) -- Import VimState type
-import MOS6502Emulator.Debugger.Types (DebuggerAction(..)) -- Import DebuggerAction
+import MOS6502Emulator.Debugger.VimMode.Core (VimState) -- Import VimState type
+import MOS6502Emulator.Debugger.Core (DebuggerAction(..)) -- Import DebuggerAction
 import MOS6502Emulator.DissAssembler
 
 

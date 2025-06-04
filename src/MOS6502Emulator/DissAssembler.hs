@@ -4,6 +4,9 @@ module MOS6502Emulator.DissAssembler (
   , disassembleInstructions -- Export disassembleInstructions
   , InstructionInfo(..)
   , opcodeMap   -- Export opcodeMap  
+  , formatHex8
+  , formatHex16
+  , unwords
 ) where
 
 import Data.Word (Word8, Word16)

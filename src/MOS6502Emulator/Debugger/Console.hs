@@ -15,7 +15,7 @@ import qualified System.Console.ANSI as ANSI
 import Numeric (showHex)
 import Data.Word (Word16) -- Import Word16
 import MOS6502Emulator.Core (Machine(..), FDX(..), mRegs, mConsoleState) -- Updated import from Core, removed debuggerMode as it's from Types
-import MOS6502Emulator.Debugger.Types (DebuggerConsoleState(..), initialConsoleState, DebuggerMode(..)) -- New import from Types, exporting constructors and fields
+import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), initialConsoleState, DebuggerMode(..)) -- New import from Types, exporting constructors and fields
 import MOS6502Emulator.Registers (rAC, rX, rY, rPC) -- Import register fields
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
 import Control.Monad.State (runStateT, get, modify) -- Import runStateT, get, modify
