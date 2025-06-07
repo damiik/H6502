@@ -101,7 +101,7 @@ iterateList l action = do
 
 
 -- List iteration with index
-iterateWithIndexList :: AddressRef -> (Operand -> Word8 -> Asm ()) -> Asm ()
+iterateWithIndexList :: AddressRef -> (Operand -> Asm ()) -> Asm ()
 iterateWithIndexList listBase action = do
     ldx# 0x00
     startLabel <- makeUniqueLabel ()
@@ -110,7 +110,9 @@ iterateWithIndexList listBase action = do
     cpx listBase
     beq endLabel
     inx  -- increment X before first access (indexing from 1)
-    action (OpAbsX listBase) (fromIntegral $ fromEnum 'X') -- Passing 'X' doesn't make sense here, should pass index
+    -- Save index and pass actual value
+    txa
+    action (OpAbsX listBase)
     jmp startLabel
     l_ endLabel
 

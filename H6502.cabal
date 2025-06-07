@@ -1,6 +1,6 @@
 cabal-version: 2.2
 
--- This file has been generated from package.yaml by hpack version 0.38.0.
+-- This file has been generated from package.yaml by hpack version 0.37.0.
 --
 -- see: https://github.com/sol/hpack
 
@@ -52,10 +52,10 @@ library
       MOS6502Emulator.Debugger.VimMode.HandleVisualKey
       MOS6502Emulator.Debugger.VimMode.CommandParser
       MOS6502Emulator.Debugger.VimMode.Execute
-      MOS6502Emulator.Debugger.Core
       MOS6502Emulator.Debugger.Console
-      MOS6502Emulator.Debugger.Commands
+      MOS6502Emulator.Debugger.Core
       MOS6502Emulator.Debugger.Utils
+      MOS6502Emulator.Debugger.Commands
   other-modules:
       C64.HelloWorld
       C64.HorizontalBars

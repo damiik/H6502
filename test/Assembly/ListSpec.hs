@@ -192,8 +192,8 @@ spec = do
         -- We will store the element value + its index at a new memory location
         let resultBaseAddr = 0x0400
 
-        let action :: Operand -> Word8 -> Asm ()
-            action elementAddr _ = do
+        let action :: Operand -> Asm ()
+            action elementAddr = do
               txa  -- load index (x) -> A
               -- Load the element value into A
               clc
