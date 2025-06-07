@@ -1,101 +1,124 @@
-# VimMode Debugger Enhancement Proposal
+# VimMode Design Enhancements
 
-## 1. Current Architecture Analysis
+## 1. Composable Commands
 
-### Command Processing Flow
-```mermaid
-flowchart TD
-    A[Key Press] --> B[VimModeHandleKey]
-    B --> C{Operator Pending?}
-    C -->|Yes| D[Capture Motion]
-    C -->|No| E[Execute Action]
-    D --> F[Combine Operator+Motion]
-    F --> E
-    E --> G[VimModeExecute]
-    G --> H[Update Machine State]
-```
+### Grammar
+`[count][operator][modifier][object]`
 
-### State Management
+### Reference Table
+| Element     | Options          | Description                     |
+|-------------|------------------|---------------------------------|
+| Operator    | d, c, y         | Delete/Change/Yank              |
+| Modifier    | i, a             | Inner/Outer object              |
+| Object      | w, l, b, "      | Word/Line/Bracket/Quote         |
+
+## 2. Colon Commands
+
+### VICE Command Equivalences
+| Command         | Example             | Action                                  |
+|-----------------|---------------------|-----------------------------------------|
+| :break          | :break $1000       | Set breakpoint at 0x1000               |
+| :watch          | :watch 1000-1FFF   | Trace memory range                      |
+| :step           | :step 5            | Execute 5 instructions                 |
+| :regs           | :regs              | Show register values                    |
+| :disas          | :disas $1000 $1010 | Disassemble memory range                |
+
+## 3. State Transition Diagram
 ```mermaid
 stateDiagram-v2
     [*] --> NormalMode
-    NormalMode --> VisualMode: v, V, Ctrl-v
+    NormalMode --> OperatorPending: d/c/y
+    OperatorPending --> ObjectPending: i/a
+    ObjectPending --> Execute: Object key
+    OperatorPending --> Execute: Motion key
     NormalMode --> CommandMode: :
-    VisualMode --> NormalMode: Esc
-    CommandMode --> NormalMode: Enter
-    VisualMode --> CommandMode: :
+    CommandMode --> Execute: Enter command
+    Execute --> NormalMode
 ```
 
-## 2. Proposed Improvements
+## 4. Implemented Features
 
-### Enhanced Composability
-```mermaid
-graph LR
-    C[Count] --> V[Verb]
-    V --> N[Noun]
-    N --> A[Action]
-    
-    classDef elem fill:#e6f7ff,stroke:#1890ff;
-    class C,V,N,A elem;
+### Command Composition
+- Operators: d (delete), c (change), y (yank)
+- Modifiers: i (inner), a (outer)
+- Objects: w (word), l (line), b (bracket)
+- Examples: `diw` (delete inner word), `caw` (change a word)
+
+### Colon Commands
+- `:break $addr` - Set breakpoint at specified address
+- `:watch $start-$end` - Trace memory range
+- `: ` - Starts command input
+- Escape cancels command mode
+- Enter executes command
+
+### State Handling
+- `NoCommand` state handles normal operations
+- `Operator` state waits for modifier or motion
+- `Object` state selects text object type
+- `VimPendingCompose` state for register selection
+- `CommandModeV` handles command input
+
+## 5. Example Usage
+```text
+Normal mode:
+  c i w  # Change inner word
+  :break $1000 # Set breakpoint
+  :watch 1000-1FFF # Trace memory range
+
+Command mode:
+  :           # Enters command mode
+  break $1000 # Types command
+  Enter       # Executes :break command
 ```
 
-Example Commands:
-1. `d2w` = Delete 2 words
-2. `c$` = Change to line end
-3. `"ay3j` = Yank 3 lines to register a
+## 6. Command Reference Tables
 
-### Visual Mode Operations
-```mermaid
-flowchart TB
-    S[Start Visual] --> T{Type?}
-    T -->|Character| C[Byte-wise ops]
-    T -->|Line| L[Instruction ops]
-    T -->|Block| B[Range ops]
-    C --> O[Modify/Yank/Set BP]
-    L --> O
-    B --> O
-```
+### Text Object Commands
+| Command | Description                  |
+|---------|------------------------------|
+| diw     | Delete inner word            |
+| daw     | Delete a word (with space)   |
+| ci"     | Change inside quotes         |
+| yi[     | Yank inside brackets         |
 
-### VICE Command Mapping
-| VICE Command | Vim Equivalent | Internal Handler |
-|--------------|----------------|------------------|
-| `:m 0400` | `:m 0400` | `handleDisassemble` |
-| `:r a 00` | `:set a 00` | `handleSetReg8` |
-| `:g` | `:continue` | Returns `ExecuteStep` |
+### Colon Commands
+| Command         | Parameters      | Description                    |
+|-----------------|-----------------|--------------------------------|
+| :break          | $addr           | Set breakpoint at address      |
+| :watch          | $start-$end     | Trace memory range             |
+| :step           | [count]         | Execute instructions           |
+| :regs           |                 | Show register values           |
+| :disas          | [$start [$end]] | Disassemble memory range       |
 
-## 3. Implementation Plan
+### State Transitions
+| State              | Key     | Next State        |
+|--------------------|---------|-------------------|
+| NoCommand          | d/c/y   | Operator          |
+| Operator           | i/a     | Object            |
+| Operator           | motion  | Execute action    |
+| Object             | object  | Execute action    |
+| NoCommand          | :       | CommandModeV      |
+| CommandModeV       | Escape  | NoCommand         |
+| CommandModeV       | Enter   | Execute command   |
+| NoCommand          | "       | VimPendingCompose |
+| VimPendingCompose  | key     | NoCommand         |
 
-### Phase 1: Core Enhancements
-1. Expand `Motion` type in [`VimModeCore.hs`](src/MOS6502Emulator/Debugger/VimModeCore.hs):
 ```haskell
-data Motion = ...
-            | WordObject Int
-            | LineObject Int
-            | BracketObject
+-- CommandState with VimPendingCompose
+data CommandState =
+    NoCommand
+  | Operator OperatorType
+  | Object OperatorType ObjectModifier
+  | VimPendingCompose  -- For register selection
+  | CommandModeV
+  deriving (Eq, Show)
 ```
 
-2. Implement visual selection in `VimState`:
-```haskell
-data VimState = ...
-  { vsVisualType :: VisualType  -- Char/Line/Block
-  , vsSelectionStart :: Word16
-  , vsSelectionEnd :: Word16 }
-```
+### File: `src/MOS6502Emulator/Debugger/VimMode/HandleKey.hs`
+- Implemented command composition state machine
+- Added colon command handling
+- Added VimPendingCompose state for register selection
 
-### Phase 2: VICE Integration
-```mermaid
-sequenceDiagram
-    User->>+VimMode: :r pc c000
-    VimMode->>+CommandParser: Parse command
-    CommandParser->>+Debugger: handleSetPC "c000"
-    Debugger-->>-VimMode: PC updated
-    VimMode-->>-User: PC set to c000
-```
-
-## 4. Expected Outcomes
-- **Vim-like composability** for debug operations
-- **Visual mode** with range operations
-- **VICE-compatible** command mode
-- **Register manipulation** via `"aY`/`"ap` syntax
-
-Would you like to proceed with implementation in code mode?
+### File: `src/MOS6502Emulator/Debugger/VimMode/Execute.hs`
+- Implemented colon command execution
+- Added support for :break and :watch commands

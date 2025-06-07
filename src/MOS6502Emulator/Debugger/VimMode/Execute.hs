@@ -4,22 +4,62 @@ module MOS6502Emulator.Debugger.VimMode.Execute
     ) where
 
 import qualified Data.Map as Map
+import Data.Map (Map)
 import Data.Word (Word8, Word16)
 import Data.Bits (testBit, clearBit, setBit)
+import Data.List (findIndex)
 import Data.Maybe (mapMaybe)
 import Numeric (showHex)
+import Control.Monad (foldM)
 import Control.Monad.State (get, put)
 import Control.Monad.IO.Class (liftIO)
 import System.IO (hFlush, stdout, stdin, hSetEcho)
-import MOS6502Emulator.Core (Machine(..),FDX, fetchByteMem, writeByteMem, parseHexByte)
-import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..), VimState (..), initialVimState)
+import Data.Maybe (fromMaybe)
+import Text.Printf (printf)
+
+import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleFill, handleSetReg8, handleSetPC, handleDisassemble) -- Explicit imports
+import MOS6502Emulator.Debugger.Utils (logRegisters, getRegisters, parseHexByte) -- For VRegs and getRegisters
 import MOS6502Emulator.Debugger.Console (getInput, termHeight)
-import Control.Monad (foldM)
-import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo, disassembleInstructions, opcodeMap)
-import Data.Map (Map)
+import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..), VimState (..), VimCommand(..))
+import qualified MOS6502Emulator.Debugger.VimMode.Core as VM
+import MOS6502Emulator.Core (FDX, fetchByteMem, writeByteMem) 
+import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo(..), disassembleInstructions, opcodeMap, formatHex16)
+import MOS6502Emulator.Registers (rAC, rX, rY, rSP, rSR, rPC) -- Import for register setters
 import MOS6502Emulator.Machine
 
--- | Execute an action with a motion
+executeVimCommand :: VimCommand -> FDX (DebuggerAction, [String])
+executeVimCommand cmd = do
+  machine <- get
+  case cmd of
+    VBreak addr -> handleBreak (maybe [] (\a -> [formatHex16 a]) addr) ""
+    VWatch (Just (startAddr, endAddr)) -> handleMemTrace [formatHex16 startAddr, formatHex16 endAddr] ""
+    VWatch Nothing -> handleMemTrace [] "" -- List trace blocks
+    VStep count -> return (ExecuteStep (show (fromMaybe 1 count)), [])
+    VRegs -> do
+      regs <- getRegisters
+      return (NoAction, logRegisters regs)
+    VDisas start end -> handleDisassemble (mapMaybe (fmap formatHex16) [start, end]) ""
+    VFill start end bytes -> handleFill (map formatHex16 [start, end] ++ map (printf "%02X") bytes) ""
+    VSetReg8 regChar val ->
+        let regSetter = case regChar of
+                          'A' -> (\r v -> r { rAC = v })
+                          'X' -> (\r v -> r { rX = v })
+                          'Y' -> (\r v -> r { rY = v })
+                          'S' -> (\r v -> r { rSP = v })
+                          'P' -> (\r v -> r { rSR = v })
+                          _   -> const
+        in handleSetReg8 regSetter (printf "%02X" val) [regChar] ""
+    VSetPC addr -> handleSetPC (formatHex16 addr) ""
+    VQuit -> return (QuitEmulator, [])
+    VExit -> return (ExitDebugger, [])
+    VTrace -> do
+      let newTraceState = not (enableTrace machine)
+      put (machine { enableTrace = newTraceState })
+      let output = ["Tracing " ++ if newTraceState then "enabled." else "disabled."]
+      return (NoAction, output)
+    VUnknown cmdStr -> return (NoAction, ["Unknown command: " ++ cmdStr])
+
+-- Update executeAction to handle ColonCommand
 executeAction :: Action -> Word16 -> VimState -> FDX (Word16, [String])
 executeAction action currentPos vimState = do
   machine <- get
@@ -60,14 +100,14 @@ executeAction action currentPos vimState = do
       return (currentPos, ["Breakpoint removed at $" ++ showHex currentPos ""])
     
     Delete motion -> do
-      endPos <- executeMotion motion currentPos
+      endPos <- executeMotion motion currentPos vimState
       let start = min currentPos endPos
       let end = max currentPos endPos
       mapM_ (`writeByteMem` 0) [start .. end]
       return (currentPos, ["Zeroed memory from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
     
     Change motion -> do
-      endPos <- executeMotion motion currentPos
+      endPos <- executeMotion motion currentPos vimState
       let start = min currentPos endPos
       _ <- liftIO $ putStr "Enter bytes (hex): " >> hFlush stdout
       liftIO $ putStr "Enter bytes (hex): " >> hFlush stdout
@@ -83,7 +123,7 @@ executeAction action currentPos vimState = do
           return (currentPos, ["Changed memory from $" ++ showHex start "" ++ " to $" ++ showHex endPos ""])
     
     Yank motion -> do
-      endPos <- executeMotion motion currentPos
+      endPos <- executeMotion motion currentPos vimState
       let start = min currentPos endPos
       let end = max currentPos endPos
       bytes <- mapM fetchByteMem [start .. end]
@@ -102,33 +142,27 @@ executeAction action currentPos vimState = do
       let newBreakpoints = currentPos : breakpoints machine
       put (machine { breakpoints = newBreakpoints })
       return (currentPos, ["Temporary breakpoint added at $" ++ showHex currentPos "", "Continuing execution"])
+    
+    ColonCommand vimCmd -> do
+        (dbgAction, output) <- executeVimCommand vimCmd
+        -- Need to handle dbgAction potentially changing the debugger mode or state
+        -- For now, just pass it through or convert to NoAction if it means staying in VimMode
+        return (currentPos, output)
 
+    _ -> return (currentPos, ["Unknown action"])
 
 -- | Execute a motion and return new cursor position
-executeMotion :: Motion -> Word16 -> FDX Word16
-executeMotion motion currentPos = do
+executeMotion :: Motion -> Word16 -> VimState -> FDX Word16
+executeMotion motion currentPos vimState = do
   machine <- get
   let maxAddr = 0xFFFF -- Maximum address for 6502
   case motion of
-    -- NextInstruction n -> do
-    --   liftIO $ putStrLn "Nowa pozycja.. "
-    -- NextInstruction n -> do
-    --   foldM (\pos _ -> do
-    --       if pos >= maxAddr then return pos
-    --       else do
-    --         (_, instLen) <- disassembleInstruction pos
-    --         let newPos = pos + fromIntegral instLen
-    --         liftIO $ putStrLn $ "Nowa pozycja: " ++ show newPos ++ " maxAddr: " ++ show maxAddr
-    --         return newPos
-    --     ) currentPos [1..n]
     NextInstruction n -> do
       foldM (\pos _ -> do
           if pos >= maxAddr then return pos
           else do
             (_, instLen) <- disassembleInstruction pos
-            let newPos = pos + fromIntegral instLen
-            liftIO $ putStrLn $ "Nowa pozycja: " ++ show newPos ++ " maxAddr: " ++ show maxAddr
-            return newPos
+            return (pos + fromIntegral instLen)
         ) currentPos [1..n]  
     PrevInstruction n -> do
       -- Search backward to find instruction boundaries
@@ -149,28 +183,28 @@ executeMotion motion currentPos = do
     GotoAddressMotion addr -> return $ min maxAddr addr
     GotoPC -> return $ rPC (mRegs machine)
     
-    WordForward n -> executeMotion (NextInstruction n) currentPos
-    WordBackward n -> executeMotion (PrevInstruction n) currentPos
+    WordForward n -> executeMotion (NextInstruction n) currentPos vimState
+    WordBackward n -> executeMotion (PrevInstruction n) currentPos vimState
     
     EndOfPage -> do
       let linesPerPage = termHeight - 3 -- Reserve space for status and input
-      case vsViewMode initialVimState of -- Use initialVimState for view mode; ideally, this would use vimState
+      case vsViewMode vimState of
         CodeView -> do
           -- Disassemble forward to find the address after linesPerPage instructions
-          (lines, finalAddr) <- disassembleInstructions currentPos linesPerPage
+          (_, finalAddr) <- disassembleInstructions currentPos linesPerPage
           return $ max 0 (finalAddr - 1)
         _ -> return $ min maxAddr (currentPos + fromIntegral (linesPerPage * 16)) -- 16 bytes per line in MemoryView
     
-    TopOfPage -> return $ vsViewStart initialVimState -- Ideally, use vimState
+    TopOfPage -> return $ vsViewStart vimState
     
     MiddlePage -> do
       let linesPerPage = termHeight - 3
       let halfPage = linesPerPage `div` 2
-      case vsViewMode initialVimState of
+      case vsViewMode vimState of
         CodeView -> do
-          (lines, finalAddr) <- disassembleInstructions (vsViewStart initialVimState) halfPage
+          (_, finalAddr) <- disassembleInstructions (vsViewStart vimState) halfPage
           return $ max 0 (finalAddr - 1)
-        _ -> return $ min maxAddr (vsViewStart initialVimState + fromIntegral (halfPage * 16))
+        _ -> return $ min maxAddr (vsViewStart vimState + fromIntegral (halfPage * 16))
     
     FindByte byte forward -> findByteInMemory currentPos byte forward
     
@@ -180,9 +214,75 @@ executeMotion motion currentPos = do
     
     RepeatFind forward -> do
         machine <- get
-        case vsLastFind (vimState machine) of
+        case vsLastFind vimState of
           Just (byte, _) -> findByteInMemory currentPos byte forward
           Nothing -> return currentPos
+    
+    TextObject mod objType n -> do
+        case vsViewMode vimState of
+            CodeView -> do
+              currentMachine <- get
+              let currentPC = vsCursor vimState
+              case objType of
+                VM.Word -> do
+                  precedingInsts <- disassembleInstructionsFromBeginning currentPC opcodeMap
+                  let startOfCurrentInst = case reverse precedingInsts of
+                                             ((addr, _, _):_) -> addr
+                                             _ -> currentPC
+
+                  (_, endAddr) <- disassembleInstructions startOfCurrentInst n
+                  return (endAddr - 1)
+                VM.Line -> do
+                  precedingInsts <- disassembleInstructionsFromBeginning currentPC opcodeMap
+                  let startOfCurrentInst = case reverse precedingInsts of
+                                             ((addr, _, _):_) -> addr
+                                             _ -> currentPC
+
+                  (_, endAddr) <- disassembleInstructions startOfCurrentInst n
+                  return (endAddr - 1)
+
+                VM.Bracket -> do
+                  (instStr, _) <- disassembleInstruction currentPC
+                  let openBracketIndex = findIndex (`elem` "([") instStr
+                  let closeBracketIndex = findIndex (`elem` ")]") instStr
+                  case (openBracketIndex, closeBracketIndex) of
+                    (Just open, Just close) | open < close ->
+                      let startByte = currentPC + fromIntegral (open `div` 3)
+                          endByte = currentPC + fromIntegral (close `div` 3)
+                      in return endByte
+                    _ -> return currentPC
+                VM.Quote -> do
+                  (instStr, _) <- disassembleInstruction currentPC
+                  let openQuoteIndex = findIndex (=='"') instStr
+                  let closeQuoteIndex = findIndex (=='"') (drop (fromMaybe 0 openQuoteIndex + 1) instStr)
+                  case (openQuoteIndex, fmap (+ (fromMaybe 0 openQuoteIndex + 1)) closeQuoteIndex) of
+                    (Just open, Just close) | open < close ->
+                      let startByte = currentPC + fromIntegral (open `div` 3)
+                          endByte = currentPC + fromIntegral (close `div` 3)
+                      in return endByte
+                    _ -> return currentPC
+            MemoryView -> do
+              case objType of
+                VM.Word -> return $ min maxAddr (currentPos + fromIntegral (n * 2))
+                VM.Line -> return $ min maxAddr (currentPos + fromIntegral (n * 16))
+                VM.Bracket -> return currentPos
+                VM.Quote -> return currentPos
+            _ -> return currentPos
+    _ -> return currentPos
+
+-- Helper to find instruction start (needed for Word/Line)
+disassembleInstructionsFromBeginning :: Word16 -> Map Word8 InstructionInfo -> FDX [(Word16, String, Int)]
+disassembleInstructionsFromBeginning startAddr opMap = go startAddr []
+  where
+    go addr acc
+      | addr > 0xFFFF = return $ reverse acc
+      | otherwise = do
+          byte <- fetchByteMem addr
+          case Map.lookup byte opMap of
+            Just instInfo -> do
+              let nextAddr = addr + fromIntegral (size instInfo)
+              go nextAddr ((addr, "", fromIntegral (size instInfo)) : acc)
+            Nothing -> return $ reverse acc
 
 
 -- | Find the first valid instruction start among candidate addresses
@@ -198,9 +298,9 @@ findValidInstructionStart (addr:rest) = do
 findByteInMemory :: Word16 -> Word8 -> Bool -> FDX Word16
 findByteInMemory startPos targetByte forward = do
   let maxAddr = 0xFFFF
-  let searchRange = if forward 
-                   then [startPos + 1 .. maxAddr]
-                   else reverse [0 .. startPos - 1]
+  let searchRange = if forward
+                    then [startPos + 1 .. maxAddr]
+                    else reverse [0 .. startPos - 1]
   findFirst searchRange
   where
     findFirst [] = return startPos -- Not found

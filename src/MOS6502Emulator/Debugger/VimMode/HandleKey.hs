@@ -1,103 +1,21 @@
-module MOS6502Emulator.Debugger.VimMode.HandleKey
-  ( handleVimNormalModeKey -- Renamed and exported
-  ) where
-  
-import Control.Monad.State (StateT, get, put, modify, liftIO, runStateT)
-import System.IO (hFlush, stdout, stdin, hSetEcho)
-import Data.Word (Word8, Word16)
+module MOS6502Emulator.Debugger.VimMode.HandleKey ( handleVimNormalModeKey ) where
+import Control.Monad.State (get, modify, liftIO)
+import System.IO (stdin, hSetEcho)
 import Data.Char (isDigit)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Numeric (showHex)
 
-import MOS6502Emulator.Core(Machine(..), FDX, fetchByteMem, writeByteMem, unFDX, mRegs, mConsoleState, AddressMode (Y)) -- Removed parseHexWord, parseHexByte, getRegisters
-import MOS6502Emulator.Machine (setPC_) -- setPC_ is now in Debugger.Utils, but it's also exported from Machine.hs, so this import is fine.
-import MOS6502Emulator.Memory(writeByte)
+import MOS6502Emulator.Core(Machine(..), FDX,  mRegs, mConsoleState) -- Removed parseHexWord, parseHexByte, getRegisters
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), parseCount) -- Ensure DebuggerAction and DebuggerMode are imported from here
 import MOS6502Emulator.Registers(Registers(..))
-import MOS6502Emulator.DissAssembler(disassembleInstructions, disassembleInstruction, InstructionInfo(..), opcodeMap)
-import MOS6502Emulator.Debugger.Commands(handleMemTrace, handleBreak, handleDisassemble, handleSetPC, handleSetReg8, handleFill) -- Moved handle* imports
-import MOS6502Emulator.Debugger(logRegisters) -- logRegisters remains in Debugger.hs
-import MOS6502Emulator.Debugger.VimMode.Core ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), OperatorType(..), VisualType(..))
+import MOS6502Emulator.Debugger.VimMode.Core ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), OperatorType(..), VisualType(..), ObjectModifier(..), TextObjectType(..), CommandState(..))
 import MOS6502Emulator.Debugger.VimMode.Execute (executeMotion, executeAction)
-import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth, putOutput, putString)
-import qualified System.Console.ANSI as ANSI
-import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, getRegisters) -- Import from Debugger.Utils
+import MOS6502Emulator.Debugger.VimMode.HandleVisualKey (handleVisualKey)
+import MOS6502Emulator.Debugger.Console(getKey, getInput, putString, termHeight)
+import MOS6502Emulator.Debugger.Utils (parseHexByte) -- Import from Debugger.Utils
+import MOS6502Emulator.Debugger.VimMode.CommandParser (parseVimCommand)
 
-
--- TODO: Add real actions
--- | Handle keys in visual mode
-handleVisualKey :: Char -> VimState -> FDX (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode)
-handleVisualKey key vimState = do
-    machine <- get -- Get machine state to access console and mode
-    let currentConsoleState = mConsoleState machine
-    let currentDebuggerMode = debuggerMode machine -- Use accessor here
-    let start = vsVisualStart vimState
-    let end = vsCursor vimState
-    let (minAddr, maxAddr) = if start <= end then (start, end) else (end, start)
-    
-    case key of
-        -- Switch visual types
-        'v' -> return (NoAction, [], vimState { vsVisualType = CharVisual }, currentConsoleState, currentDebuggerMode)
-        'V' -> return (NoAction, [], vimState { vsVisualType = LineVisual }, currentConsoleState, currentDebuggerMode)
-        '\x1b' -> return (NoAction, [], vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)  -- Exit visual mode
-        
-        -- Operations
-        'y' -> do
-            let bytes = case vsVisualType vimState of
-                        LineVisual -> [minAddr..maxAddr]
-                        _ -> [minAddr..maxAddr]
-            content <- mapM fetchByteMem bytes
-            let newYank = Map.insert (vsRegister vimState) content (vsYankBuffer vimState)
-            return (NoAction, ["Yanked " ++ show (length content) ++ " bytes"],
-                    vimState { vsYankBuffer = newYank, vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)
-                    
-        'd' -> do
-            let bytes = case vsVisualType vimState of
-                        LineVisual -> [minAddr..maxAddr]
-                        _ -> [minAddr..maxAddr]
-            mapM_ (`writeByteMem` 0) bytes  -- Delete by writing 0s
-            return (NoAction, ["Deleted " ++ show (length bytes) ++ " bytes"],
-                    vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)
-                    
-        'c' -> do
-            putString "Change with hex byte: "
-            liftIO $ hSetEcho stdin True
-            hexStr <- liftIO getInput
-            liftIO $ hSetEcho stdin False
-            case parseHexByte hexStr of
-                Just byte -> do
-                    let bytes = case vsVisualType vimState of
-                                LineVisual -> [minAddr..maxAddr]
-                                _ -> [minAddr..maxAddr]
-                    mapM_ (`writeByteMem` byte) bytes
-                    return (NoAction, ["Changed " ++ show (length bytes) ++ " bytes to " ++ hexStr],
-                            vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)
-                Nothing -> return (NoAction, ["Invalid hex byte"], vimState, currentConsoleState, currentDebuggerMode)
-        
-        -- Move cursor in visual mode
-        'j' -> do
-            newPos <- executeMotion (NextInstruction 1) (vsCursor vimState)
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
-        'k' -> do
-            newPos <- executeMotion (PrevInstruction 1) (vsCursor vimState)
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
-        'h' -> do
-            newPos <- executeMotion (PrevByte 1) (vsCursor vimState)
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
-        'l' -> do
-            newPos <- executeMotion (NextByte 1) (vsCursor vimState)
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
-        
-        -- Show disassembly of selection
-        'D' -> do
-            let disassembleAddr addr = do
-                    (instr, _) <- disassembleInstruction addr
-                    return $ "  " ++ showHex addr ": " ++ instr
-            output <- mapM disassembleAddr [minAddr..maxAddr]
-            return (NoAction, "Disassembled selection:":output, vimState, currentConsoleState, currentDebuggerMode)
-        
-        _   -> return (NoAction, ["Key '" ++ [key] ++ "' not supported in visual mode"], vimState, currentConsoleState, currentDebuggerMode)
 
 handleVimNormalModeKey :: Char -> VimState -> DebuggerConsoleState -> DebuggerMode -> FDX (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode)
 handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = do
@@ -110,45 +28,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
     then handleVisualKey key vimState
     else
       case (vsOperator vimState, key) of
-    -- Operator-pending mode
-        (Just op, motionKey) | motionKey `elem` ['j','k','h','l','w','b','G','g','H','M','L'] -> do
-            motion <- case motionKey of
-              'j' -> return $ NextInstruction count
-              'k' -> return $ PrevInstruction count
-              'h' -> return $ PrevByte count
-              'l' -> return $ NextByte count
-              'w' -> return $ WordForward count
-              'b' -> return $ WordBackward count
-              'G' -> return $ GotoAddressMotion $ fromIntegral $ fromMaybe (fromIntegral $ rPC (mRegs machine)) (vsCount vimState)
-              'g' -> return GotoPC
-              'H' -> return TopOfPage
-              'M' -> return MiddlePage
-              'L' -> return EndOfPage
-              _   -> error "Unhandled motion"
-            
-            let action = case op of
-                            DeleteOp -> Delete motion
-                            ChangeOp -> Change motion
-                            YankOp   -> Yank motion
-            (newPos', output) <- executeAction action currentPos vimState
-            let newYankBuffer = if op == YankOp
-                then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
-                else vsYankBuffer vimState
-            return (NoAction, output, vimState { vsCursor = newPos', vsCount = Nothing, vsOperator = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
-    
-        (Just op, 'k') | op `elem` [DeleteOp, ChangeOp, YankOp] -> do
-              newPos <- executeMotion (PrevInstruction count) currentPos
-              let action = case op of
-                    DeleteOp -> Delete (PrevInstruction count)
-                    ChangeOp -> Change (PrevInstruction count)
-                    YankOp -> Yank (PrevInstruction count)
-                    _ -> error "Invalid operator"
-              (newPos', output) <- executeAction action currentPos vimState
-              let newYankBuffer = if op == YankOp
-                    then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
-                    else vsYankBuffer vimState
-              return (NoAction, output, vimState { vsCursor = newPos', vsCount = Nothing, vsOperator = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
-    
+
         -- Escape - clear pending operations or switch to CommandMode
         (Nothing, '\x1b') -> return (SwitchToCommandMode, ["Switching to Command Mode"], vimState { vsOperator = Nothing, vsCount = Nothing }, debuggerConsoleState, initialDebuggerMode)
         (Just _, '\x1b') -> return (NoAction, [""], vimState { vsOperator = Nothing, vsCount = Nothing },  debuggerConsoleState, initialDebuggerMode)
@@ -192,47 +72,6 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           let newCount = currentCount * 10 + (read [c])
           return (NoAction, [""], vimState { vsCount = Just newCount }, debuggerConsoleState, initialDebuggerMode)
     
-    -- Operator commands
-        (Nothing, 'v') ->
-          -- Enter visual mode
-          return (NoAction, ["Entered visual mode"], vimState {
-            vsInVisualMode = True,
-            vsVisualStart = currentPos
-          }, debuggerConsoleState, initialDebuggerMode)
-          
-        (Nothing, c) | c `elem` ['d','c','y','w','l','b'] -> do
-          case c of
-            'd' -> return (NoAction, [""], vimState { vsOperator = Just DeleteOp }, debuggerConsoleState, initialDebuggerMode)
-            'c' -> return (NoAction, [""], vimState { vsOperator = Just ChangeOp }, debuggerConsoleState, initialDebuggerMode)
-            'y' -> return (NoAction, [""], vimState { vsOperator = Just YankOp }, debuggerConsoleState, initialDebuggerMode)
-            'w' -> do  -- Yank/delete word object
-                let motion = WordObject (fromMaybe 1 (vsCount vimState))
-                let action = case vsOperator vimState of
-                              Just DeleteOp -> Delete motion
-                              Just ChangeOp -> Change motion
-                              Just YankOp   -> Yank motion
-                              _ -> Move motion
-                (newPos, output) <- executeAction action currentPos vimState
-                return (NoAction, output, vimState { vsCursor = newPos, vsOperator = Nothing }, debuggerConsoleState, initialDebuggerMode)
-            'l' -> do  -- Yank/delete line object
-                let motion = LineObject (fromMaybe 1 (vsCount vimState))
-                let action = case vsOperator vimState of
-                              Just DeleteOp -> Delete motion
-                              Just ChangeOp -> Change motion
-                              Just YankOp   -> Yank motion
-                              _ -> Move motion
-                (newPos, output) <- executeAction action currentPos vimState
-                return (NoAction, output, vimState { vsCursor = newPos, vsOperator = Nothing }, debuggerConsoleState, initialDebuggerMode)
-            'b' -> do  -- Yank/delete bracket object
-                let motion = BracketObject
-                let action = case vsOperator vimState of
-                              Just DeleteOp -> Delete motion
-                              Just ChangeOp -> Change motion
-                              Just YankOp   -> Yank motion
-                              _ -> Move motion
-                (newPos, output) <- executeAction action currentPos vimState
-                return (NoAction, output, vimState { vsCursor = newPos, vsOperator = Nothing }, debuggerConsoleState, initialDebuggerMode)
-            _ -> return (NoAction, [""], vimState, debuggerConsoleState, initialDebuggerMode)
 
         -- Repeat last change
         (Nothing, '.') -> case vsLastChange vimState of
@@ -240,7 +79,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
             (newPos, output) <- executeAction act currentPos vimState
             return (NoAction, output, vimState { vsCursor = newPos, vsMessage = head output }, debuggerConsoleState, initialDebuggerMode)
           Just (RepeatMotion mot) -> do
-            newPos <- executeMotion mot currentPos
+            newPos <- executeMotion mot currentPos vimState
             let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 3
                   then newPos - fromIntegral ((termHeight - 3) * 2)
                   else vsViewStart vimState
@@ -253,7 +92,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         (Nothing, 'j') -> do
           putString "Naciśnięto 'j'" -- Debugowanie, changed to putString
           let motion = NextInstruction count
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 3
                 then newPos - fromIntegral ((termHeight - 3) * 2)
                 else vsViewStart vimState
@@ -261,7 +100,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         
         (Nothing, 'k') -> do
           let motion = PrevInstruction count
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           let newViewStart = if newPos < vsViewStart vimState
                 then max 0 (newPos - fromIntegral (termHeight - 3))
                 else vsViewStart vimState
@@ -269,7 +108,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         
         (Nothing, 'h') -> do
           let motion = PrevByte count
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           let newViewStart = if newPos < vsViewStart vimState
                 then max 0 (newPos - fromIntegral (termHeight - 3) * 16)
                 else vsViewStart vimState
@@ -277,7 +116,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         
         (Nothing, 'l') -> do
           let motion = NextByte count
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 16
                 then newPos - fromIntegral ((termHeight - 3) * 8)
                 else vsViewStart vimState
@@ -285,12 +124,12 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         
         (Nothing, 'w') -> do
           let motion = WordForward count
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
         
         (Nothing, 'b') -> do
           let motion = WordBackward count
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
         
         (Nothing, 'G') -> do
@@ -315,17 +154,17 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         
         (Nothing, 'H') -> do
           let motion = TopOfPage
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode  )
         
         (Nothing, 'M') -> do
           let motion = MiddlePage
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
         
         (Nothing, 'L') -> do
           let motion = EndOfPage
-          newPos <- executeMotion motion currentPos
+          newPos <- executeMotion motion currentPos vimState
           let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 16
                 then newPos - fromIntegral ((termHeight - 3) * 8)
                 else vsViewStart vimState
@@ -384,7 +223,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           liftIO $ hSetEcho stdin False
           case parseHexByte hexStr of
             Just targetByte -> do
-              newPos <- executeMotion (FindByte targetByte True) currentPos
+              newPos <- executeMotion (FindByte targetByte True) currentPos vimState
               let newState = vimState { vsCursor = newPos, vsLastFind = Just (targetByte, True), vsCount = Nothing, vsMessage = "Found byte at $" ++ showHex newPos "" }
               return (NoAction, ["Found byte at $" ++ showHex newPos ""], newState, debuggerConsoleState, initialDebuggerMode)
             Nothing -> return (NoAction, ["Invalid hex byte"], vimState { vsCount = Nothing, vsMessage = "Invalid hex byte" }, debuggerConsoleState, initialDebuggerMode)
@@ -396,7 +235,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           liftIO $ hSetEcho stdin False
           case parseHexByte hexStr of
             Just targetByte -> do
-              newPos <- executeMotion (FindByte targetByte False) currentPos
+              newPos <- executeMotion (FindByte targetByte False) currentPos vimState
               let newState = vimState { vsCursor = newPos, vsLastFind = Just (targetByte, False), vsCount = Nothing, vsMessage = "Found byte at $" ++ showHex newPos "" }
               return (NoAction, ["Found byte at $" ++ showHex newPos ""], newState, debuggerConsoleState, initialDebuggerMode)
             Nothing -> return (NoAction, ["Invalid hex byte"], vimState { vsCount = Nothing, vsMessage = "Invalid hex byte" }, debuggerConsoleState, initialDebuggerMode)
@@ -408,7 +247,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           liftIO $ hSetEcho stdin False
           case parseHexByte hexStr of
             Just targetByte -> do
-              newPos <- executeMotion (TillByte targetByte True) currentPos
+              newPos <- executeMotion (TillByte targetByte True) currentPos vimState
               let newState = vimState { vsCursor = newPos, vsLastFind = Just (targetByte, True), vsCount = Nothing, vsMessage = "Moved to $" ++ showHex newPos "" }
               return (NoAction, ["Moved to $" ++ showHex newPos ""], newState, debuggerConsoleState, initialDebuggerMode)
             Nothing -> return (NoAction, ["Invalid hex byte"], vimState { vsCount = Nothing, vsMessage = "Invalid hex byte" }, debuggerConsoleState, initialDebuggerMode)
@@ -420,7 +259,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           liftIO $ hSetEcho stdin False
           case parseHexByte hexStr of
             Just targetByte -> do
-              newPos <- executeMotion (TillByte targetByte False) currentPos
+              newPos <- executeMotion (TillByte targetByte False) currentPos vimState
               let newState = vimState { vsCursor = newPos, vsLastFind = Just (targetByte, False), vsCount = Nothing, vsMessage = "Moved to $" ++ showHex newPos "" }
               return (NoAction, ["Moved to $" ++ showHex newPos ""], newState, debuggerConsoleState, initialDebuggerMode)
             Nothing -> return (NoAction, ["Invalid hex byte"], vimState { vsCount = Nothing, vsMessage = "Invalid hex byte" }, debuggerConsoleState, initialDebuggerMode)
@@ -428,14 +267,14 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         (Nothing, ';') -> do
           case vsLastFind vimState of
             Just (byte, forward) -> do
-              newPos <- executeMotion (FindByte byte forward) currentPos
+              newPos <- executeMotion (FindByte byte forward) currentPos vimState
               return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = "Repeated find to $" ++ showHex newPos "" }, debuggerConsoleState, initialDebuggerMode )
             Nothing -> return (NoAction, ["No previous find"], vimState { vsCount = Nothing, vsMessage = "No previous find" }, debuggerConsoleState, initialDebuggerMode )
         
         (Nothing, ',') -> do
           case vsLastFind vimState of
             Just (byte, forward) -> do
-              newPos <- executeMotion (FindByte byte (not forward)) currentPos
+              newPos <- executeMotion (FindByte byte (not forward)) currentPos vimState
               return (NoAction, [""], vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = "Repeated find to $" ++ showHex newPos "" }, debuggerConsoleState, initialDebuggerMode )
             Nothing -> return (NoAction, ["No previous find"], vimState { vsCount = Nothing, vsMessage = "No previous find" }, debuggerConsoleState, initialDebuggerMode )
       
@@ -477,4 +316,96 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           return (SwitchToVimCommandMode, [], vimState { vsInCommandMode = True, vsCommandBuffer = ":", vsMessage = "" }, debuggerConsoleState, initialDebuggerMode )
     
     -- Default
-        _ -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped"], vimState { vsCount = Nothing, vsMessage = "Key '" ++ [key] ++ "' not mapped" }, debuggerConsoleState, initialDebuggerMode)
+    --    _ -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped"], vimState { vsCount = Nothing, vsMessage = "Key '" ++ [key] ++ "' not mapped" }, debuggerConsoleState, initialDebuggerMode)
+        -- Command composition state machine
+        _ -> case vsCommandState vimState of
+            NoCommand ->            -- NoCommand state: handle operators, visual mode, etc.
+                case key of
+                    -- Visual mode
+                    'v' -> return (NoAction, ["Entered visual mode"], vimState { vsInVisualMode = True, vsVisualStart = currentPos}, debuggerConsoleState, initialDebuggerMode)
+                    -- Operators
+                    'd' -> return (NoAction, [""], vimState { vsCommandState = Operator DeleteOp}, debuggerConsoleState, initialDebuggerMode)
+                    'c' -> return (NoAction, [""], vimState { vsCommandState = Operator ChangeOp}, debuggerConsoleState, initialDebuggerMode)
+                    'y' -> return (NoAction, [""], vimState { vsCommandState = Operator YankOp }, debuggerConsoleState, initialDebuggerMode)
+                    _ -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped"], vimState { vsCount = Nothing, vsMessage = "Key '" ++ [key] ++ "' not mapped" }, debuggerConsoleState, initialDebuggerMode)
+            
+            Operator op ->            -- Operator state: handle modifiers (i,a) or motions
+                case key of
+                    'i' -> return (NoAction, [""], vimState {vsCommandState = Object op Inner}, debuggerConsoleState, initialDebuggerMode)
+                    'a' -> return (NoAction, [""], vimState {vsCommandState = Object op Outer}, debuggerConsoleState, initialDebuggerMode)
+                    _   -> do
+                        -- Handle motion directly
+                        motion <- case key of
+                          'j' -> return $ NextInstruction count
+                          'k' -> return $ PrevInstruction count
+                          'h' -> return $ PrevByte count
+                          'l' -> return $ NextByte count
+                          'w' -> return $ WordForward count
+                          'b' -> return $ WordBackward count
+                          'G' -> return $ GotoAddressMotion $ fromIntegral $ fromMaybe (fromIntegral $ rPC (mRegs machine)) (vsCount vimState)
+                          'g' -> return GotoPC
+                          'H' -> return TopOfPage
+                          'M' -> return MiddlePage
+                          'L' -> return EndOfPage
+                          _   -> error "Unhandled motion"
+                        
+                        let action = case op of
+                                      DeleteOp -> Delete motion
+                                      ChangeOp -> Change motion
+                                      YankOp   -> Yank motion
+                        (newPos', output) <- executeAction action currentPos vimState
+                        let newYankBuffer = if op == YankOp
+                            then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
+                            else vsYankBuffer vimState
+                        return (NoAction, output, vimState {vsCursor = newPos', vsCount = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action), vsCommandState = NoCommand}, debuggerConsoleState, initialDebuggerMode)
+            
+            Object op mod -> do            -- Object state: handle text objects
+                let n = fromMaybe 1 (vsCount vimState)
+                let motion = case key of
+                            'w' -> TextObject mod Word n
+                            'l' -> TextObject mod Line n
+                            'b' -> TextObject mod Bracket n
+                            '"' -> TextObject mod Quote n
+                            -- 's' -> TextObject mod Sentence n
+                            _   -> error "Unhandled object"
+                
+                let action = case op of
+                              DeleteOp -> Delete motion
+                              ChangeOp -> Change motion
+                              YankOp   -> Yank motion
+                (newPos, output) <- executeAction action currentPos vimState
+                return (NoAction, output, vimState {
+                    vsCursor = newPos,
+                    vsCount = Nothing,
+                    vsLastChange = Just (RepeatAction action),
+                    vsCommandState = NoCommand
+                }, debuggerConsoleState, initialDebuggerMode)
+            CommandModeV ->
+                case key of
+                    '\x1b' ->  -- Escape
+                          return (NoAction, [""], vimState {
+                              vsCommandState = NoCommand,
+                              vsCommandBuffer = "",
+                              vsInCommandMode = False -- Reset in command mode flag
+                          }, debuggerConsoleState, initialDebuggerMode)
+                    '\n' -> do  -- Enter
+                        let cmdStr = vsCommandBuffer vimState
+                        let parsedCmd = parseVimCommand cmdStr
+                        (newPos, output) <- executeAction (ColonCommand parsedCmd) currentPos vimState
+                        let newState = vimState { vsCursor = newPos, vsCommandState = NoCommand, vsCommandBuffer = "", vsInCommandMode = False, vsCount = Nothing, vsLastChange = Nothing }
+                        return (NoAction, output, newState, debuggerConsoleState, initialDebuggerMode)
+                    _ -> return (NoAction, [""], vimState {vsCommandBuffer = vsCommandBuffer vimState ++ [key]}, debuggerConsoleState, initialDebuggerMode) -- Add char to buffer
+            VimPendingCompose ->
+                if key == '\x1b'  -- Escape
+                then return (NoAction, ["Register selection cancelled"], vimState {
+                    vsCommandState = NoCommand,
+                    vsMessage = "Register selection cancelled"
+                }, debuggerConsoleState, initialDebuggerMode)
+                else return (NoAction, [""], vimState {
+                    vsRegister = key,
+                    vsCommandState = NoCommand,
+                    vsMessage = "Set register '" ++ [key] ++ "'"
+                }, debuggerConsoleState, initialDebuggerMode)
+            
+            _ -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped"], vimState { vsCommandState = NoCommand, vsCommandBuffer = "" }, debuggerConsoleState, initialDebuggerMode)
+
