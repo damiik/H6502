@@ -12,7 +12,7 @@ import MOS6502Emulator.Registers(Registers(..))
 import MOS6502Emulator.Debugger.VimMode.Core ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), OperatorType(..), VisualType(..), ObjectModifier(..), TextObjectType(..), CommandState(..))
 import MOS6502Emulator.Debugger.VimMode.Execute (executeMotion, executeAction)
 import MOS6502Emulator.Debugger.VimMode.HandleVisualKey (handleVisualKey)
-import MOS6502Emulator.Debugger.Console(getKey, getInput, putString, termHeight)
+import MOS6502Emulator.Debugger.Console(renderScreen, getKey, getInput, putString, termHeight)
 import MOS6502Emulator.Debugger.Utils (parseHexByte) -- Import from Debugger.Utils
 import MOS6502Emulator.Debugger.VimMode.CommandParser (parseVimCommand)
 
@@ -213,6 +213,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         (Nothing, '\r') -> do
           let action = ExecuteToHere
           (newPos, output) <- executeAction action currentPos vimState
+          renderScreen machine
           return (ExecuteStep "execute-to-here", output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
         
         -- Find commands
@@ -288,7 +289,9 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           return (NoAction, ["Switched to " ++ show newViewMode], vimState { vsViewMode = newViewMode, vsMessage = "Switched to " ++ show newViewMode }, debuggerConsoleState, initialDebuggerMode )
     
         -- Step execution
-        (Nothing, 's') -> return (ExecuteStep [key], [], vimState { vsCount = Nothing, vsMessage = "Stepped one instruction", vsLastChange = Just RepeatStep }, debuggerConsoleState, initialDebuggerMode )
+        (Nothing, 's') -> do
+          -- Removed renderScreen here, it will be called after fdxSingleCycle in runLoop
+          return (ExecuteStep [key], [], vimState { vsCount = Nothing, vsMessage = "Stepped one instruction", vsLastChange = Just RepeatStep }, debuggerConsoleState, initialDebuggerMode )
         
         -- Continue execution
         (Nothing, 'c') -> return (ExecuteStep "continue", [], vimState { vsCount = Nothing, vsMessage = "Continuing execution" }, debuggerConsoleState, initialDebuggerMode )
@@ -408,4 +411,3 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
                 }, debuggerConsoleState, initialDebuggerMode)
             
             _ -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped"], vimState { vsCommandState = NoCommand, vsCommandBuffer = "" }, debuggerConsoleState, initialDebuggerMode)
-
