@@ -15,6 +15,8 @@ import Data.Bits (testBit)
 import Control.Exception (IOException, displayException, try)
 import Text.Printf (printf)
 import System.IO (hFlush, stdout,  stdin, hSetEcho)
+import Control.Monad (unless) -- Added for conditional rendering
+import Data.List (isInfixOf) -- Added for substring checking
 
 import MOS6502Emulator.Core
 import MOS6502Emulator.Machine
@@ -81,10 +83,14 @@ interactiveLoopHelper = do
           -- Now proceed with command input
           (commandToExecute, consumeNewline) <- readCommand
           (action, output) <- handleCommand commandToExecute
+          let filteredOutput = if isExecuteStep action
+                               then filterOutRegisterLines output -- Filter output for step actions
+                               else output
           machineAfterCommand <- get
-          let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+          let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ filteredOutput, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
           put updatedMachine
-          renderScreen updatedMachine
+          -- Conditional rendering: only render if not executing a step
+          unless (isExecuteStep action) $ renderScreen updatedMachine
           case action of
             ContinueLoop _ -> interactiveLoopHelper
             ExecuteStep _  -> return action
@@ -98,10 +104,14 @@ interactiveLoopHelper = do
         -- No help being displayed, proceed with normal command input
         (commandToExecute, consumeNewline) <- readCommand
         (action, output) <- handleCommand commandToExecute
+        let filteredOutput = if isExecuteStep action
+                               then filterOutRegisterLines output -- Filter output for step actions
+                               else output
         machineAfterCommand <- get
-        let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+        let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ filteredOutput, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
         put updatedMachine
-        renderScreen updatedMachine
+        -- Conditional rendering: only render if not executing a step
+        unless (isExecuteStep action) $ renderScreen updatedMachine
         case action of
           ContinueLoop _ -> interactiveLoopHelper
           ExecuteStep _  -> return action
@@ -111,6 +121,24 @@ interactiveLoopHelper = do
           SwitchToVimMode              -> do
             modify (\m -> m { debuggerMode = VimMode }) >> return action
           SwitchToCommandMode          -> interactiveLoopHelper
+
+-- Helper function to check if an action is ExecuteStep
+isExecuteStep :: DebuggerAction -> Bool
+isExecuteStep (ExecuteStep _) = True
+isExecuteStep _ = False
+
+-- Helper function to filter out register-related lines from command output
+filterOutRegisterLines :: [String] -> [String]
+filterOutRegisterLines = filter (\s -> not (
+    "PC: $" `isInfixOf` s ||
+    "AC: $" `isInfixOf` s ||
+    "X: $" `isInfixOf` s ||
+    "Y: $" `isInfixOf` s ||
+    "SP: $" `isInfixOf` s ||
+    "SR: " `isInfixOf` s ||
+    "a [$" `isInfixOf` s || -- For memory trace blocks
+    "Registers: (will be updated after step)" `isInfixOf` s
+  ))
 
 
 

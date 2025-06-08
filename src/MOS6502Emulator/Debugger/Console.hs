@@ -23,6 +23,7 @@ import Control.Monad.IO.Class (liftIO) -- Import liftIO
 import System.IO (hFlush, stdout) -- Import hFlush and stdout
 import Data.List (findIndex, splitAt, foldl')
 import Control.Monad (forM_, unless)
+import MOS6502Emulator.Debugger.Utils (logRegisters) -- Import logRegisters
 
 -- | Strips ANSI escape codes from a string to calculate its visual length.
 stripAnsiCodes :: String -> String
@@ -113,8 +114,13 @@ renderScreen machine = do
   let helpTextLines = helpLines consoleState
   let helpTextScrollPos = helpScrollPos consoleState
 
+  -- Generate current register display for the right column
+  let regs = mRegs machine
+  let currentRegDisplay = logRegisters regs
+
+  -- Determine the content for the right column
   let rightColumnContent = if null helpTextLines
-                           then reverse $ take maxOutputLines $ reverse currentOutputLines
+                           then currentRegDisplay ++ [""] ++ reverse (take (maxOutputLines - length currentRegDisplay - 1) (reverse currentOutputLines))
                            else take maxOutputLines $ drop helpTextScrollPos helpTextLines
   
   -- Display disassembled code (left column)
