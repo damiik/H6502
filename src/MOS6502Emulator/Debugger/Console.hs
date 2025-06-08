@@ -14,7 +14,8 @@ module MOS6502Emulator.Debugger.Console
 import qualified System.Console.ANSI as ANSI
 import Numeric (showHex)
 import Data.Word (Word16) -- Import Word16
-import MOS6502Emulator.Core (Machine(..), FDX(..), mRegs, mConsoleState) -- Updated import from Core, removed debuggerMode as it's from Types
+import MOS6502Emulator.Core (FDX(..), mRegs, mConsoleState) -- Updated import from Core, removed debuggerMode as it's from Types
+import MOS6502Emulator.Machine (Machine(..)) -- Import Machine from MOS6502Emulator.Machine to access memoryTraceBlocks
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), initialConsoleState, DebuggerMode(..)) -- New import from Types, exporting constructors and fields
 import MOS6502Emulator.Registers (rAC, rX, rY, rPC) -- Import register fields
 import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
@@ -23,6 +24,7 @@ import Control.Monad.IO.Class (liftIO) -- Import liftIO
 import System.IO (hFlush, stdout) -- Import hFlush and stdout
 import Data.List (findIndex, splitAt, foldl')
 import Control.Monad (forM_, unless)
+import MOS6502Emulator.Debugger.Utils(logRegisters, logMemoryRange) -- Import logRegisters and logMemoryRange
 
 -- | Strips ANSI escape codes from a string to calculate its visual length.
 stripAnsiCodes :: String -> String
@@ -113,16 +115,22 @@ renderScreen machine = do
   let helpTextLines = helpLines consoleState
   let helpTextScrollPos = helpScrollPos consoleState
 
-  let rightColumnContent = if null helpTextLines
-                           then reverse $ take maxOutputLines $ reverse currentOutputLines
-                           else take maxOutputLines $ drop helpTextScrollPos helpTextLines
+  actualRightColumnContent <-
+    if not (null helpTextLines) then
+      return $ take maxOutputLines $ drop helpTextScrollPos helpTextLines
+    else case debuggerMode machine of
+      VimMode -> do
+        let regLines = logRegisters (mRegs machine)
+        memLinesList <- mapM (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machine)
+        return $ regLines ++ concat memLinesList
+      _       -> return $ reverse $ take maxOutputLines $ reverse currentOutputLines
   
   -- Display disassembled code (left column)
   let currentPC = rPC (mRegs machine)
   ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines availableContentHeight currentPC) machine
   
   -- Print two columns
-  liftIO $ printTwoColumns termWidth disassembledLines rightColumnContent
+  liftIO $ printTwoColumns termWidth disassembledLines actualRightColumnContent
 
   -- Status line (with background color)
   liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
