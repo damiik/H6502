@@ -13,8 +13,8 @@ module MOS6502Emulator
 import Control.Monad.State (get, modify, put, gets, runStateT) -- Import runStateT
 import Control.Monad (when, unless, void) -- Import the 'when', 'unless', and 'void' functions
 import Control.Monad.IO.Class (liftIO)
-import Numeric (showHex, readHex) -- Import showHex and readHex
-import System.IO (hSetEcho, hSetBuffering,  BufferMode(NoBuffering, LineBuffering), stdin ) -- Import hSetBuffering, BufferMode, stdin, hReady, getChar, LineBuffering
+import Numeric (showHex) -- Removed readHex as it's not used here
+import System.IO (hSetEcho, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, getChar) -- Import hReady and getChar
 import Data.Word ( Word8, Word16 )
 import qualified Data.Map.Strict as Map -- For Map.empty
 
@@ -142,7 +142,7 @@ handlePostInstructionChecks = do
         VimCommandMode -> void V.interactiveLoopHelper -- Enter VimCommandMode loop, discard result
     else do
       -- Log registers and memory trace blocks if tracing is enabled
-      when (enableTrace nextMachineState) $ do
+      when (enableTrace nextMachineState && not (debuggerActive nextMachineState)) $ do
           let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
           disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
           putOutput "" -- Use console output instead of direct print
@@ -245,7 +245,16 @@ runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
     hSetBuffering stdin NoBuffering
     hSetEcho stdin False
 
+    -- Clear input buffer before starting the debugger loop
+    clearInputBuffer
 
     (_, finalMachine) <- runStateT (unFDX runLoop) machineWithStartPC -- Start the main runLoop
     return finalMachine
 
+-- Helper function to clear the input buffer
+clearInputBuffer :: IO ()
+clearInputBuffer = do
+  ready <- hReady stdin
+  when ready $ do
+    _ <- getChar
+    clearInputBuffer

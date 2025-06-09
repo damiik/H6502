@@ -56,7 +56,6 @@ interactiveLoopHelper = do
       let currentConsoleState = mConsoleState machine
       let consoleStateWithPrompt = currentConsoleState { inputBuffer = "> ", cursorPosition = 2 }
       modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
-      renderScreen machine -- Render the screen initially
 
       -- Check if help is currently displayed and if Enter is pressed
       let helpTextLines = helpLines (mConsoleState machine)
