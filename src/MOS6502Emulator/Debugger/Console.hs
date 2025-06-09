@@ -24,6 +24,7 @@ import Control.Monad.IO.Class (liftIO) -- Import liftIO
 import System.IO (hFlush, stdout) -- Import hFlush and stdout
 import Data.List (findIndex, splitAt, foldl')
 import Control.Monad (forM_, unless)
+import MOS6502Emulator.Debugger.Utils (logRegisters) -- Import logRegisters
 import MOS6502Emulator.Debugger.Utils(logRegisters, logMemoryRange) -- Import logRegisters and logMemoryRange
 
 -- | Strips ANSI escape codes from a string to calculate its visual length.
