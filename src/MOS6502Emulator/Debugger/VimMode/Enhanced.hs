@@ -20,10 +20,10 @@ import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth,
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..)) -- New import, ensuring DebuggerAction is here
 import MOS6502Emulator.DissAssembler(disassembleInstructions, formatHex16, formatHex8, unwords)
 import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleSetPC, handleSetReg8, handleFill, handleDisassemble, handleCommand) -- Moved handle* imports
-import MOS6502Emulator.Debugger (logRegisters) -- logRegisters remains in Debugger.hs
+import MOS6502Emulator.Debugger (logRegisters, isExecuteStep) -- logRegisters remains in Debugger.hs, import isExecuteStep
 import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, setPC_, getRegisters) -- Import from Debugger.Utils
 import qualified System.Console.ANSI as ANSI
-import Control.Monad (void) -- Added void
+import Control.Monad (void, unless) -- Added void and unless
 
 -- | Parse a hex string to a byte value
 -- parseHexByte :: String -> Maybe Word8
@@ -150,8 +150,6 @@ handleVimCommandModeKey key machine vimState = do
         liftIO $ hSetEcho stdin False -- Disable echo after command execution
         let commandToExecute = drop 1 currentCommandBuffer -- Remove leading ':'
         (action, output) <- handleCommand commandToExecute
-        liftIO $ putStrLn $ "DEBUG: handleCommand returned action: " ++ show action
-        
         -- Get the machine state *after* handleCommand has potentially modified it
         machineAfterCommand <- get 
 
@@ -215,9 +213,10 @@ interactiveLoopHelper = do
     
       -- Use the final state for rendering
       let updatedMachine = finalMachineState
-      if vsInCommandMode newVimState -- This condition should now correctly reflect the state
-        then updateVimCommandLine updatedMachine (vsCommandBuffer newVimState)
-        else renderVimScreen updatedMachine newVimState
+      unless (isExecuteStep action) $ do -- Only render if not executing a step
+        if vsInCommandMode newVimState
+          then updateVimCommandLine updatedMachine (vsCommandBuffer newVimState)
+          else renderVimScreen updatedMachine newVimState
 
       case action of
         ContinueLoop _ -> interactiveLoopHelper
@@ -229,7 +228,6 @@ interactiveLoopHelper = do
         NoAction -> interactiveLoopHelper
         SwitchToCommandMode -> return (action, newVimState)
         SwitchToVimMode -> do
-          liftIO $ void $ System.IO.hReady stdin
           return (action, newVimState)
         SwitchToVimCommandMode -> do
           -- Update the debuggerMode immediately

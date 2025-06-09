@@ -5,6 +5,7 @@ module MOS6502Emulator.Debugger
   , saveDebuggerState
   , loadDebuggerState
   , interactiveLoopHelper -- Exporting for CommandMode
+  , isExecuteStep -- Export isExecuteStep
   ) where
 import Numeric ( readHex)
 import Control.Monad.State (put, get, modify)
@@ -56,7 +57,6 @@ interactiveLoopHelper = do
       let currentConsoleState = mConsoleState machine
       let consoleStateWithPrompt = currentConsoleState { inputBuffer = "> ", cursorPosition = 2 }
       modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
-      renderScreen machine -- Render the screen initially
 
       -- Check if help is currently displayed and if Enter is pressed
       let helpTextLines = helpLines (mConsoleState machine)

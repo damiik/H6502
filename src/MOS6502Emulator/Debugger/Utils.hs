@@ -53,7 +53,7 @@ getRegisters = do
 formatStatusFlags :: Word8 -> String
 formatStatusFlags sr =
   let getFlagBit r b = if testBit r b then '*' else ' '
-  in [getFlagBit sr 7, 'N', ' ', getFlagBit sr 6, 'V', '-', getFlagBit sr 4, 'B', ' ', getFlagBit sr 3, 'D', ' ', getFlagBit sr 2, 'I', ' ', getFlagBit sr 1, 'Z', ' ', getFlagBit sr 0, 'C']
+  in [' ', getFlagBit sr 7, 'N', ' ', getFlagBit sr 6, 'V', ' ', '-', '-', getFlagBit sr 4, 'B', ' ', getFlagBit sr 3, 'D', ' ', getFlagBit sr 2, 'I', ' ', getFlagBit sr 1, 'Z', ' ', getFlagBit sr 0, 'C']
 
 
 -- | Logs the current register values as a list of strings.
@@ -65,12 +65,12 @@ logRegisters reg =
               p1 =  [if testBit b i then '1' else '0' | i <- [7,6..4]]
               p2 =  [if testBit b i then '1' else '0' | i <- [3,2..0]]
   in [ "--------------------------------------------"
-     , "\x1b[35m\x1b[1mPC\x1b[0m\x1b[35m: $" ++ (formatHex16 (rPC reg)) ++ "\x1b[0m"
+     , "\x1b[35m\x1b[1mPC\x1b[0m\x1b[35m: $" ++ formatHex16 (rPC reg) ++ "\x1b[0m"
      , "\x1b[33m\x1b[1mAC\x1b[0m\x1b[33m: $" ++ formatHex8 (rAC reg) ++ " [" ++ formatBinary8 (rAC reg) ++ "] ( " ++ show (rAC reg) ++ " )\x1b[0m"
      , "\x1b[32m\x1b[1m X\x1b[0m\x1b[32m: $" ++ formatHex8 (rX reg) ++ " [\x1b[32m" ++ formatBinary8 (rX reg) ++ "\x1b[32m] ( " ++ show (rX reg) ++ " )\x1b[0m"
      , "\x1b[32m\x1b[1m Y\x1b[0m\x1b[32m: $" ++ formatHex8 (rY reg) ++ " [\x1b[32m" ++ formatBinary8 (rY reg) ++ "\x1b[32m] ( " ++ show (rY reg) ++ " )\x1b[0m"
-     , "\x1b[35m\x1b[1mSP\x1b[0m\x1b[35m: $" ++ (formatHex8 (rSP reg)) ++ "\x1b[0m"
-     , "\x1b[35m\x1b[1mSR\x1b[0m\x1b[35m:     [" ++ formatBinary8 (rSR reg)  ++ "]  " ++ formatStatusFlags sr ++ "\n        *NV-B DIZC*\x1b[0m"
+     , "\x1b[35m\x1b[1mSP\x1b[0m\x1b[35m: $" ++ formatHex8 (rSP reg) ++ "\x1b[0m"
+     , "\x1b[35m\x1b[1mSR\x1b[0m\x1b[35m: $" ++ formatHex8 (rSR reg) ++ formatStatusFlags sr ++ "\n        *NV-B DIZC*\x1b[0m"
      ]
 
 
