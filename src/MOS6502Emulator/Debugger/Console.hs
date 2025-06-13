@@ -14,7 +14,7 @@ module MOS6502Emulator.Debugger.Console
 import qualified System.Console.ANSI as ANSI
 import Numeric (showHex)
 import Data.Word (Word16) -- Import Word16
-import MOS6502Emulator.Core (FDX(..), mRegs, mConsoleState) -- Updated import from Core, removed debuggerMode as it's from Types
+import MOS6502Emulator.Core (FDX(..)) -- Updated import from Core, removed debuggerMode as it's from Types
 import MOS6502Emulator.Machine (Machine(..)) -- Import Machine from MOS6502Emulator.Machine to access memoryTraceBlocks
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), initialConsoleState, DebuggerMode(..)) -- New import from Types, exporting constructors and fields
 import MOS6502Emulator.Registers (rAC, rX, rY, rPC) -- Import register fields
@@ -22,10 +22,17 @@ import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassem
 import Control.Monad.State (runStateT, get, modify) -- Import runStateT, get, modify
 import Control.Monad.IO.Class (liftIO) -- Import liftIO
 import System.IO (hFlush, stdout) -- Import hFlush and stdout
-import Data.List (findIndex, splitAt, foldl')
-import Control.Monad (forM_, unless)
-import MOS6502Emulator.Debugger.Utils (logRegisters) -- Import logRegisters
+import Data.List (findIndex)
+import Control.Monad (forM_)
+import Control.Exception (try, IOException)
 import MOS6502Emulator.Debugger.Utils(logRegisters, logMemoryRange) -- Import logRegisters and logMemoryRange
+
+-- Define the maximum number of lines to keep in the console output buffer.
+-- This is set to `termHeight - 2` to match the visible output area, preventing
+-- the `outputLines` list from growing indefinitely. This resolves the memory leak
+-- issue by capping the history of console output stored in the debugger state.
+maxConsoleOutputLines :: Int
+maxConsoleOutputLines = termHeight - 2
 
 -- | Strips ANSI escape codes from a string to calculate its visual length.
 stripAnsiCodes :: String -> String
@@ -38,7 +45,7 @@ stripAnsiCodes (x:xs) = x : stripAnsiCodes xs
 
 -- Placeholder for terminal dimensions, replace with actual values or functions to get them
 termWidth :: Int
-termWidth = 120 -- Reverting to 120 as per user's initial request for total screen width
+termWidth = 120 -- total screen width
 
 termHeight :: Int
 termHeight = 24
@@ -49,9 +56,15 @@ getKey = getChar
 -- | Prints two columns of text separated by a vertical bar.
 printTwoColumns :: Int -> [String] -> [String] -> IO ()
 printTwoColumns _ leftLines rightLines = do -- 'width' parameter is now ignored as widths are fixed
+  -- Cap both leftLines and rightLines to prevent hangs
+  let cappedLeftLines = take 100 leftLines
+  let cappedRightLines = take 100 rightLines
+  let leftLen = length cappedLeftLines
+  let rightLen = length cappedRightLines
+  let maxLines = max leftLen rightLen
+  
   let leftColumnWidth = 60   -- Accommodates disassembly lines
       rightColumnWidth = 59  -- Allows full command descriptions (60+1+59=120)
-      maxLines = max (length leftLines) (length rightLines)
 
       -- Helper function to wrap text to a specified width
       wrapText :: Int -> String -> [String]
@@ -59,10 +72,10 @@ printTwoColumns _ leftLines rightLines = do -- 'width' parameter is now ignored 
       wrapText width s =
         if length cleanStr <= width
         then [s]
-        else let (first, rest) = splitAt width cleanStr
+        else let (first, _) = splitAt width cleanStr
                  -- Find last space to break at word boundary
                  lastSpace = findLastSpace first
-                 (before, after) = if lastSpace > 0
+                 (before, _) = if lastSpace > 0
                                    then splitAt lastSpace cleanStr
                                    else (cleanStr, "")
                  -- Re-add ANSI codes to wrapped segments
@@ -89,13 +102,13 @@ printTwoColumns _ leftLines rightLines = do -- 'width' parameter is now ignored 
            else s  -- Rely on wrapping to prevent overflow
 
   forM_ [0..maxLines-1] $ \i -> do
-    let l = if fromIntegral i < length leftLines then leftLines !! i else ""
-        r = if fromIntegral i < length rightLines then rightLines !! i else ""
+    let l = if i < length cappedLeftLines then cappedLeftLines !! i else ""
+        r = if i < length cappedRightLines then cappedRightLines !! i else ""
     
     let paddedL = padString l leftColumnWidth
     let paddedR = padString r rightColumnWidth
 
-    ANSI.setCursorPosition (fromIntegral i) 0
+    ANSI.setCursorPosition i 0
     putStr $ paddedL ++ "|" ++ paddedR
     hFlush stdout -- Flush after each line to ensure immediate display
 
@@ -123,15 +136,18 @@ renderScreen machine = do
       VimMode -> do
         let regLines = logRegisters (mRegs machine)
         memLinesList <- mapM (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks machine)
-        return $ regLines ++ concat memLinesList
+        return $ take maxOutputLines $ regLines ++ concat memLinesList
       _       -> return $ reverse $ take maxOutputLines $ reverse currentOutputLines
-  
   -- Display disassembled code (left column)
+
   let currentPC = rPC (mRegs machine)
   ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines availableContentHeight currentPC) machine
   
-  -- Print two columns
-  liftIO $ printTwoColumns termWidth disassembledLines actualRightColumnContent
+  -- Print two columns with error handling
+  result <- liftIO $ try (printTwoColumns termWidth disassembledLines actualRightColumnContent) :: FDX (Either IOException ())
+  case result of
+    Left err -> liftIO $ putStrLn $ "Error in printTwoColumns: " ++ show err
+    Right _ -> return ()
 
   -- Status line (with background color)
   liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
@@ -189,9 +205,15 @@ getInput :: IO String
 getInput = getLine
 
 -- | Adds a string to the console output lines.
+-- The `take maxConsoleOutputLines` ensures that the `outputLines` list
+-- never exceeds the defined maximum size, effectively implementing a circular
+-- buffer for console output. This is crucial for preventing memory leaks
+-- caused by an ever-growing list of past outputs.
 putOutput :: String -> FDX ()
-putOutput s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ [s] } })
+putOutput s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = take maxConsoleOutputLines (outputLines (mConsoleState m) ++ [s]) } })
 
 -- | Adds a string to the console output lines (without newline).
+-- Similar to `putOutput`, this function also caps the size of `outputLines`
+-- to prevent memory accumulation.
 putString :: String -> FDX ()
-putString s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = outputLines (mConsoleState m) ++ [s] } })
+putString s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = take maxConsoleOutputLines (outputLines (mConsoleState m) ++ [s]) } })

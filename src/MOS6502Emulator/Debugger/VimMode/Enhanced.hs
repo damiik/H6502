@@ -7,11 +7,12 @@ module MOS6502Emulator.Debugger.VimMode.Enhanced (
 import Data.Word
 import qualified Data.Map as Map
 import Numeric (showHex)
-import System.IO (hFlush, stdout, stdin, hSetEcho, hReady)
+import System.IO (hFlush, stdout, stdin, hSetEcho, hReady, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
 import Data.List (stripPrefix) -- Added for stripPrefix
 
 import Control.Monad.State (get, put, MonadIO (liftIO), modify) -- Added modify
 import Control.Monad.Trans.State (runStateT)
+import Control.Exception (finally) -- Import finally
 import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, unFDX, mConsoleState) -- Removed getRegisters, parseHexWord
 import MOS6502Emulator.Registers (Registers(..), rPC) 
 import MOS6502Emulator.Debugger.VimMode.Core
@@ -180,6 +181,17 @@ handleVimCommandModeKey key machine vimState = do
 
 interactiveLoopHelper :: FDX (DebuggerAction, VimState)
 interactiveLoopHelper = do
+  -- Ensure terminal settings are correct for debugger interaction
+  liftIO $ hSetBuffering stdin NoBuffering
+  liftIO $ hSetEcho stdin False
+  
+  -- Use finally to ensure terminal settings are restored on exit
+  machine <- get -- Get the current machine state
+  ((action, _), machine') <- liftIO $ Control.Exception.finally (runStateT (unFDX interactiveLoopHelperInternal) machine) (hSetEcho stdin True >> hSetBuffering stdin LineBuffering)
+  return (action, vimState machine' )
+
+interactiveLoopHelperInternal :: FDX (DebuggerAction, VimState)
+interactiveLoopHelperInternal = do
   machine <- get
   if halted machine
     then return (QuitEmulator, vimState machine)
@@ -219,13 +231,13 @@ interactiveLoopHelper = do
           else renderVimScreen updatedMachine newVimState
 
       case action of
-        ContinueLoop _ -> interactiveLoopHelper
+        ContinueLoop _ -> interactiveLoopHelperInternal
         ExecuteStep _ -> do
           machineAfterExecution <- get
           return (action, newVimState { vsCursor = rPC (mRegs machineAfterExecution), vsViewStart = rPC (mRegs machineAfterExecution) })
         ExitDebugger -> return (action, newVimState)
         QuitEmulator -> return (action, newVimState)
-        NoAction -> interactiveLoopHelper
+        NoAction -> interactiveLoopHelperInternal
         SwitchToCommandMode -> return (action, newVimState)
         SwitchToVimMode -> do
           return (action, newVimState)
@@ -236,7 +248,7 @@ interactiveLoopHelper = do
           updatedMachine <- get
           -- Render the screen to show the mode change and prompt
           renderVimScreen updatedMachine newVimState
-          interactiveLoopHelper
+          interactiveLoopHelperInternal
 
 
 -- | Render screen with vim-specific cursor and status

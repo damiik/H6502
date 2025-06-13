@@ -8,31 +8,34 @@ module MOS6502Emulator.Debugger
   , isExecuteStep -- Export isExecuteStep
   ) where
 import Numeric ( readHex)
-import Control.Monad.State (put, get, modify)
+import Control.Monad.State (put, get, modify, runStateT)
 import Control.Monad.IO.Class (liftIO)
 import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Word (Word16)
-import Data.Bits (testBit)
-import Control.Exception (IOException, displayException, try)
+import Control.Exception (IOException, displayException, try, finally)
 import Text.Printf (printf)
-import System.IO (hFlush, stdout,  stdin, hSetEcho)
+import System.IO (hFlush, stdout,  stdin, hSetEcho, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
 import Control.Monad (unless) -- Added for conditional rendering
 import Data.List (isInfixOf) -- Added for substring checking
 
 import MOS6502Emulator.Core
 import MOS6502Emulator.Machine
-import MOS6502Emulator.DissAssembler (formatHex8, formatHex16 )
-import MOS6502Emulator.Registers
 import MOS6502Emulator.Debugger.Core ( DebuggerConsoleState(..), DebuggerAction(..)) -- Import from Debugger.Core
 import MOS6502Emulator.Debugger.Commands
 import MOS6502Emulator.Debugger.Console (renderScreen, putOutput,  getKey, termHeight) -- Import console I/O functions, added putString and termHeight
 import MOS6502Emulator.Debugger.Utils(logRegisters)
--- Helper to read a command line, optionally leaving the newline in the buffer
-readCommand :: FDX (String, Bool) -- Returns (command, shouldConsumeNewline)
-readCommand = do
+-- | Helper to read a command line, optionally leaving the newline in the buffer.
+-- This function now accepts an `initialInput` string, which is useful when a key
+-- has already been consumed (e.g., by `getKey` for help scrolling) but needs
+-- to be part of the subsequent command input.
+-- This resolves the stalling issue where a character was consumed by `getKey`
+-- and then `readCommand` (now `readCommandWithInitialInput`) would wait for
+-- a newline that never arrived, causing the debugger to hang.
+readCommandWithInitialInput :: String -> FDX (String, Bool) -- Returns (command, shouldConsumeNewline)
+readCommandWithInitialInput initialInput = do
   liftIO $ hSetEcho stdin False -- Turn off echo for raw input
-  (cmd, consumeNewline) <- readChars ""
-  liftIO $ hSetEcho stdin True -- Turn echo back on
+  machine <- get -- Get the current machine state
+  (cmd, consumeNewline) <- liftIO $ Control.Exception.finally (fst <$> runStateT (unFDX (readChars initialInput)) machine) (hSetEcho stdin True)
   return (cmd, consumeNewline)
   where
     readChars :: String -> FDX (String, Bool)
@@ -50,6 +53,17 @@ readCommand = do
 -- | Helper function for the interactive debugger loop, handling command input and execution.
 interactiveLoopHelper :: FDX DebuggerAction -- Changed signature
 interactiveLoopHelper = do
+  -- Ensure terminal settings are correct for debugger interaction
+  liftIO $ hSetBuffering stdin NoBuffering
+  liftIO $ hSetEcho stdin False
+  
+  -- Use finally to ensure terminal settings are restored on exit
+  machine <- get -- Get the current machine state
+  (action, _) <- liftIO $ Control.Exception.finally (runStateT (unFDX interactiveLoopHelperInternal) machine) (hSetEcho stdin True >> hSetBuffering stdin LineBuffering)
+  return action
+
+interactiveLoopHelperInternal :: FDX DebuggerAction
+interactiveLoopHelperInternal = do
   machine <- get
   if halted machine
     then return QuitEmulator -- Machine halted, return QuitEmulator action
@@ -76,12 +90,16 @@ interactiveLoopHelper = do
 
           updatedMachine <- get -- Get the updated machine state
           renderScreen updatedMachine -- Re-render with new help scroll position
-          interactiveLoopHelper -- Continue the loop
+          interactiveLoopHelperInternal -- Continue the loop
         else do
           -- If help is displayed but not Enter, clear help and process as normal command
           modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = [], helpScrollPos = 0 } })
-          -- Now proceed with command input
-          (commandToExecute, consumeNewline) <- readCommand
+          -- Prepend the consumed key to the input buffer for readCommandWithInitialInput.
+          -- This ensures that if a key was pressed while help was active (and it wasn't Enter),
+          -- it is correctly processed as the start of the next command, preventing a stall.
+          let initialInput = [key]
+          -- Now proceed with command input, passing the initial input
+          (commandToExecute, consumeNewline) <- readCommandWithInitialInput initialInput
           (action, output) <- handleCommand commandToExecute
           let filteredOutput = if isExecuteStep action
                                then filterOutRegisterLines output -- Filter output for step actions
@@ -92,17 +110,18 @@ interactiveLoopHelper = do
           -- Conditional rendering: only render if not executing a step
           unless (isExecuteStep action) $ renderScreen updatedMachine
           case action of
-            ContinueLoop _ -> interactiveLoopHelper
+            ContinueLoop _ -> interactiveLoopHelperInternal
             ExecuteStep _  -> return action
             ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
             QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
-            NoAction                     -> interactiveLoopHelper
+            NoAction                     -> interactiveLoopHelperInternal
             SwitchToVimMode              -> do
               modify (\m -> m { debuggerMode = VimMode }) >> return action
-            SwitchToCommandMode          -> interactiveLoopHelper
+            SwitchToCommandMode          -> interactiveLoopHelperInternal
       else do
-        -- No help being displayed, proceed with normal command input
-        (commandToExecute, consumeNewline) <- readCommand
+        -- No help being displayed, proceed with normal command input.
+        -- In this case, there's no pre-consumed key, so we pass an empty initial input.
+        (commandToExecute, consumeNewline) <- readCommandWithInitialInput ""
         (action, output) <- handleCommand commandToExecute
         let filteredOutput = if isExecuteStep action
                                then filterOutRegisterLines output -- Filter output for step actions
@@ -113,14 +132,14 @@ interactiveLoopHelper = do
         -- Conditional rendering: only render if not executing a step
         unless (isExecuteStep action) $ renderScreen updatedMachine
         case action of
-          ContinueLoop _ -> interactiveLoopHelper
+          ContinueLoop _ -> interactiveLoopHelperInternal
           ExecuteStep _  -> return action
           ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
           QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
-          NoAction                     -> interactiveLoopHelper
+          NoAction                     -> interactiveLoopHelperInternal
           SwitchToVimMode              -> do
             modify (\m -> m { debuggerMode = VimMode }) >> return action
-          SwitchToCommandMode          -> interactiveLoopHelper
+          SwitchToCommandMode          -> interactiveLoopHelperInternal
 
 -- Helper function to check if an action is ExecuteStep
 isExecuteStep :: DebuggerAction -> Bool

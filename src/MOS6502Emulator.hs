@@ -7,21 +7,20 @@ module MOS6502Emulator
   , Machine(..)
   , Memory
   , Registers
-  , instructionCount -- Export instructionCount
+  -- , instructionCount -- Export instructionCount
   ) where
 
-import Control.Monad.State (get, modify, put, gets, runStateT) -- Import runStateT
-import Control.Monad (when, unless, void) -- Import the 'when', 'unless', and 'void' functions
+import Control.Monad.State (get, modify, put, runStateT) -- Import runStateT
+import Control.Monad (when, unless) -- Import the 'when', 'unless', and 'void' functions
 import Control.Monad.IO.Class (liftIO)
 import qualified System.Console.ANSI as ANSI -- Import for clearScreen
 import Numeric (showHex) -- Removed readHex as it's not used here
-import System.IO (hSetEcho, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, getChar) -- Import hReady and getChar
+import System.IO (hSetEcho, hSetBuffering, BufferMode(NoBuffering), stdin, hReady) -- Import hReady and getChar
 import Data.Word ( Word8, Word16 )
 import qualified Data.Map.Strict as Map -- For Map.empty
 
-import MOS6502Emulator.Machine (fdxSingleCycle, loadSymbolFile, setAC_, setX_, setY_, setSR_, setSP_, writeByteMem_) -- Removed setPC_
-import MOS6502Emulator.Core (Machine(..), FDX(..), instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, DebuggerMode(..)) -- Removed getRegisters, parseHexWord
-import MOS6502Emulator.Instructions
+import MOS6502Emulator.Machine (fdxSingleCycle, loadSymbolFile) -- Removed setPC_
+import MOS6502Emulator.Core (Machine(..), FDX(..), instructionCount, cycleCount, DebuggerMode(..)) -- Removed getRegisters, parseHexWord
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import qualified MOS6502Emulator.Debugger as D
@@ -65,46 +64,23 @@ runLoop = do
     else do
       if debuggerActive machine
         then do
-          -- Determine which debugger loop to run and capture the action
+          -- Debugger is active, enter the interactive loop based on mode
           action <- case debuggerMode machine of
-            CommandMode -> do
-              action <- D.interactiveLoopHelper
-              case action of
-                SwitchToVimMode -> do
-                  put (machine { debuggerMode = VimMode })
-                  return action
-                _ -> return action
-            VimMode -> do
-              -- liftIO $ putStrLn $ "DEBUG: runLoop (VimMode) - halted before V.interactiveLoopHelper: " ++ show (halted machine)
-              -- V.interactiveLoopHelper already handles putting the updated machine state
-              (dbgAction, _) <- V.interactiveLoopHelper -- Discard newVimState as it's already put
-              -- liftIO $ putStrLn $ "DEBUG: runLoop (VimMode) - dbgAction from V.interactiveLoopHelper: " ++ show dbgAction
-              return dbgAction
-            VimCommandMode -> do
-              -- liftIO $ putStrLn $ "DEBUG: runLoop (VimCommandMode) - halted before V.interactiveLoopHelper: " ++ show (halted machine)
-              -- V.interactiveLoopHelper already handles putting the updated machine state
-              (dbgAction, _) <- V.interactiveLoopHelper -- Discard newVimState as it's already put
-              -- liftIO $ putStrLn $ "DEBUG: runLoop (VimCommandMode) - dbgAction from V.interactiveLoopHelper: " ++ show dbgAction
-              return dbgAction
-        --else do
+            CommandMode -> D.interactiveLoopHelper
+            VimMode -> fst <$> V.interactiveLoopHelper -- V.interactiveLoopHelper returns (action, newVimState)
+            VimCommandMode -> fst <$> V.interactiveLoopHelper -- V.interactiveLoopHelper returns (action, newVimState)
+
           -- Handle the action returned by the debugger loop
           case action of
-            ContinueLoop _ -> runLoop -- Continue the main runLoop
+            ContinueLoop _ -> runLoop -- Stay in the debugger loop
             ExecuteStep _  -> do
               continue <- fdxSingleCycle -- Execute one instruction
               nextMachineState <- get -- Get state after instruction execution
               liftIO ANSI.clearScreen -- Aggressive clear after step
               liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
               renderScreen nextMachineState -- Render the screen after stepping
-              -- Check if the machine is halted after executing the instruction
-              if halted nextMachineState
-                then do
-                  liftIO $ putStrLn "\nMachine halted. Entering debugger."
-                  put (nextMachineState { debuggerActive = True }) -- Activate debugger
-                  handlePostInstructionChecks -- Call helper
-                else if not continue
-                  then return () -- Stop if fdxSingleCycle returns False
-                  else handlePostInstructionChecks -- Call helper
+              handlePostInstructionChecks -- Handle tracing and halting checks
+              runLoop -- Continue the main runLoop (which will re-evaluate debuggerActive)
             ExitDebugger   -> do
               modify (\m -> m { debuggerActive = False }) -- Exit debugger mode
               runLoop -- Continue the main runLoop
@@ -117,34 +93,38 @@ runLoop = do
               machineAfterModeChange <- get -- Get the machine state after mode change
               renderScreen machineAfterModeChange -- Render the screen immediately
               runLoop -- Continue the main runLoop
-            SwitchToVimCommandMode -> runLoop -- no action
+            SwitchToVimCommandMode -> do
+              modify (\m -> m { debuggerMode = VimCommandMode }) -- Switch to VimCommandMode
+              runLoop -- Continue the main runLoop
             NoAction       -> runLoop -- Simply continue the main runLoop, as vimState is already updated
-        else do
-          continue <- fdxSingleCycle -- Execute one instruction
-          nextMachineState <- get -- Get state after instruction execution
-          -- Check if the machine is halted after executing the instruction
-          if halted nextMachineState
+        else do -- if not debuggerActive machine
+          machineBeforeStep <- get
+          let currentPC = rPC (mRegs machineBeforeStep)
+          if currentPC `elem` breakpoints machineBeforeStep
             then do
-              liftIO $ putStrLn "\nMachine halted. Entering debugger."
-              put (nextMachineState { debuggerActive = True }) -- Activate debugger
-              handlePostInstructionChecks -- Call helper
-            else if not continue
-              then return () -- Stop if fdxSingleCycle returns False (not halted, but some other stop condition)
-              else handlePostInstructionChecks -- Call helper
+              liftIO $ putStrLn $ "\nBreakpoint hit at $" ++ showHex currentPC ""
+              put (machineBeforeStep { debuggerActive = True }) -- Activate debugger
+              liftIO $ putStrLn "Debugger activated due to breakpoint. Entering debugger loop."
+              updatedMachine <- get
+              renderScreen updatedMachine -- Explicitly render the screen to ensure UI is visible
+              liftIO clearInputBuffer -- Clear input buffer on debugger re-entry
+              runLoop -- Re-enter runLoop, which will now go into the debuggerActive branch
+            else do
+              continue <- fdxSingleCycle -- Execute one instruction
+              handlePostInstructionChecks -- Handle tracing and halting checks
+              unless (not continue) runLoop -- Continue if not halted and fdxSingleCycle returned True
 
--- | Handles post-instruction checks: halting, tracing, and breakpoints.
+-- | Handles post-instruction checks: halting and tracing.
+-- This function should NOT re-enter the debugger loop or call runLoop.
 handlePostInstructionChecks :: FDX ()
 handlePostInstructionChecks = do
   nextMachineState <- get -- Get the updated state after the instruction
   if halted nextMachineState
     then do
-      -- Machine was halted, debugger is already active from the calling branch
-      case debuggerMode nextMachineState of
-        CommandMode -> void D.interactiveLoopHelper -- Enter CommandMode loop, discard result
-        VimMode     -> void V.interactiveLoopHelper -- Enter VimMode loop, discard result
-        VimCommandMode -> void V.interactiveLoopHelper -- Enter VimCommandMode loop, discard result
+      liftIO $ putStrLn "\nMachine halted. Entering debugger."
+      put (nextMachineState { debuggerActive = True }) -- Activate debugger
     else do
-      -- Log registers and memory trace blocks if tracing is enabled
+      -- Log registers and memory trace blocks if tracing is enabled and debugger is not active
       when (enableTrace nextMachineState && not (debuggerActive nextMachineState)) $ do
           let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
           disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
@@ -156,19 +136,6 @@ handlePostInstructionChecks = do
           mapM_ (\(start, end, name) -> do
                    memOutput <- logMemoryRange start end name -- Capture memory trace output
                    mapM_ putOutput memOutput) (memoryTraceBlocks nextMachineState) -- Use console output
-
-      -- Check for breakpoints after executing the instruction
-      let currentPC = rPC (mRegs nextMachineState)
-      if currentPC `elem` breakpoints nextMachineState
-        then do
-          liftIO $ putStrLn $ "\nBreakpoint hit at $" ++ showHex currentPC ""
-          put (nextMachineState { debuggerActive = True }) -- Activate debugger
-          -- Determine which debugger loop to enter based on the current mode
-          case debuggerMode nextMachineState of
-            CommandMode -> void D.interactiveLoopHelper -- Enter CommandMode loop, discard result
-            VimMode     -> void V.interactiveLoopHelper -- Enter VimMode loop, discard result
-        else
-          runLoop -- Continue the main runLoop (execute next instruction)
 
 
 -- | Runs the FDX monad, handling debugger state and the main execution loop.

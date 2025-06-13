@@ -338,66 +338,76 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
                     'a' -> return (NoAction, [""], vimState {vsCommandState = Object op Outer}, debuggerConsoleState, initialDebuggerMode)
                     _   -> do
                         -- Handle motion directly
-                        motion <- case key of
-                          'j' -> return $ NextInstruction count
-                          'k' -> return $ PrevInstruction count
-                          'h' -> return $ PrevByte count
-                          'l' -> return $ NextByte count
-                          'w' -> return $ WordForward count
-                          'b' -> return $ WordBackward count
-                          'G' -> return $ GotoAddressMotion $ fromIntegral $ fromMaybe (fromIntegral $ rPC (mRegs machine)) (vsCount vimState)
-                          'g' -> return GotoPC
-                          'H' -> return TopOfPage
-                          'M' -> return MiddlePage
-                          'L' -> return EndOfPage
-                          _   -> error "Unhandled motion"
+                        let count' = fromMaybe 1 (vsCount vimState) -- Use count' to avoid shadowing
+                        let maybeMotion = case key of
+                                          'j' -> Just $ NextInstruction count'
+                                          'k' -> Just $ PrevInstruction count'
+                                          'h' -> Just $ PrevByte count'
+                                          'l' -> Just $ NextByte count'
+                                          'w' -> Just $ WordForward count'
+                                          'b' -> Just $ WordBackward count'
+                                          'G' -> Just $ GotoAddressMotion $ fromIntegral $ fromMaybe (fromIntegral $ rPC (mRegs machine)) (vsCount vimState)
+                                          'g' -> Just GotoPC
+                                          'H' -> Just TopOfPage
+                                          'M' -> Just MiddlePage
+                                          'L' -> Just EndOfPage
+                                          _   -> Nothing
                         
-                        let action = case op of
-                                      DeleteOp -> Delete motion
-                                      ChangeOp -> Change motion
-                                      YankOp   -> Yank motion
-                        (newPos', output) <- executeAction action currentPos vimState
-                        let newYankBuffer = if op == YankOp
-                            then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
-                            else vsYankBuffer vimState
-                        return (NoAction, output, vimState {vsCursor = newPos', vsCount = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action), vsCommandState = NoCommand}, debuggerConsoleState, initialDebuggerMode)
+                        case maybeMotion of
+                          Just motion -> handleMotion motion
+                          Nothing -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped for motion"], vimState { vsCount = Nothing, vsMessage = "Key '" ++ [key] ++ "' not mapped for motion" }, debuggerConsoleState, initialDebuggerMode)
+                where
+                  handleMotion motion = do
+                    let action = case op of
+                                  DeleteOp -> Delete motion
+                                  ChangeOp -> Change motion
+                                  YankOp   -> Yank motion
+                    (newPos', output) <- executeAction action currentPos vimState
+                    let newYankBuffer = if op == YankOp
+                        then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
+                        else vsYankBuffer vimState
+                    return (NoAction, output, vimState {vsCursor = newPos', vsCount = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action), vsCommandState = NoCommand}, debuggerConsoleState, initialDebuggerMode)
             
             Object op mod -> do            -- Object state: handle text objects
                 let n = fromMaybe 1 (vsCount vimState)
-                let motion = case key of
-                            'w' -> TextObject mod Word n
-                            'l' -> TextObject mod Line n
-                            'b' -> TextObject mod Bracket n
-                            '"' -> TextObject mod Quote n
-                            -- 's' -> TextObject mod Sentence n
-                            _   -> error "Unhandled object"
+                let maybeMotion = case key of
+                                'w' -> Just $ TextObject mod Word n
+                                'l' -> Just $ TextObject mod Line n
+                                'b' -> Just $ TextObject mod Bracket n
+                                '"' -> Just $ TextObject mod Quote n
+                                _   -> Nothing
                 
-                let action = case op of
-                              DeleteOp -> Delete motion
-                              ChangeOp -> Change motion
-                              YankOp   -> Yank motion
-                (newPos, output) <- executeAction action currentPos vimState
-                return (NoAction, output, vimState {
-                    vsCursor = newPos,
-                    vsCount = Nothing,
-                    vsLastChange = Just (RepeatAction action),
-                    vsCommandState = NoCommand
-                }, debuggerConsoleState, initialDebuggerMode)
-            CommandModeV ->
-                case key of
-                    '\x1b' ->  -- Escape
+                case maybeMotion of
+                  Just motion -> handleObjectMotion motion
+                  Nothing -> return (NoAction, ["Key '" ++ [key] ++ "' not mapped for object"], vimState { vsCount = Nothing, vsMessage = "Key '" ++ [key] ++ "' not mapped for object" }, debuggerConsoleState, initialDebuggerMode)
+                where
+                  handleObjectMotion motion = do
+                    let action = case op of
+                                  DeleteOp -> Delete motion
+                                  ChangeOp -> Change motion
+                                  YankOp   -> Yank motion
+                    (newPos, output) <- executeAction action currentPos vimState
+                    return (NoAction, output, vimState {
+                        vsCursor = newPos,
+                        vsCount = Nothing,
+                        vsLastChange = Just (RepeatAction action),
+                        vsCommandState = NoCommand
+                    }, debuggerConsoleState, initialDebuggerMode)            
+
+            CommandModeV -> case key of
+                '\x1b' ->  -- Escape
                           return (NoAction, [""], vimState {
                               vsCommandState = NoCommand,
                               vsCommandBuffer = "",
                               vsInCommandMode = False -- Reset in command mode flag
                           }, debuggerConsoleState, initialDebuggerMode)
-                    '\n' -> do  -- Enter
-                        let cmdStr = vsCommandBuffer vimState
-                        let parsedCmd = parseVimCommand cmdStr
-                        (newPos, output) <- executeAction (ColonCommand parsedCmd) currentPos vimState
-                        let newState = vimState { vsCursor = newPos, vsCommandState = NoCommand, vsCommandBuffer = "", vsInCommandMode = False, vsCount = Nothing, vsLastChange = Nothing }
-                        return (NoAction, output, newState, debuggerConsoleState, initialDebuggerMode)
-                    _ -> return (NoAction, [""], vimState {vsCommandBuffer = vsCommandBuffer vimState ++ [key]}, debuggerConsoleState, initialDebuggerMode) -- Add char to buffer
+                '\n' -> do  -- Enter
+                    let cmdStr = vsCommandBuffer vimState
+                    let parsedCmd = parseVimCommand cmdStr
+                    (newPos, output) <- executeAction (ColonCommand parsedCmd) currentPos vimState
+                    let newState = vimState { vsCursor = newPos, vsCommandState = NoCommand, vsCommandBuffer = "", vsInCommandMode = False, vsCount = Nothing, vsLastChange = Nothing }
+                    return (NoAction, output, newState, debuggerConsoleState, initialDebuggerMode)
+                _ -> return (NoAction, [""], vimState {vsCommandBuffer = vsCommandBuffer vimState ++ [key]}, debuggerConsoleState, initialDebuggerMode) -- Add char to buffer
             VimPendingCompose ->
                 if key == '\x1b'  -- Escape
                 then return (NoAction, ["Register selection cancelled"], vimState {
