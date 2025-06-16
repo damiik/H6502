@@ -13,25 +13,23 @@ module MOS6502Emulator
 import Control.Monad.State (get, modify, put, runStateT) -- Import runStateT
 import Control.Monad (when, unless) -- Import the 'when', 'unless', and 'void' functions
 import Control.Monad.IO.Class (liftIO)
-import qualified System.Console.ANSI as ANSI -- Import for clearScreen
 import Numeric (showHex) -- Removed readHex as it's not used here
 import System.IO (hSetEcho, hSetBuffering, BufferMode(NoBuffering), stdin, hReady) -- Import hReady and getChar
 import Data.Word ( Word8, Word16 )
 import qualified Data.Map.Strict as Map -- For Map.empty
 
-import MOS6502Emulator.Machine (fdxSingleCycle, loadSymbolFile) -- Removed setPC_
-import MOS6502Emulator.Core (Machine(..), FDX(..), instructionCount, cycleCount, DebuggerMode(..)) -- Removed getRegisters, parseHexWord
+import MOS6502Emulator.Machine (loadSymbolFile, fdxSingleCycle)
+import MOS6502Emulator.Core (Machine(..), FDX(..), instructionCount, cycleCount, DebuggerMode(..))
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import qualified MOS6502Emulator.Debugger as D
--- import qualified MOS6502Emulator.Debugger.VimMode as V
-import MOS6502Emulator.Debugger (saveDebuggerState, loadDebuggerState, DebuggerAction(..)) -- Removed handleCommand, handleBreak, handleMemTrace
-import MOS6502Emulator.Debugger.Utils (logMemoryRange) -- Imported from Utils
-import MOS6502Emulator.DissAssembler (disassembleInstruction) -- Import disassembleInstruction
-import MOS6502Emulator.Debugger.Console (initialConsoleState, putOutput, renderScreen) -- Import renderScreen
-import MOS6502Emulator.Debugger.VimMode.Core (initialVimState, VimState(..)) -- Import Motion, Action, and ViewMode
+import MOS6502Emulator.Debugger (saveDebuggerState, loadDebuggerState, DebuggerAction(..))
+import MOS6502Emulator.Debugger.Actions (executeStepAndRender) -- Import logMemoryRange from Actions
+import MOS6502Emulator.Debugger.Console (initialConsoleState) -- Only import initialConsoleState
+import MOS6502Emulator.Display (renderScreen) -- Import renderScreen from Display
+import MOS6502Emulator.Debugger.VimMode.Core (initialVimState, VimState(..))
 import qualified MOS6502Emulator.Debugger.VimMode.Enhanced as V
--- import MOS6502Emulator.Debugger.VimModeEnhanced (handleVimKey) -- Removed as it's no longer exported
+import qualified System.Console.ANSI as ANSI -- Import for clearScreen and setCursorPosition
 
 -- | Initializes a new 6502 machine state
 -- | Initializes a new 6502 machine state
@@ -74,12 +72,7 @@ runLoop = do
           case action of
             ContinueLoop _ -> runLoop -- Stay in the debugger loop
             ExecuteStep _  -> do
-              continue <- fdxSingleCycle -- Execute one instruction
-              nextMachineState <- get -- Get state after instruction execution
-              liftIO ANSI.clearScreen -- Aggressive clear after step
-              liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
-              renderScreen nextMachineState -- Render the screen after stepping
-              handlePostInstructionChecks -- Handle tracing and halting checks
+              executeStepAndRender -- Use the new unified function
               runLoop -- Continue the main runLoop (which will re-evaluate debuggerActive)
             ExitDebugger   -> do
               modify (\m -> m { debuggerActive = False }) -- Exit debugger mode
@@ -91,7 +84,7 @@ runLoop = do
             SwitchToVimMode -> do
               modify (\m -> m { debuggerMode = VimMode }) -- Switch to VimMode
               machineAfterModeChange <- get -- Get the machine state after mode change
-              renderScreen machineAfterModeChange -- Render the screen immediately
+              _ <- renderScreen machineAfterModeChange []-- Render the screen immediately
               runLoop -- Continue the main runLoop
             SwitchToVimCommandMode -> do
               modify (\m -> m { debuggerMode = VimCommandMode }) -- Switch to VimCommandMode
@@ -106,36 +99,12 @@ runLoop = do
               put (machineBeforeStep { debuggerActive = True }) -- Activate debugger
               liftIO $ putStrLn "Debugger activated due to breakpoint. Entering debugger loop."
               updatedMachine <- get
-              renderScreen updatedMachine -- Explicitly render the screen to ensure UI is visible
+              renderScreen updatedMachine [] -- Explicitly render the screen to ensure UI is visible
               liftIO clearInputBuffer -- Clear input buffer on debugger re-entry
               runLoop -- Re-enter runLoop, which will now go into the debuggerActive branch
             else do
-              continue <- fdxSingleCycle -- Execute one instruction
-              handlePostInstructionChecks -- Handle tracing and halting checks
-              unless (not continue) runLoop -- Continue if not halted and fdxSingleCycle returned True
-
--- | Handles post-instruction checks: halting and tracing.
--- This function should NOT re-enter the debugger loop or call runLoop.
-handlePostInstructionChecks :: FDX ()
-handlePostInstructionChecks = do
-  nextMachineState <- get -- Get the updated state after the instruction
-  if halted nextMachineState
-    then do
-      liftIO $ putStrLn "\nMachine halted. Entering debugger."
-      put (nextMachineState { debuggerActive = True }) -- Activate debugger
-    else do
-      -- Log registers and memory trace blocks if tracing is enabled and debugger is not active
-      when (enableTrace nextMachineState && not (debuggerActive nextMachineState)) $ do
-          let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
-          disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
-          putOutput "" -- Use console output instead of direct print
-          putOutput (fst disassembled) -- Use console output instead of direct print
-          let regOutput = D.logRegisters (mRegs nextMachineState) -- Capture register output
-          mapM_ putOutput regOutput -- Use console output instead of direct print
-          -- Log all memory trace blocks
-          mapM_ (\(start, end, name) -> do
-                   memOutput <- logMemoryRange start end name -- Capture memory trace output
-                   mapM_ putOutput memOutput) (memoryTraceBlocks nextMachineState) -- Use console output
+              executeStepAndRender -- Use the new unified function
+              unless (halted machineBeforeStep) runLoop -- Continue if not halted
 
 
 -- | Runs the FDX monad, handling debugger state and the main execution loop.

@@ -17,11 +17,11 @@ import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, unFDX, mConsoleStat
 import MOS6502Emulator.Registers (Registers(..), rPC) 
 import MOS6502Emulator.Debugger.VimMode.Core
 import MOS6502Emulator.Debugger.VimMode.HandleKey (handleVimNormalModeKey) -- Changed import
-import MOS6502Emulator.Debugger.Console(getKey, getInput, termHeight, termWidth, putOutput, putString, printTwoColumns) -- Updated import
+import MOS6502Emulator.Display(getKey, getInput, termHeight, termWidth, putOutput, putString, printTwoColumns, renderScreen) -- Updated import
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..)) -- New import, ensuring DebuggerAction is here
 import MOS6502Emulator.DissAssembler(disassembleInstructions, formatHex16, formatHex8, unwords)
 import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleSetPC, handleSetReg8, handleFill, handleDisassemble, handleCommand) -- Moved handle* imports
-import MOS6502Emulator.Debugger (logRegisters, isExecuteStep) -- logRegisters remains in Debugger.hs, import isExecuteStep
+import MOS6502Emulator.Debugger.Actions (executeStepAndRender, logRegisters, logMemoryRange) -- Import executeStepAndRender and logging functions
 import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, setPC_, getRegisters) -- Import from Debugger.Utils
 import qualified System.Console.ANSI as ANSI
 import Control.Monad (void, unless) -- Added void and unless
@@ -150,7 +150,7 @@ handleVimCommandModeKey key machine vimState = do
         -- No help being displayed, execute command
         liftIO $ hSetEcho stdin False -- Disable echo after command execution
         let commandToExecute = drop 1 currentCommandBuffer -- Remove leading ':'
-        (action, output) <- handleCommand commandToExecute
+        (actionFromCommand, output) <- handleCommand commandToExecute
         -- Get the machine state *after* handleCommand has potentially modified it
         machineAfterCommand <- get 
 
@@ -158,7 +158,9 @@ handleVimCommandModeKey key machine vimState = do
         -- Use machineAfterCommand to get the latest console state
         let newConsoleState = (mConsoleState machineAfterCommand) { vimCommandInputBuffer = "", inputBuffer = "" }
         let newDebuggerMode = VimMode -- Switch back to VimMode
-        return (action, output, newVimState, newConsoleState, newDebuggerMode)
+
+        -- If handleCommand executed a step, it already rendered. Return NoAction to prevent double rendering.
+        return (actionFromCommand, output, newVimState, newConsoleState, newDebuggerMode)
     '\DEL' -> do -- Backspace key
       if length currentCommandBuffer > 1
         then do
@@ -225,14 +227,15 @@ interactiveLoopHelperInternal = do
     
       -- Use the final state for rendering
       let updatedMachine = finalMachineState
-      unless (isExecuteStep action) $ do -- Only render if not executing a step
-        if vsInCommandMode newVimState
-          then updateVimCommandLine updatedMachine (vsCommandBuffer newVimState)
-          else renderVimScreen updatedMachine newVimState
+      if vsInCommandMode newVimState
+        then updateVimCommandLine updatedMachine (vsCommandBuffer newVimState)
+        else renderVimScreen updatedMachine newVimState
 
       case action of
         ContinueLoop _ -> interactiveLoopHelperInternal
         ExecuteStep _ -> do
+          -- Let the main runLoop handle the execution and rendering.
+          -- Update vimState cursor for the next render.
           machineAfterExecution <- get
           return (action, newVimState { vsCursor = rPC (mRegs machineAfterExecution), vsViewStart = rPC (mRegs machineAfterExecution) })
         ExitDebugger -> return (action, newVimState)
@@ -254,69 +257,36 @@ interactiveLoopHelperInternal = do
 -- | Render screen with vim-specific cursor and status
 renderVimScreen :: Machine -> VimState -> FDX ()
 renderVimScreen machine vimState = do
-  liftIO ANSI.hideCursor
-  liftIO ANSI.clearScreen
-  liftIO $ ANSI.setCursorPosition 0 0
-
   let consoleState = mConsoleState machine
-  let availableContentHeight = termHeight - 2 -- Space for two columns and status line
+  let availableContentHeight = termHeight - 2
   let maxOutputLines = availableContentHeight
   
   let helpTextLines = helpLines consoleState
   let helpTextScrollPos = helpScrollPos consoleState
 
-  let rightColumnContent = if null helpTextLines
-                           then reverse $ take maxOutputLines $ reverse (outputLines consoleState)
-                           else take maxOutputLines $ drop helpTextScrollPos helpTextLines
+  actualRightColumnContent <-
+    if not (null helpTextLines) then
+      return $ take maxOutputLines $ drop helpTextScrollPos helpTextLines
+    else case vsViewMode vimState of
+      CodeView -> return $ reverse $ take maxOutputLines $ reverse (outputLines consoleState)
+      MemoryView -> do
+        let startAddr = vsViewStart vimState
+        let endAddr = min 0xFFFF (startAddr + fromIntegral (maxOutputLines * 16 - 1))
+        bytes <- liftIO $ runStateT (unFDX $ mapM fetchByteMem [startAddr .. endAddr]) machine
+        let byteLines = chunkBytes (fst bytes) 16
+        return $ zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [startAddr, startAddr + 16 ..] byteLines
+      RegisterView -> do
+        regs <- liftIO $ runStateT (unFDX getRegisters) machine
+        return $ logRegisters (fst regs)
+      StackView -> do
+        let sp = rSP (mRegs machine)
+        let stackStart = fromIntegral sp + 0x0100
+        let stackEnd = min 0x01FF (stackStart + fromIntegral (maxOutputLines * 16 - 1))
+        bytes <- liftIO $ runStateT (unFDX $ mapM fetchByteMem [stackStart .. stackEnd]) machine
+        let byteLines = chunkBytes (fst bytes) 16
+        return $ zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [stackStart, stackStart + 16 ..] byteLines
 
-  let linesPerPage = availableContentHeight -- Use available content height for main view
-  let cursorPos = vsCursor vimState
-  let viewStart = vsViewStart vimState
-
-  -- Adjust viewStart to keep cursor in view
-  let adjustedViewStart = case vsViewMode vimState of
-        CodeView -> if cursorPos < viewStart
-                    then max 0 (cursorPos - fromIntegral (linesPerPage `div` 2))
-                    else if cursorPos >= viewStart + fromIntegral linesPerPage -- Adjusted for full screen height
-                          then cursorPos - fromIntegral (linesPerPage - 1) -- Adjusted to ensure cursor is on last line
-                          else viewStart
-        _ -> if cursorPos < viewStart
-              then max 0 (cursorPos - fromIntegral (linesPerPage * 16 `div` 2))
-              else if cursorPos >= viewStart + fromIntegral (linesPerPage * 16)
-                   then cursorPos - fromIntegral (linesPerPage * 8)
-                   else viewStart
-  
-  -- Generate left column content based on view mode
-  leftColumnLines <- case vsViewMode vimState of
-    CodeView -> do
-      ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleInstructions adjustedViewStart linesPerPage) machine
-      return $ zipWith (\line addr ->
-                       if addr == cursorPos
-                       then "\x1b[7m" ++ line ++ "\x1b[0m" -- Highlight cursor line
-                       else line
-                     ) disassembledLines [adjustedViewStart ..]
-
-    MemoryView -> do
-      let startAddr = adjustedViewStart
-      let endAddr = min 0xFFFF (startAddr + fromIntegral (linesPerPage * 16 - 1))
-      bytes <- liftIO $ runStateT (unFDX $ mapM fetchByteMem [startAddr .. endAddr]) machine
-      let byteLines = chunkBytes (fst bytes) 16
-      return $ zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [startAddr, startAddr + 16 ..] byteLines
-      
-    RegisterView -> do
-      regs <- liftIO $ runStateT (unFDX getRegisters) machine
-      return $ logRegisters (fst regs)
-
-    StackView -> do
-      let sp = rSP (mRegs machine)
-      let stackStart = fromIntegral sp + 0x0100
-      let stackEnd = min 0x01FF (stackStart + fromIntegral (linesPerPage * 16 - 1))
-      bytes <- liftIO $ runStateT (unFDX $ mapM fetchByteMem [stackStart .. stackEnd]) machine
-      let byteLines = chunkBytes (fst bytes) 16
-      return $ zipWith (\addr line -> formatHex16 addr ++ ": " ++ unwords (map formatHex8 line)) [stackStart, stackStart + 16 ..] byteLines
-
-  -- Print two columns
-  liftIO $ printTwoColumns termWidth leftColumnLines rightColumnContent
+  renderScreen machine actualRightColumnContent
 
   -- Status line
   liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
@@ -329,7 +299,7 @@ renderVimScreen machine vimState = do
   let regs = mRegs machine
   let regDisplay = "A=" ++ showHex (rAC regs) "" ++ " X=" ++ showHex (rX regs) "" ++ " Y=" ++ showHex (rY regs) "" ++ " PC=" ++ showHex (rPC regs) ""
   liftIO $ putStr regDisplay
-  let cursorDisplay = " $" ++ showHex cursorPos ""
+  let cursorDisplay = " $" ++ showHex (vsCursor vimState) ""
   liftIO $ putStr cursorDisplay
   let countDisplay = case vsCount vimState of
         Just n -> " [" ++ show n ++ "]"

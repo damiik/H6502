@@ -1,11 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 module MOS6502Emulator.Debugger
   ( DebuggerAction(..) -- Export DebuggerAction
-  , logRegisters -- Keep exporting for now, though its usage might change
   , saveDebuggerState
   , loadDebuggerState
   , interactiveLoopHelper -- Exporting for CommandMode
-  , isExecuteStep -- Export isExecuteStep
   ) where
 import Numeric ( readHex)
 import Control.Monad.State (put, get, modify, runStateT)
@@ -15,15 +13,13 @@ import Data.Word (Word16)
 import Control.Exception (IOException, displayException, try, finally)
 import Text.Printf (printf)
 import System.IO (hFlush, stdout,  stdin, hSetEcho, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
-import Control.Monad (unless) -- Added for conditional rendering
-import Data.List (isInfixOf) -- Added for substring checking
 
 import MOS6502Emulator.Core
 import MOS6502Emulator.Machine
 import MOS6502Emulator.Debugger.Core ( DebuggerConsoleState(..), DebuggerAction(..)) -- Import from Debugger.Core
 import MOS6502Emulator.Debugger.Commands
-import MOS6502Emulator.Debugger.Console (renderScreen, putOutput,  getKey, termHeight) -- Import console I/O functions, added putString and termHeight
-import MOS6502Emulator.Debugger.Utils(logRegisters)
+import MOS6502Emulator.Debugger.Utils() -- Removed logRegisters
+import MOS6502Emulator.Display (renderScreen, putOutput, getKey, termHeight) -- Import from Display
 -- | Helper to read a command line, optionally leaving the newline in the buffer.
 -- This function now accepts an `initialInput` string, which is useful when a key
 -- has already been consumed (e.g., by `getKey` for help scrolling) but needs
@@ -89,7 +85,7 @@ interactiveLoopHelperInternal = do
             modify (\m -> m { mConsoleState = (mConsoleState m) { helpScrollPos = newScrollPos, inputBuffer = "", cursorPosition = 0 } })
 
           updatedMachine <- get -- Get the updated machine state
-          renderScreen updatedMachine -- Re-render with new help scroll position
+          renderScreen updatedMachine (take availableContentHeight $ drop newScrollPos helpTextLines) -- Re-render with new help scroll position
           interactiveLoopHelperInternal -- Continue the loop
         else do
           -- If help is displayed but not Enter, clear help and process as normal command
@@ -101,65 +97,45 @@ interactiveLoopHelperInternal = do
           -- Now proceed with command input, passing the initial input
           (commandToExecute, consumeNewline) <- readCommandWithInitialInput initialInput
           (action, output) <- handleCommand commandToExecute
-          let filteredOutput = if isExecuteStep action
-                               then filterOutRegisterLines output -- Filter output for step actions
-                               else output
           machineAfterCommand <- get
-          let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ filteredOutput, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+          let updatedConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
+          let updatedMachine = machineAfterCommand { mConsoleState = updatedConsoleState }
           put updatedMachine
-          -- Conditional rendering: only render if not executing a step
-          unless (isExecuteStep action) $ renderScreen updatedMachine
           case action of
-            ContinueLoop _ -> interactiveLoopHelperInternal
-            ExecuteStep _  -> return action
-            ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
-            QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
-            NoAction                     -> interactiveLoopHelperInternal
-            SwitchToVimMode              -> do
+            ContinueLoop _ -> do
+              renderScreen updatedMachine (outputLines updatedConsoleState)
+              interactiveLoopHelperInternal
+            NoAction -> do
+              renderScreen updatedMachine (outputLines updatedConsoleState)
+              interactiveLoopHelperInternal
+            ExecuteStep _  -> return action -- Let the main runLoop handle the execution and rendering
+            ExitDebugger   -> modify (\m -> m { debuggerActive = False }) >> return action
+            QuitEmulator   -> modify (\m -> m { halted = True }) >> return action
+            SwitchToVimMode -> do
               modify (\m -> m { debuggerMode = VimMode }) >> return action
-            SwitchToCommandMode          -> interactiveLoopHelperInternal
+            SwitchToCommandMode -> interactiveLoopHelperInternal
       else do
         -- No help being displayed, proceed with normal command input.
         -- In this case, there's no pre-consumed key, so we pass an empty initial input.
         (commandToExecute, consumeNewline) <- readCommandWithInitialInput ""
         (action, output) <- handleCommand commandToExecute
-        let filteredOutput = if isExecuteStep action
-                               then filterOutRegisterLines output -- Filter output for step actions
-                               else output
         machineAfterCommand <- get
-        let updatedMachine = machineAfterCommand { mConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ filteredOutput, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute } }
+        let updatedConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
+        let updatedMachine = machineAfterCommand { mConsoleState = updatedConsoleState }
         put updatedMachine
-        -- Conditional rendering: only render if not executing a step
-        unless (isExecuteStep action) $ renderScreen updatedMachine
         case action of
-          ContinueLoop _ -> interactiveLoopHelperInternal
-          ExecuteStep _  -> return action
-          ExitDebugger                 -> modify (\m -> m { debuggerActive = False }) >> return action
-          QuitEmulator                 -> modify (\m -> m { halted = True }) >> return action
-          NoAction                     -> interactiveLoopHelperInternal
-          SwitchToVimMode              -> do
+          ContinueLoop _ -> do
+            renderScreen updatedMachine (outputLines updatedConsoleState)
+            interactiveLoopHelperInternal
+          NoAction -> do
+            renderScreen updatedMachine (outputLines updatedConsoleState)
+            interactiveLoopHelperInternal
+          ExecuteStep _  -> return action -- Let the main runLoop handle the execution and rendering
+          ExitDebugger   -> modify (\m -> m { debuggerActive = False }) >> return action
+          QuitEmulator   -> modify (\m -> m { halted = True }) >> return action
+          SwitchToVimMode -> do
             modify (\m -> m { debuggerMode = VimMode }) >> return action
-          SwitchToCommandMode          -> interactiveLoopHelperInternal
-
--- Helper function to check if an action is ExecuteStep
-isExecuteStep :: DebuggerAction -> Bool
-isExecuteStep (ExecuteStep _) = True
-isExecuteStep _ = False
-
--- Helper function to filter out register-related lines from command output
-filterOutRegisterLines :: [String] -> [String]
-filterOutRegisterLines = filter (\s -> not (
-    "PC: $" `isInfixOf` s ||
-    "AC: $" `isInfixOf` s ||
-    "X: $" `isInfixOf` s ||
-    "Y: $" `isInfixOf` s ||
-    "SP: $" `isInfixOf` s ||
-    "SR: " `isInfixOf` s ||
-    "a [$" `isInfixOf` s || -- For memory trace blocks
-    "Registers: (will be updated after step)" `isInfixOf` s
-  ))
-
-
+          SwitchToCommandMode -> interactiveLoopHelperInternal
 
 -- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
 saveDebuggerState :: Machine -> FDX () -- Changed to FDX

@@ -71,6 +71,7 @@ library:
   - MOS6502Emulator.Debugger
   - MOS6502Emulator.DissAssembler
   - MOS6502Emulator.Core
+  - MOS6502Emulator.Display
   - MOS6502Emulator.Debugger.VimMode.Core
   - MOS6502Emulator.Debugger.VimMode.Enhanced
   - MOS6502Emulator.Debugger.VimMode.HandleKey
@@ -81,6 +82,7 @@ library:
   - MOS6502Emulator.Debugger.Core
   - MOS6502Emulator.Debugger.Utils
   - MOS6502Emulator.Debugger.Commands
+  - MOS6502Emulator.Debugger.Actions
 
 
   other-modules:

@@ -11,19 +11,10 @@ module MOS6502Emulator.Debugger.Commands
 
 import Numeric (showHex, readHex)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (unless)
 import Control.Monad.State (put, get, modify)
 import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Word (Word16, Word8)
 import Data.List (stripPrefix, cycle, take)
-import Data.Bits (Bits, (.&.), testBit)
-import qualified Data.Map.Strict as Map
-import System.IO.Error (isEOFError)
-import Control.Exception (SomeException, IOException, displayException, try, catch)
-import qualified Data.Map as Map
-import Text.Printf (printf)
-import qualified Data.Char as Char
-import System.IO (hFlush, stdout, hSetBuffering, BufferMode(NoBuffering, LineBuffering), stdin, hReady, readFile, writeFile, hSetEcho)
 
 import MOS6502Emulator.Core (FDX, fetchByteMem, halted, enableTrace, breakpoints, memoryTraceBlocks, debugLogPath, traceMemoryStart, traceMemoryEnd, lastDisassembledAddr) -- Explicitly import what's needed from Core
 import MOS6502Emulator.Machine (Machine(..)) -- Import Machine type
@@ -33,10 +24,9 @@ import MOS6502Emulator.Memory (Memory(), writeByte)
 import MOS6502Emulator.Debugger.Console (renderScreen, getInput, putOutput, putString, getKey, termHeight)
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), initialConsoleState, DebuggerAction(..), DebuggerMode(..))
 import MOS6502Emulator.Debugger.VimMode.Core (vimModeHelp)
-import System.Console.ANSI (clearScreen)
-import qualified System.Console.ANSI as ANSI
+import MOS6502Emulator.Debugger.Actions (executeStepAndRender, logRegisters, logMemoryRange) -- Import the new unified step function and logging functions
 
-import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, setPC_, getRegisters, logMemoryRange, logRegisters) -- Import from Debugger.Utils
+import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, setPC_, getRegisters) -- Import from Debugger.Utils
 
 -- | Handles breakpoint commands in the debugger.
 handleBreak :: [String] -> String -> FDX (DebuggerAction, [String])
@@ -202,19 +192,18 @@ handleCommand :: String -> FDX (DebuggerAction, [String])
 handleCommand commandToExecute = do
   machine <- get
   let handleStep :: FDX (DebuggerAction, [String])
-      handleStep = return (ExecuteStep commandToExecute, [])
+      handleStep = do
+        return (ExecuteStep "", []) -- Return ExecuteStep to signal rendering is handled
   let handleRegs :: FDX (DebuggerAction, [String])
       handleRegs = do
         regs <- getRegisters
         return (NoAction, logRegisters regs)
-
   let handleTrace :: FDX (DebuggerAction, [String])
       handleTrace = do
         let newTraceState = not (enableTrace machine)
         put (machine { enableTrace = newTraceState })
         let output = ["Tracing " ++ if newTraceState then "enabled." else "disabled."]
         return (NoAction, output)
-
   let handleGoto :: String -> FDX (DebuggerAction, [String])
       handleGoto addrStr = do
         currentMachine <- get
@@ -229,7 +218,6 @@ handleCommand commandToExecute = do
           Nothing -> do
             let output = ["Invalid address format."]
             return (NoAction, output)
-
   let handleHelp :: FDX (DebuggerAction, [String])
       handleHelp = do
         let standardCommands =
@@ -255,7 +243,6 @@ handleCommand commandToExecute = do
         modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = fullHelpText, helpScrollPos = 0 } })
         putOutput "Displaying help. Press Enter to scroll."
         return (NoAction, [])
-
   case words commandToExecute of
     ["help"] -> handleHelp
     ["h"] -> handleHelp

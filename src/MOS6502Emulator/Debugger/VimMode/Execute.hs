@@ -18,7 +18,7 @@ import Data.Maybe (fromMaybe)
 import Text.Printf (printf)
 
 import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleFill, handleSetReg8, handleSetPC, handleDisassemble) -- Explicit imports
-import MOS6502Emulator.Debugger.Utils (logRegisters, getRegisters, parseHexByte) -- For VRegs and getRegisters
+import MOS6502Emulator.Debugger.Utils (getRegisters, parseHexByte) -- For VRegs and getRegisters
 import MOS6502Emulator.Debugger.Console (getInput, termHeight)
 import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..), VimState (..), VimCommand(..))
 import qualified MOS6502Emulator.Debugger.VimMode.Core as VM
@@ -26,6 +26,7 @@ import MOS6502Emulator.Core (FDX, fetchByteMem, writeByteMem)
 import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo(..), disassembleInstructions, opcodeMap, formatHex16)
 import MOS6502Emulator.Registers (rAC, rX, rY, rSP, rSR, rPC) -- Import for register setters
 import MOS6502Emulator.Machine
+import MOS6502Emulator.Debugger.Actions (logRegisters) -- Import executeStepAndRender and logging functions
 
 executeVimCommand :: VimCommand -> FDX (DebuggerAction, [String])
 executeVimCommand cmd = do

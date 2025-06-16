@@ -213,7 +213,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         (Nothing, '\r') -> do
           let action = ExecuteToHere
           (newPos, output) <- executeAction action currentPos vimState
-          renderScreen machine
+          renderScreen machine []
           return (ExecuteStep "execute-to-here", output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
         
         -- Find commands
