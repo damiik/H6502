@@ -193,7 +193,10 @@ handleCommand commandToExecute = do
   machine <- get
   let handleStep :: FDX (DebuggerAction, [String])
       handleStep = do
-        return (ExecuteStep "", []) -- Return ExecuteStep to signal rendering is handled
+        currentMachine <- get
+        memOutput <- mapM (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks currentMachine)
+        let output = concat memOutput
+        return (ExecuteStep "", output) -- Return ExecuteStep to signal rendering is handled
   let handleRegs :: FDX (DebuggerAction, [String])
       handleRegs = do
         regs <- getRegisters

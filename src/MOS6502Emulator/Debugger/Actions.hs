@@ -27,7 +27,9 @@ executeStepAndRender = do
   let regOutput = logRegisters (mRegs nextMachineState) -- Capture register output
   liftIO ANSI.clearScreen -- Aggressive clear after step
   liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
-  renderScreen nextMachineState regOutput -- Render the screen after stepping, passing register output
+  -- Render the screen after stepping, passing register output and memory trace output
+  memTraceOutput <- concat <$> mapM (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks nextMachineState)
+  renderScreen nextMachineState (regOutput ++ memTraceOutput)
   handlePostInstructionChecks -- Handle tracing and halting checks
 
 -- | Handles post-instruction checks: halting and tracing.
@@ -40,7 +42,7 @@ handlePostInstructionChecks = do
       liftIO $ putStrLn "\nMachine halted. Entering debugger."
       modify (\m -> m { debuggerActive = True }) -- Activate debugger
     else do
-      -- Log registers and memory trace blocks if tracing is enabled and debugger is not active
+      -- Log registers if tracing is enabled and debugger is not active
       when (enableTrace nextMachineState && not (debuggerActive nextMachineState)) $ do
           let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
           disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
@@ -48,10 +50,7 @@ handlePostInstructionChecks = do
           putOutput (fst disassembled) -- Use console output instead of direct print
           let regOutput = logRegisters (mRegs nextMachineState) -- Capture register output
           mapM_ putOutput regOutput -- Use console output instead of direct print
-          -- Log all memory trace blocks
-          mapM_ (\(start, end, name) -> do
-                   memOutput <- logMemoryRange start end name -- Capture memory trace output
-                   mapM_ putOutput memOutput) (memoryTraceBlocks nextMachineState) -- Use console output
+          -- Removed logging memory trace blocks here, as it's now handled by executeStepAndRender
 
 -- | Logs the current register values as a list of strings.
 logRegisters :: Registers -> [String]

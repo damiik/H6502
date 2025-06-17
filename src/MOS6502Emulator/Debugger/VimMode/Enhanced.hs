@@ -181,7 +181,7 @@ handleVimCommandModeKey key machine vimState = do
       updateVimCommandLine machine newCommandBuffer
       return (NoAction, [], vimState { vsCommandBuffer = newCommandBuffer }, newConsoleState, currentDebuggerMode)
 
-interactiveLoopHelper :: FDX (DebuggerAction, VimState)
+interactiveLoopHelper :: FDX (DebuggerAction, Machine) -- Changed signature to return Machine
 interactiveLoopHelper = do
   -- Ensure terminal settings are correct for debugger interaction
   liftIO $ hSetBuffering stdin NoBuffering
@@ -189,14 +189,14 @@ interactiveLoopHelper = do
   
   -- Use finally to ensure terminal settings are restored on exit
   machine <- get -- Get the current machine state
-  ((action, _), machine') <- liftIO $ Control.Exception.finally (runStateT (unFDX interactiveLoopHelperInternal) machine) (hSetEcho stdin True >> hSetBuffering stdin LineBuffering)
-  return (action, vimState machine' )
+  (action, finalMachineState) <- liftIO $ Control.Exception.finally (runStateT (unFDX interactiveLoopHelperInternal) machine) (hSetEcho stdin True >> hSetBuffering stdin LineBuffering)
+  return (action, finalMachineState)
 
-interactiveLoopHelperInternal :: FDX (DebuggerAction, VimState)
+interactiveLoopHelperInternal :: FDX DebuggerAction
 interactiveLoopHelperInternal = do
   machine <- get
   if halted machine
-    then return (QuitEmulator, vimState machine)
+    then return QuitEmulator
     else do
       let currentVimState = vimState machine
       key <- liftIO getKey
@@ -237,13 +237,14 @@ interactiveLoopHelperInternal = do
           -- Let the main runLoop handle the execution and rendering.
           -- Update vimState cursor for the next render.
           machineAfterExecution <- get
-          return (action, newVimState { vsCursor = rPC (mRegs machineAfterExecution), vsViewStart = rPC (mRegs machineAfterExecution) })
-        ExitDebugger -> return (action, newVimState)
-        QuitEmulator -> return (action, newVimState)
+          -- Return the action and the *current* machine state (after potential execution)
+          return action
+        ExitDebugger -> return action
+        QuitEmulator -> return action
         NoAction -> interactiveLoopHelperInternal
-        SwitchToCommandMode -> return (action, newVimState)
+        SwitchToCommandMode -> return action
         SwitchToVimMode -> do
-          return (action, newVimState)
+          return action
         SwitchToVimCommandMode -> do
           -- Update the debuggerMode immediately
           modify (\m -> m { debuggerMode = VimCommandMode })

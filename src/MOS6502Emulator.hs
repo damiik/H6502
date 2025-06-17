@@ -63,10 +63,12 @@ runLoop = do
       if debuggerActive machine
         then do
           -- Debugger is active, enter the interactive loop based on mode
-          action <- case debuggerMode machine of
+          (action, updatedMachineState) <- case debuggerMode machine of
             CommandMode -> D.interactiveLoopHelper
-            VimMode -> fst <$> V.interactiveLoopHelper -- V.interactiveLoopHelper returns (action, newVimState)
-            VimCommandMode -> fst <$> V.interactiveLoopHelper -- V.interactiveLoopHelper returns (action, newVimState)
+            VimMode -> V.interactiveLoopHelper
+            VimCommandMode -> V.interactiveLoopHelper
+
+          put updatedMachineState -- Update the machine state with the one returned by the helper
 
           -- Handle the action returned by the debugger loop
           case action of
@@ -79,17 +81,17 @@ runLoop = do
               runLoop -- Continue the main runLoop
             QuitEmulator   -> modify (\m -> m { halted = True }) -- Halt the emulator
             SwitchToCommandMode -> do
-              modify (\m -> m { debuggerMode = CommandMode }) -- Switch to CommandMode
-              runLoop -- Continue the main runLoop
+              -- The mode is already updated in updatedMachineState, just continue loop
+              runLoop
             SwitchToVimMode -> do
-              modify (\m -> m { debuggerMode = VimMode }) -- Switch to VimMode
+              -- The mode is already updated in updatedMachineState, just continue loop
               machineAfterModeChange <- get -- Get the machine state after mode change
               _ <- renderScreen machineAfterModeChange []-- Render the screen immediately
               runLoop -- Continue the main runLoop
             SwitchToVimCommandMode -> do
-              modify (\m -> m { debuggerMode = VimCommandMode }) -- Switch to VimCommandMode
-              runLoop -- Continue the main runLoop
-            NoAction       -> runLoop -- Simply continue the main runLoop, as vimState is already updated
+              -- The mode is already updated in updatedMachineState, just continue loop
+              runLoop
+            NoAction       -> runLoop -- Simply continue the main runLoop
         else do -- if not debuggerActive machine
           machineBeforeStep <- get
           let currentPC = rPC (mRegs machineBeforeStep)

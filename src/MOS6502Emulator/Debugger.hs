@@ -47,7 +47,7 @@ readCommandWithInitialInput initialInput = do
           return (currentInput, shouldConsumeNewline)
         else readChars (currentInput ++ [c])
 -- | Helper function for the interactive debugger loop, handling command input and execution.
-interactiveLoopHelper :: FDX DebuggerAction -- Changed signature
+interactiveLoopHelper :: FDX (DebuggerAction, Machine) -- Changed signature to return Machine
 interactiveLoopHelper = do
   -- Ensure terminal settings are correct for debugger interaction
   liftIO $ hSetBuffering stdin NoBuffering
@@ -55,8 +55,8 @@ interactiveLoopHelper = do
   
   -- Use finally to ensure terminal settings are restored on exit
   machine <- get -- Get the current machine state
-  (action, _) <- liftIO $ Control.Exception.finally (runStateT (unFDX interactiveLoopHelperInternal) machine) (hSetEcho stdin True >> hSetBuffering stdin LineBuffering)
-  return action
+  (action, finalMachineState) <- liftIO $ Control.Exception.finally (runStateT (unFDX interactiveLoopHelperInternal) machine) (hSetEcho stdin True >> hSetBuffering stdin LineBuffering)
+  return (action, finalMachineState)
 
 interactiveLoopHelperInternal :: FDX DebuggerAction
 interactiveLoopHelperInternal = do
@@ -108,7 +108,9 @@ interactiveLoopHelperInternal = do
             NoAction -> do
               renderScreen updatedMachine (outputLines updatedConsoleState)
               interactiveLoopHelperInternal
-            ExecuteStep _  -> return action -- Let the main runLoop handle the execution and rendering
+            ExecuteStep _  -> do
+              renderScreen updatedMachine (outputLines updatedConsoleState) -- Render the output from handleCommand immediately
+              return action -- Let the main runLoop handle the execution and rendering
             ExitDebugger   -> modify (\m -> m { debuggerActive = False }) >> return action
             QuitEmulator   -> modify (\m -> m { halted = True }) >> return action
             SwitchToVimMode -> do
@@ -130,7 +132,9 @@ interactiveLoopHelperInternal = do
           NoAction -> do
             renderScreen updatedMachine (outputLines updatedConsoleState)
             interactiveLoopHelperInternal
-          ExecuteStep _  -> return action -- Let the main runLoop handle the execution and rendering
+          ExecuteStep _  -> do
+            renderScreen updatedMachine (outputLines updatedConsoleState) -- Render the output from handleCommand immediately
+            return action -- Let the main runLoop handle the execution and rendering
           ExitDebugger   -> modify (\m -> m { debuggerActive = False }) >> return action
           QuitEmulator   -> modify (\m -> m { halted = True }) >> return action
           SwitchToVimMode -> do
