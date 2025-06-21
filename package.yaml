@@ -34,6 +34,8 @@ dependencies:
 - primitive
 - deepseq
 - ansi-terminal
+- lens # Added for functional state updates
+- template-haskell # Required for lens generation
 
 
 ghc-options:
@@ -83,6 +85,7 @@ library:
   - MOS6502Emulator.Debugger.Utils
   - MOS6502Emulator.Debugger.Commands
   - MOS6502Emulator.Debugger.Actions
+  - MOS6502Emulator.Lenses # Added for lenses
 
 
   other-modules:
@@ -90,6 +93,7 @@ library:
   - C64.HorizontalBars # reexported by C64.Examples
   - Assembly.Branch  # reexported by Assembly
   - Assembly.Instructions6502 # reexported by Assembly
+  - MOS6502Emulator.Lenses.Internal # Internal module for lenses
 
 executables:
   H6502-exe:

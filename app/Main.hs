@@ -13,8 +13,7 @@ import Data.Binary.Put (runPut, putWord16le, putWord8)
 import System.FilePath (takeExtension)
 import Prelude -- Explicitly import Prelude to qualify (+)
 import Options.Applicative
-import MOS6502Emulator (Machine(..), newMachine, setupMachine, runDebugger, instructionCount)
-import MOS6502Emulator.Registers (mkRegisters, rPC)
+import MOS6502Emulator (Machine(..), newMachine, setupMachine, runDebugger)
 
 -- stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
 -- *brk* instruction to stop

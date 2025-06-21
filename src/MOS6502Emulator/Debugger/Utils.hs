@@ -1,7 +1,6 @@
 module MOS6502Emulator.Debugger.Utils
   ( parseHexWord
   , parseHexByte
-  , setPC_
   , getRegisters
   , formatStatusFlags
   ) where
@@ -14,8 +13,8 @@ import Data.List (stripPrefix)
 import Data.Bits (testBit)
 
 import MOS6502Emulator.Core (FDX)
-import MOS6502Emulator.Machine (Machine(mRegs))
-import MOS6502Emulator.Registers (Registers(rPC, rAC, rX, rY, rSP, rSR))
+import MOS6502Emulator.Machine (Machine(_mRegs))
+import MOS6502Emulator.Registers (Registers(_rPC, _rAC, _rX, _rY, _rSP, _rSR))
 import MOS6502Emulator.DissAssembler (formatHex8, formatHex16)
 
 -- Helper to parse a hex string into a Word16.
@@ -36,15 +35,12 @@ parseHexByte s = case readHex (stripHexPrefix s) of
     stripHexPrefix :: String -> String
     stripHexPrefix str = fromMaybe str (stripPrefix "0x" str)
 
--- | Sets the Program Counter (PC) in the machine state.
-setPC_ :: Word16 -> FDX ()
-setPC_ addr = modify (\m -> m { mRegs = (mRegs m) { rPC = addr } })
 
 -- | Gets the current register values from the machine state.
 getRegisters :: FDX Registers
 getRegisters = do
   machine <- get
-  return (mRegs machine)
+  return (_mRegs machine)
 
 formatStatusFlags :: Word8 -> String
 formatStatusFlags sr =

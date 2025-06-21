@@ -18,25 +18,25 @@ data DebuggerAction = ContinueLoop String | ExecuteStep String | ExitDebugger | 
 
 -- | Represents the state of the debugger console.
 data DebuggerConsoleState = DebuggerConsoleState
-  { outputLines :: [String] -- Lines of output to display (right column)
-  , inputBuffer :: String -- Current input buffer
-  , cursorPosition :: Int -- Cursor position in the input buffer
-  , lastCommand :: String -- The last executed command
-  , vimCommandInputBuffer :: String -- New field for Vim command mode input
-  , helpLines :: [String] -- Added: Stores lines of help text for pagination
-  , helpScrollPos :: Int  -- Added: Current scroll position for help text
+  { _outputLines :: [String] -- Lines of output to display (right column)
+  , _inputBuffer :: String -- Current input buffer
+  , _cursorPosition :: Int -- Cursor position in the input buffer
+  , _lastCommand :: String -- The last executed command
+  , _vimCommandInputBuffer :: String -- New field for Vim command mode input
+  , _helpLines :: [String] -- Added: Stores lines of help text for pagination
+  , _helpScrollPos :: Int  -- Added: Current scroll position for help text
   } deriving (Show)
 
 -- | The initial state of the debugger console.
 initialConsoleState :: DebuggerConsoleState
 initialConsoleState = DebuggerConsoleState
-  { outputLines = []
-  , inputBuffer = ""
-  , cursorPosition = 0
-  , lastCommand = ""
-  , vimCommandInputBuffer = "" -- Initialize new field
-  , helpLines = [] -- Initialize helpLines as empty
-  , helpScrollPos = 0  -- Initialize helpScrollPos to 0
+  { _outputLines = []
+  , _inputBuffer = ""
+  , _cursorPosition = 0
+  , _lastCommand = ""
+  , _vimCommandInputBuffer = "" -- Initialize new field
+  , _helpLines = [] -- Initialize helpLines as empty
+  , _helpScrollPos = 0  -- Initialize helpScrollPos to 0
   }
 
 

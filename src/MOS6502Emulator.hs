@@ -19,7 +19,7 @@ import Data.Word ( Word8, Word16 )
 import qualified Data.Map.Strict as Map -- For Map.empty
 
 import MOS6502Emulator.Machine (loadSymbolFile, fdxSingleCycle)
-import MOS6502Emulator.Core (Machine(..), FDX(..), instructionCount, cycleCount, DebuggerMode(..))
+import MOS6502Emulator.Core (Machine(..), FDX(..), _instructionCount, _cycleCount, DebuggerMode(..))
 import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import qualified MOS6502Emulator.Debugger as D
@@ -37,7 +37,7 @@ newMachine :: IO Machine
 newMachine = do
   mem <- memory  -- 64KB of memory initialized by MOS6502Emulator.Memory
   let regs = mkRegisters
-  return Machine { mRegs = regs, mMem = mem, halted = False, instructionCount = 0, cycleCount = 0, enableTrace = True, traceMemoryStart = 0x0000, traceMemoryEnd = 0x00FF, breakpoints = [], debuggerActive = False, memoryTraceBlocks = [], lastDisassembledAddr = 0x0000, labelMap = Map.empty, debugLogPath = Nothing, debuggerMode = CommandMode, pcHistory = [], storedAddresses = Map.empty, redoHistory = [], vimState = initialVimState, mConsoleState = initialConsoleState} -- Initialize new fields, including debuggerMode, pcHistory, storedAddresses, redoHistory, and mConsoleState
+  return Machine { _mRegs = regs, _mMem = mem, _halted = False, _instructionCount = 0, _cycleCount = 0, _enableTrace = True, _traceMemoryStart = 0x0000, _traceMemoryEnd = 0x00FF, _breakpoints = [], _debuggerActive = False, _memoryTraceBlocks = [], _lastDisassembledAddr = 0x0000, _labelMap = Map.empty, _debugLogPath = Nothing, _debuggerMode = CommandMode, _pcHistory = [], _storedAddresses = Map.empty, _redoHistory = [], _vimState = initialVimState, _mConsoleState = initialConsoleState} -- Initialize new fields, including debuggerMode, pcHistory, storedAddresses, redoHistory, and mConsoleState
 
 -- | The main fetch-decode-execute loop. Runs `fdxSingleCycle` repeatedly until emulation stops.
 runFDXLoop :: FDX ()
@@ -49,7 +49,7 @@ runFDXLoop = do
 -- | Runs the emulator with the given machine state and starting PC
 runEmulator :: Word16 -> Machine -> IO ((), Machine)
 runEmulator startPC initialMachine = do
-  let machineWithStartPC = initialMachine { mRegs = (mRegs initialMachine) { rPC = startPC } }
+  let machineWithStartPC = initialMachine { _mRegs = (_mRegs initialMachine) { _rPC = startPC } }
   runMachine machineWithStartPC
 
 
@@ -57,13 +57,13 @@ runEmulator startPC initialMachine = do
 runLoop :: FDX ()
 runLoop = do
   machine <- get
-  if halted machine
+  if _halted machine
     then return () -- Stop if machine is halted
     else do
-      if debuggerActive machine
+      if _debuggerActive machine
         then do
           -- Debugger is active, enter the interactive loop based on mode
-          (action, updatedMachineState) <- case debuggerMode machine of
+          (action, updatedMachineState) <- case _debuggerMode machine of
             CommandMode -> D.interactiveLoopHelper
             VimMode -> V.interactiveLoopHelper
             VimCommandMode -> V.interactiveLoopHelper
@@ -75,11 +75,11 @@ runLoop = do
             ContinueLoop _ -> runLoop -- Stay in the debugger loop
             ExecuteStep _  -> do
               executeStepAndRender -- Use the new unified function
-              runLoop -- Continue the main runLoop (which will re-evaluate debuggerActive)
+              runLoop -- Continue the main runLoop (which will re-evaluate _debuggerActive)
             ExitDebugger   -> do
-              modify (\m -> m { debuggerActive = False }) -- Exit debugger mode
+              modify (\m -> m { _debuggerActive = False }) -- Exit debugger mode
               runLoop -- Continue the main runLoop
-            QuitEmulator   -> modify (\m -> m { halted = True }) -- Halt the emulator
+            QuitEmulator   -> modify (\m -> m { _halted = True }) -- Halt the emulator
             SwitchToCommandMode -> do
               -- The mode is already updated in updatedMachineState, just continue loop
               runLoop
@@ -92,27 +92,27 @@ runLoop = do
               -- The mode is already updated in updatedMachineState, just continue loop
               runLoop
             NoAction       -> runLoop -- Simply continue the main runLoop
-        else do -- if not debuggerActive machine
+        else do -- if not _debuggerActive machine
           machineBeforeStep <- get
-          let currentPC = rPC (mRegs machineBeforeStep)
-          if currentPC `elem` breakpoints machineBeforeStep
+          let currentPC = _rPC (_mRegs machineBeforeStep)
+          if currentPC `elem` _breakpoints machineBeforeStep
             then do
               liftIO $ putStrLn $ "\nBreakpoint hit at $" ++ showHex currentPC ""
-              put (machineBeforeStep { debuggerActive = True }) -- Activate debugger
+              put (machineBeforeStep { _debuggerActive = True }) -- Activate debugger
               liftIO $ putStrLn "Debugger activated due to breakpoint. Entering debugger loop."
               updatedMachine <- get
               renderScreen updatedMachine [] -- Explicitly render the screen to ensure UI is visible
               liftIO clearInputBuffer -- Clear input buffer on debugger re-entry
-              runLoop -- Re-enter runLoop, which will now go into the debuggerActive branch
+              runLoop -- Re-enter runLoop, which will now go into the _debuggerActive branch
             else do
               executeStepAndRender -- Use the new unified function
-              unless (halted machineBeforeStep) runLoop -- Continue if not halted
+              unless (_halted machineBeforeStep) runLoop -- Continue if not halted
 
 
 -- | Runs the FDX monad, handling debugger state and the main execution loop.
 runMachine :: Machine -> IO ((), Machine)
 runMachine initialMachine = do
-  liftIO $ putStrLn $ "Initial PC in runMachine: $" ++ showHex (rPC (mRegs initialMachine)) ""
+  liftIO $ putStrLn $ "Initial PC in runMachine: $" ++ showHex (_rPC (_mRegs initialMachine)) ""
   (result, finalMachine) <- runStateT (unFDX runLoop) initialMachine
   _ <- runStateT (unFDX (saveDebuggerState finalMachine)) finalMachine
   return (result, finalMachine)
@@ -123,15 +123,15 @@ runMachine initialMachine = do
 -- Note: This function no longer sets the PC, as it's handled by runEmulator
 setupMachine :: Machine -> [(Word16, Word8)] -> Maybe FilePath -> Maybe FilePath -> IO Machine
 setupMachine initialMachine memoryWrites maybeSymPath maybeDebugLogPath = do
-    mem <- foldr (\(addr, val) acc -> acc >>= \m -> writeByte addr val m >> return m) (return $ mMem initialMachine) memoryWrites
-    let machineWithMem = initialMachine { mMem = mem, debugLogPath = maybeDebugLogPath } -- Set debugLogPath here
+    mem <- foldr (\(addr, val) acc -> acc >>= \m -> writeByte addr val m >> return m) (return $ _mMem initialMachine) memoryWrites
+    let machineWithMem = initialMachine { _mMem = mem, _debugLogPath = maybeDebugLogPath } -- Set _debugLogPath here
 
     -- ath is provided
     (loadedBreakpoints, loadedMemBlocks) <- case maybeDebugLogPath of
         Just logPath -> fst <$> runStateT (unFDX (loadDebuggerState logPath)) initialMachine
         Nothing -> return ([], [])
 
-    let machineWithLoadedState = machineWithMem { breakpoints = loadedBreakpoints, memoryTraceBlocks = loadedMemBlocks }
+    let machineWithLoadedState = machineWithMem { _breakpoints = loadedBreakpoints, _memoryTraceBlocks = loadedMemBlocks }
 
     -- Load symbol file if path is provided
     case maybeSymPath of
@@ -157,8 +157,8 @@ runTest startAddress actualLoadAddress byteCode = do
     (_, finalMachine) <- runEmulator startAddress setupResult
 
     putStrLn "\n--- Emulation Finished ---"
-    putStrLn $ "Final Registers: " ++ show (mRegs finalMachine)
-    putStrLn $ "Instructions Executed: " ++ show (instructionCount finalMachine)
+    putStrLn $ "Final Registers: " ++ show (_mRegs finalMachine)
+    putStrLn $ "Instructions Executed: " ++ show (_instructionCount finalMachine)
 
 
 -- | Initializes the emulator with the given starting address and bytecode, then enters interactive debugger mode.
@@ -178,9 +178,9 @@ runDebugger startAddress actualLoadAddress byteCode maybeSymPath = do
 
     -- Set the starting PC and enter interactive debugger loop
     let machineWithStartPC = setupResult { 
-          mRegs = (mRegs setupResult) { rPC = startAddress }, 
-          debuggerActive = True,
-          vimState = (vimState setupResult) { vsCursor = startAddress, vsViewStart = startAddress } -- Initialize vsCursor and vsViewStart
+          _mRegs = (_mRegs setupResult) { _rPC = startAddress }, 
+          _debuggerActive = True,
+          _vimState = (_vimState setupResult) { vsCursor = startAddress, vsViewStart = startAddress } -- Initialize vsCursor and vsViewStart
         }
     putStrLn "\nEntering interactive debugger."
     hSetBuffering stdin NoBuffering

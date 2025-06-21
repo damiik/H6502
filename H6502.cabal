@@ -58,11 +58,13 @@ library
       MOS6502Emulator.Debugger.Utils
       MOS6502Emulator.Debugger.Commands
       MOS6502Emulator.Debugger.Actions
+      MOS6502Emulator.Lenses
   other-modules:
       C64.HelloWorld
       C64.HorizontalBars
       Assembly.Branch
       Assembly.Instructions6502
+      MOS6502Emulator.Lenses.Internal
   hs-source-dirs:
       src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
@@ -74,10 +76,12 @@ library
     , containers
     , deepseq
     , filepath
+    , lens
     , mtl
     , optparse-applicative
     , primitive
     , split
+    , template-haskell
     , text
     , transformers
     , vector
@@ -101,10 +105,12 @@ executable H6502-exe
     , containers
     , deepseq
     , filepath
+    , lens
     , mtl
     , optparse-applicative
     , primitive
     , split
+    , template-haskell
     , text
     , transformers
     , vector
@@ -133,10 +139,12 @@ test-suite H6502-test
     , deepseq
     , filepath
     , hspec
+    , lens
     , mtl
     , optparse-applicative
     , primitive
     , split
+    , template-haskell
     , text
     , transformers
     , vector

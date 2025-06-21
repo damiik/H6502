@@ -4,7 +4,7 @@ import System.IO (stdin, hSetEcho)
 import qualified Data.Map as Map
 import Numeric (showHex)
 
-import MOS6502Emulator.Core(Machine(..), FDX, fetchByteMem, writeByteMem, mRegs, mConsoleState) -- Removed parseHexWord, parseHexByte, getRegisters
+import MOS6502Emulator.Core(Machine(..), FDX, fetchByteMem, writeByteMem, _mRegs, _mConsoleState) -- Removed parseHexWord, parseHexByte, getRegisters
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), parseCount) -- Ensure DebuggerAction and DebuggerMode are imported from here
 import MOS6502Emulator.DissAssembler(disassembleInstruction)
 import MOS6502Emulator.Debugger.VimMode.Core ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), OperatorType(..), VisualType(..), ObjectModifier(..), TextObjectType(..), CommandState(..))
@@ -18,8 +18,8 @@ import MOS6502Emulator.Debugger.Utils (parseHexByte) -- Import from Debugger.Uti
 handleVisualKey :: Char -> VimState -> FDX (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode)
 handleVisualKey key vimState = do
     machine <- get -- Get machine state to access console and mode
-    let currentConsoleState = mConsoleState machine
-    let currentDebuggerMode = debuggerMode machine -- Use accessor here
+    let currentConsoleState = _mConsoleState machine
+    let currentDebuggerMode = _debuggerMode machine -- Use accessor here
     let start = vsVisualStart vimState
     let end = vsCursor vimState
     let (minAddr, maxAddr) = if start <= end then (start, end) else (end, start)

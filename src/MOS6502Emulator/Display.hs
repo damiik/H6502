@@ -15,7 +15,7 @@ import Data.Word (Word16, Word8)
 import MOS6502Emulator.Core (FDX(..), unFDX)
 import MOS6502Emulator.Machine (Machine(..))
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), DebuggerMode(..))
-import MOS6502Emulator.Registers (rAC, rX, rY, rPC)
+import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rPC)
 import MOS6502Emulator.DissAssembler (disassembleInstruction)
 import Control.Monad.State (runStateT, modify)
 import Control.Monad.IO.Class (liftIO)
@@ -118,11 +118,11 @@ renderScreen machine rightColumnContent = do
   liftIO ANSI.clearScreen
   liftIO $ ANSI.setCursorPosition 0 0
 
-  let consoleState = mConsoleState machine
+  let consoleState = _mConsoleState machine
   let availableContentHeight = termHeight - 2
   let maxOutputLines = availableContentHeight
 
-  let currentPC = rPC (mRegs machine)
+  let currentPC = _rPC (_mRegs machine)
   ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines availableContentHeight currentPC) machine
   
   result <- liftIO $ try (printTwoColumns termWidth disassembledLines rightColumnContent) :: FDX (Either IOException ())
@@ -133,15 +133,15 @@ renderScreen machine rightColumnContent = do
   -- Status line (with background color)
   liftIO $ ANSI.setCursorPosition (termHeight - 2) 0
   liftIO $ ANSI.setSGR [ANSI.SetColor ANSI.Background ANSI.Vivid ANSI.Black, ANSI.SetColor ANSI.Foreground ANSI.Vivid ANSI.Green]
-  let modeDisplay = case debuggerMode machine of
+  let modeDisplay = case _debuggerMode machine of
         CommandMode -> " COMMAND "
         VimMode -> " VIM "
         VimCommandMode -> " VIM COMMAND "
   liftIO $ putStr modeDisplay -- Keep $ for putStr as it takes one arg
 
   -- Debugger status (registers)
-  let regs = mRegs machine
-  let regDisplay = "A=" ++ showHex (rAC regs) "" ++ " X=" ++ showHex (rX regs) "" ++ " Y=" ++ showHex (rY regs) "" ++ " PC=" ++ showHex (rPC regs) ""
+  let regs = _mRegs machine
+  let regDisplay = "A=" ++ showHex (_rAC regs) "" ++ " X=" ++ showHex (_rX regs) "" ++ " Y=" ++ showHex (_rY regs) "" ++ " PC=" ++ showHex (_rPC regs) ""
   liftIO $ putStr regDisplay -- Keep $ for putStr as it takes one arg
 
   -- Placeholder for other status info (filename, modified, position)
@@ -156,15 +156,15 @@ renderScreen machine rightColumnContent = do
   -- Command/message line (with normal background)
   liftIO $ ANSI.setCursorPosition (termHeight - 1) 0
   liftIO $ ANSI.setSGR [ANSI.Reset]
-  let commandLineContent = case debuggerMode machine of
-        VimCommandMode -> ":" ++ inputBuffer consoleState
-        _ -> inputBuffer consoleState
+  let commandLineContent = case _debuggerMode machine of
+        VimCommandMode -> ":" ++ _inputBuffer consoleState
+        _ -> _inputBuffer consoleState
   liftIO $ putStr commandLineContent
   liftIO $ hFlush stdout
 
   -- Position cursor at the end of the input buffer
-  let bufferLength = length (inputBuffer consoleState)
-  let cursorCol = case debuggerMode machine of
+  let bufferLength = length (_inputBuffer consoleState)
+  let cursorCol = case _debuggerMode machine of
         VimCommandMode -> 1 + bufferLength
         _ -> bufferLength
   liftIO $ ANSI.setCursorPosition (termHeight - 1) cursorCol
@@ -187,10 +187,10 @@ disassembleLines count currentPC
 -- buffer for console output. This is crucial for preventing memory leaks
 -- caused by an ever-growing list of past outputs.
 putOutput :: String -> FDX ()
-putOutput s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = take maxConsoleOutputLines (outputLines (mConsoleState m) ++ [s]) } })
+putOutput s = modify (\m -> m { _mConsoleState = (_mConsoleState m) { _outputLines = take maxConsoleOutputLines (_outputLines (_mConsoleState m) ++ [s]) } })
 
 -- | Adds a string to the console output lines (without newline).
 -- Similar to `putOutput`, this function also caps the size of `outputLines`
 -- to prevent memory accumulation.
 putString :: String -> FDX ()
-putString s = modify (\m -> m { mConsoleState = (mConsoleState m) { outputLines = take maxConsoleOutputLines (outputLines (mConsoleState m) ++ [s]) } })
+putString s = modify (\m -> m { _mConsoleState = (_mConsoleState m) { _outputLines = take maxConsoleOutputLines (_outputLines (_mConsoleState m) ++ [s]) } })

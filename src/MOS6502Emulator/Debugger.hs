@@ -61,16 +61,16 @@ interactiveLoopHelper = do
 interactiveLoopHelperInternal :: FDX DebuggerAction
 interactiveLoopHelperInternal = do
   machine <- get
-  if halted machine
+  if _halted machine
     then return QuitEmulator -- Machine halted, return QuitEmulator action
     else do
-      let currentConsoleState = mConsoleState machine
-      let consoleStateWithPrompt = currentConsoleState { inputBuffer = "> ", cursorPosition = 2 }
-      modify (\m -> m { mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
+      let currentConsoleState = _mConsoleState machine
+      let consoleStateWithPrompt = currentConsoleState { _inputBuffer = "> ", _cursorPosition = 2 }
+      modify (\m -> m { _mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
 
       -- Check if help is currently displayed and if Enter is pressed
-      let helpTextLines = helpLines (mConsoleState machine)
-      let helpTextScrollPos = helpScrollPos (mConsoleState machine)
+      let helpTextLines = _helpLines (_mConsoleState machine)
+      let helpTextScrollPos = _helpScrollPos (_mConsoleState machine)
 
       if not (null helpTextLines) then do
         key <- liftIO getKey -- Read a single key
@@ -79,17 +79,17 @@ interactiveLoopHelperInternal = do
           let newScrollPos = helpTextScrollPos + availableContentHeight
           if newScrollPos >= length helpTextLines then do
             -- Reached end of help, clear help state
-            modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = [], helpScrollPos = 0, inputBuffer = "", cursorPosition = 0 } })
+            modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpLines = [], _helpScrollPos = 0, _inputBuffer = "", _cursorPosition = 0 } })
           else do
             -- Scroll to next page of help
-            modify (\m -> m { mConsoleState = (mConsoleState m) { helpScrollPos = newScrollPos, inputBuffer = "", cursorPosition = 0 } })
+            modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpScrollPos = newScrollPos, _inputBuffer = "", _cursorPosition = 0 } })
 
           updatedMachine <- get -- Get the updated machine state
           renderScreen updatedMachine (take availableContentHeight $ drop newScrollPos helpTextLines) -- Re-render with new help scroll position
           interactiveLoopHelperInternal -- Continue the loop
         else do
           -- If help is displayed but not Enter, clear help and process as normal command
-          modify (\m -> m { mConsoleState = (mConsoleState m) { helpLines = [], helpScrollPos = 0 } })
+          modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpLines = [], _helpScrollPos = 0 } })
           -- Prepend the consumed key to the input buffer for readCommandWithInitialInput.
           -- This ensures that if a key was pressed while help was active (and it wasn't Enter),
           -- it is correctly processed as the start of the next command, preventing a stall.
@@ -98,60 +98,62 @@ interactiveLoopHelperInternal = do
           (commandToExecute, consumeNewline) <- readCommandWithInitialInput initialInput
           (action, output) <- handleCommand commandToExecute
           machineAfterCommand <- get
-          let updatedConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
-          let updatedMachine = machineAfterCommand { mConsoleState = updatedConsoleState }
+          let updatedConsoleState = (_mConsoleState machineAfterCommand) { _outputLines = _outputLines (_mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, _inputBuffer = "", _cursorPosition = 0, _lastCommand = commandToExecute }
+          let updatedMachine = machineAfterCommand { _mConsoleState = updatedConsoleState }
           put updatedMachine
           case action of
             ContinueLoop _ -> do
-              renderScreen updatedMachine (outputLines updatedConsoleState)
+              renderScreen updatedMachine (_outputLines updatedConsoleState)
               interactiveLoopHelperInternal
             NoAction -> do
-              renderScreen updatedMachine (outputLines updatedConsoleState)
+              renderScreen updatedMachine (_outputLines updatedConsoleState)
               interactiveLoopHelperInternal
             ExecuteStep _  -> do
-              renderScreen updatedMachine (outputLines updatedConsoleState) -- Render the output from handleCommand immediately
+              renderScreen updatedMachine (_outputLines updatedConsoleState) -- Render the output from handleCommand immediately
               return action -- Let the main runLoop handle the execution and rendering
-            ExitDebugger   -> modify (\m -> m { debuggerActive = False }) >> return action
-            QuitEmulator   -> modify (\m -> m { halted = True }) >> return action
+            ExitDebugger   -> modify (\m -> m { _debuggerActive = False }) >> return action
+            QuitEmulator   -> modify (\m -> m { _halted = True }) >> return action
             SwitchToVimMode -> do
-              modify (\m -> m { debuggerMode = VimMode }) >> return action
-            SwitchToCommandMode -> interactiveLoopHelperInternal
+              modify (\m -> m { _debuggerMode = VimMode }) >> return action
+            SwitchToCommandMode -> do
+              modify (\m -> m { _debuggerMode = CommandMode })
+              interactiveLoopHelperInternal
       else do
         -- No help being displayed, proceed with normal command input.
         -- In this case, there's no pre-consumed key, so we pass an empty initial input.
         (commandToExecute, consumeNewline) <- readCommandWithInitialInput ""
         (action, output) <- handleCommand commandToExecute
         machineAfterCommand <- get
-        let updatedConsoleState = (mConsoleState machineAfterCommand) { outputLines = outputLines (mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, inputBuffer = "", cursorPosition = 0, lastCommand = commandToExecute }
-        let updatedMachine = machineAfterCommand { mConsoleState = updatedConsoleState }
+        let updatedConsoleState = (_mConsoleState machineAfterCommand) { _outputLines = _outputLines (_mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, _inputBuffer = "", _cursorPosition = 0, _lastCommand = commandToExecute }
+        let updatedMachine = machineAfterCommand { _mConsoleState = updatedConsoleState }
         put updatedMachine
         case action of
           ContinueLoop _ -> do
-            renderScreen updatedMachine (outputLines updatedConsoleState)
+            renderScreen updatedMachine (_outputLines updatedConsoleState)
             interactiveLoopHelperInternal
           NoAction -> do
-            renderScreen updatedMachine (outputLines updatedConsoleState)
+            renderScreen updatedMachine (_outputLines updatedConsoleState)
             interactiveLoopHelperInternal
           ExecuteStep _  -> do
-            renderScreen updatedMachine (outputLines updatedConsoleState) -- Render the output from handleCommand immediately
+            renderScreen updatedMachine (_outputLines updatedConsoleState) -- Render the output from handleCommand immediately
             return action -- Let the main runLoop handle the execution and rendering
-          ExitDebugger   -> modify (\m -> m { debuggerActive = False }) >> return action
-          QuitEmulator   -> modify (\m -> m { halted = True }) >> return action
+          ExitDebugger   -> modify (\m -> m { _debuggerActive = False }) >> return action
+          QuitEmulator   -> modify (\m -> m { _halted = True }) >> return action
           SwitchToVimMode -> do
-            modify (\m -> m { debuggerMode = VimMode }) >> return action
+            modify (\m -> m { _debuggerMode = VimMode }) >> return action
           SwitchToCommandMode -> interactiveLoopHelperInternal
 
 -- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
 saveDebuggerState :: Machine -> FDX () -- Changed to FDX
-saveDebuggerState machine = case debugLogPath machine of
+saveDebuggerState machine = case _debugLogPath machine of
     Just filePath -> do
-        let content = "breakpoints: " ++ unwords [printf "%04X" bp | bp <- breakpoints machine] ++ "\n" ++
+        let content = "breakpoints: " ++ unwords [printf "%04X" bp | bp <- _breakpoints machine] ++ "\n" ++
                       "memory_trace_blocks: " ++ unlines (map (\(start, end, name) ->
                                                                     printf "%04X %04X" start end ++
                                                                     case name of
                                                                         Just n -> " " ++ n
                                                                         Nothing -> "")
-                                                                   (memoryTraceBlocks machine))
+                                                                   (_memoryTraceBlocks machine))
         result <- liftIO (try (writeFile filePath content) :: IO (Either IOException ()))
         case result of
             Left e -> do

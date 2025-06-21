@@ -4,7 +4,7 @@
 {-# LANGUAGE DeriveTraversable#-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module MOS6502Emulator.Core (Machine (..), FDX (..), getRegisters, instructionCount, cycleCount, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, parseHexByte, parseHexWord, DebuggerMode (..), AddressMode (..)) where
+module MOS6502Emulator.Core (Machine (..), FDX (..), getRegisters, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, parseHexByte, parseHexWord, DebuggerMode (..), AddressMode (..)) where
 
 import Control.Monad.Trans.State (StateT)
 import Control.Monad.State(MonadState, get, put)
@@ -66,26 +66,26 @@ parseHexWord s = case readHex s of
 
 -- | Represents the state of the MOS 6502 machine.
 data Machine = Machine
-  { mRegs            :: Registers -- ^ The machine's registers.
-  , mMem             :: Mem.Memory -- ^ The machine's memory.
-  , halted           :: Bool -- ^ Indicates if the machine is halted.
-  , instructionCount :: Int -- ^ The number of instructions executed.
-  , cycleCount       :: Int -- ^ The number of cycles executed.
-  , enableTrace      :: Bool -- ^ Indicates if instruction tracing is enabled.
-  , traceMemoryStart :: Word16 -- ^ The start address for memory tracing (for backward compatibility or single range).
-  , traceMemoryEnd   :: Word16   -- ^ The end address for memory tracing (for backward compatibility or single range).
-  , breakpoints      :: [Word16] -- ^ A list of breakpoint addresses.
-  , debuggerActive   :: Bool     -- ^ Indicates if the debugger is active.
-  , memoryTraceBlocks :: [(Word16, Word16, Maybe String)] -- ^ A list of memory ranges to trace, with optional names.
-  , lastDisassembledAddr :: Word16 -- ^ The address of the last disassembled instruction.
-  , labelMap             :: Map.Map Word16 String -- ^ A map from addresses to labels.
-  , debugLogPath         :: Maybe FilePath -- ^ The path for debugger state persistence.
-  , debuggerMode         :: DebuggerMode -- ^ The current mode of the debugger.
-  , pcHistory            :: [Word16] -- ^ History of the Program Counter for stepping back.
-  , redoHistory          :: [Word16] -- ^ History of the Program Counter for stepping forward (after stepping back).
-  , storedAddresses      :: Map.Map Char Word16 -- ^ A map of named stored addresses.
-  , vimState             :: VimState -- New field
-  , mConsoleState        :: DebuggerConsoleState -- ^ The state of the debugger console.
+  { _mRegs            :: Registers -- ^ The machine's registers.
+  , _mMem             :: Mem.Memory -- ^ The machine's memory.
+  , _halted           :: Bool -- ^ Indicates if the machine is halted.
+  , _instructionCount :: Int -- ^ The number of instructions executed.
+  , _cycleCount       :: Int -- ^ The number of cycles executed.
+  , _enableTrace      :: Bool -- ^ Indicates if instruction tracing is enabled.
+  , _traceMemoryStart :: Word16 -- ^ The start address for memory tracing (for backward compatibility or single range).
+  , _traceMemoryEnd   :: Word16   -- ^ The end address for memory tracing (for backward compatibility or single range).
+  , _breakpoints      :: [Word16] -- ^ A list of breakpoint addresses.
+  , _debuggerActive   :: Bool     -- ^ Indicates if the debugger is active.
+  , _memoryTraceBlocks :: [(Word16, Word16, Maybe String)] -- ^ A list of memory ranges to trace, with optional names.
+  , _lastDisassembledAddr :: Word16 -- ^ The address of the last disassembled instruction.
+  , _labelMap             :: Map.Map Word16 String -- ^ A map from addresses to labels.
+  , _debugLogPath         :: Maybe FilePath -- ^ The path for debugger state persistence.
+  , _debuggerMode         :: DebuggerMode -- ^ The current mode of the debugger.
+  , _pcHistory            :: [Word16] -- ^ History of the Program Counter for stepping back.
+  , _redoHistory          :: [Word16] -- ^ History of the Program Counter for stepping forward (after stepping back).
+  , _storedAddresses      :: Map.Map Char Word16 -- ^ A map of named stored addresses.
+  , _vimState             :: VimState -- New field
+  , _mConsoleState        :: DebuggerConsoleState -- ^ The state of the debugger console.
   }
 
 newtype FDX a = FDX { unFDX :: StateT Machine IO a }
@@ -127,22 +127,22 @@ writeByteMem addr b = do
 
 -- | Gets the current memory state.
 getMemory :: FDX Mem.Memory
-getMemory = mMem <$> get
+getMemory = _mMem <$> get
 
 -- | Sets the current memory state.
 setMemory :: Mem.Memory -> FDX ()
 setMemory mem = do
   m <- get
-  put (m { mMem = mem })
+  put (m { _mMem = mem })
 
 -- | Gets the current register state.
 getRegisters :: FDX Registers
 getRegisters = do
   m <- get
-  return (mRegs m)
+  return (_mRegs m)
 
 -- | Sets the current register state.
 setRegisters :: Registers -> FDX ()
 setRegisters rs = do
   m <- get
-  put ( m { mRegs = rs } )
+  put ( m { _mRegs = rs } )

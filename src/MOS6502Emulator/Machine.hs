@@ -2,6 +2,7 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 -- | Defines the core types and state for the MOS 6502 emulator machine.
 module MOS6502Emulator.Machine
@@ -42,11 +43,14 @@ import Data.Bits (shiftL)
 import qualified Data.Map.Strict as Map -- Added for labelMap
 import System.IO (readFile) -- For reading the symbol file
 import Control.Exception (try, IOException) -- For error handling
+import Control.Lens -- Import Control.Lens
+import MOS6502Emulator.Lenses -- Import our custom lenses
+import qualified MOS6502Emulator.Lenses as L -- Import all lenses qualified
 
 import MOS6502Emulator.Instructions (execute)
 import MOS6502Emulator.Memory (Memory)
 import qualified MOS6502Emulator.Memory as Mem
-import MOS6502Emulator.Registers (Registers, rPC, rAC, rSP, rSR, rX, rY ) -- Import rPC
+import MOS6502Emulator.Registers (Registers, _rPC, _rAC, _rSP, _rSR, _rX, _rY ) -- Import rPC
 import MOS6502Emulator.Core
 import MOS6502Emulator.Debugger.VimMode.Core (VimState) -- Import VimState type
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..)) -- Import DebuggerAction
@@ -77,7 +81,7 @@ loadSymbolFile filePath = do
             liftIO $ putStrLn "Symbol file read successfully. Parsing..." -- Debug message
             let ls = lines fileContent
             let parsedLabels = foldr parseLine Map.empty ls
-            modify' $ \m -> m { labelMap = parsedLabels }
+            modify' $ \m -> m { _labelMap = parsedLabels }
             liftIO $ putStrLn $ "Parsed " ++ show (Map.size parsedLabels) ++ " labels." -- Debug message
   where
     -- | Parses a single line from the symbol file into an address-label pair.
@@ -94,32 +98,32 @@ loadSymbolFile filePath = do
 
 -- | Sets the Program Counter register.
 setPC_ :: Word16 -> FDX ()
-setPC_ val = modify' $ \m -> m { mRegs = (mRegs m) { rPC = val } }
+setPC_ val = modify' (L.mRegs . L.rPC .~ val)
 
 -- | Sets the Accumulator register.
 setAC_ :: Word8 -> FDX ()
-setAC_ val = modify' $ \m -> m { mRegs = (mRegs m) { rAC = val } }
+setAC_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rAC = val } }
 
 -- | Sets the X register.
 setX_ :: Word8 -> FDX ()
-setX_ val = modify' $ \m -> m { mRegs = (mRegs m) { rX = val } }
+setX_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rX = val } }
 
 -- | Sets the Y register.
 setY_ :: Word8 -> FDX ()
-setY_ val = modify' $ \m -> m { mRegs = (mRegs m) { rY = val } }
+setY_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rY = val } }
 
 -- | Sets the Status Register.
 setSR_ :: Word8 -> FDX ()
-setSR_ val = modify' $ \m -> m { mRegs = (mRegs m) { rSR = val } }
+setSR_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rSR = val } }
 
 -- | Sets the Stack Pointer register.
 setSP_ :: Word8 -> FDX ()
-setSP_ val = modify' $ \m -> m { mRegs = (mRegs m) { rSP = val } }
+setSP_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rSP = val } }
 
 -- | Writes a byte to the provided address in memory.
 -- This is a direct state modification function, distinct from instruction-based writes.
 writeByteMem_ :: Word16 -> Word8 -> FDX ()
-writeByteMem_ addr b = modify' $ \m -> m { mMem = Mem.writeBytePure addr b (mMem m) }
+writeByteMem_ addr b = modify' $ \m -> m { _mMem = Mem.writeBytePure addr b (_mMem m) }
 
 -- | Performs a single fetch-decode-execute cycle of the 6502 emulator.
 -- Returns `True` if emulation should continue, `False` if halted.
@@ -128,18 +132,18 @@ fdxSingleCycle = do
   -- liftIO $ putStrLn ""
   machineState <- get
   -- liftIO $ putStrLn $ "Current PC at start of fdxSingleCycle: $" ++ showHex (rPC (mRegs machineState)) ""
-  if halted machineState
+  if _halted machineState
     then return False -- Machine is halted, stop emulation
     else do
-    pc <- fmap rPC getRegisters  -- Get current PC
+    pc <- fmap _rPC getRegisters  -- Get current PC
     -- pc <- getRegisters >>= return . rPC  -- Get current PC
     let currentPC = pc -- Store PC before incrementing
     b <- fetchByteMem pc -- Fetch opcode byte at PC
     setPC_ (pc + 1)   -- Move PC to next byte (like a real 6502)
-    modify' (\s -> s { instructionCount = instructionCount s + 1 })
+    modify' (\s -> s { _instructionCount = _instructionCount s + 1 })
     execute b
-    when (enableTrace machineState) $ do
+    when (_enableTrace machineState) $ do
       disassembled <- disassembleInstruction currentPC -- Use the stored PC
       liftIO $ putStrLn ""
       liftIO $ putStrLn (fst disassembled)
-    gets (not . halted)
+    gets (not . _halted)

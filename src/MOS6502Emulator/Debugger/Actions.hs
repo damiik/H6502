@@ -15,7 +15,7 @@ import Data.Bits (testBit) -- Added for testBit
 
 import MOS6502Emulator.Core (FDX, fetchByteMem) -- Added fetchByteMem
 import MOS6502Emulator.Machine (fdxSingleCycle, Machine(..))
-import MOS6502Emulator.Registers (Registers(rPC, rAC, rX, rY, rSP, rSR)) -- Added all register fields
+import MOS6502Emulator.Registers (Registers(_rPC, _rAC, _rX, _rY, _rSP, _rSR)) -- Added all register fields
 import MOS6502Emulator.DissAssembler (disassembleInstruction, formatHex8, formatHex16) -- Added formatHex8, formatHex16
 import MOS6502Emulator.Display (renderScreen, putOutput)
 
@@ -24,11 +24,11 @@ executeStepAndRender :: FDX ()
 executeStepAndRender = do
   continue <- fdxSingleCycle -- Execute one instruction
   nextMachineState <- get -- Get state after instruction execution
-  let regOutput = logRegisters (mRegs nextMachineState) -- Capture register output
+  let regOutput = logRegisters (_mRegs nextMachineState) -- Capture register output
   liftIO ANSI.clearScreen -- Aggressive clear after step
   liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
   -- Render the screen after stepping, passing register output and memory trace output
-  memTraceOutput <- concat <$> mapM (\(start, end, name) -> logMemoryRange start end name) (memoryTraceBlocks nextMachineState)
+  memTraceOutput <- concat <$> mapM (\(start, end, name) -> logMemoryRange start end name) (_memoryTraceBlocks nextMachineState)
   renderScreen nextMachineState (regOutput ++ memTraceOutput)
   handlePostInstructionChecks -- Handle tracing and halting checks
 
@@ -37,36 +37,36 @@ executeStepAndRender = do
 handlePostInstructionChecks :: FDX ()
 handlePostInstructionChecks = do
   nextMachineState <- get -- Get the updated state after the instruction
-  if halted nextMachineState
+  if _halted nextMachineState
     then do
       liftIO $ putStrLn "\nMachine halted. Entering debugger."
-      modify (\m -> m { debuggerActive = True }) -- Activate debugger
+      modify (\m -> m { _debuggerActive = True }) -- Activate debugger
     else do
       -- Log registers if tracing is enabled and debugger is not active
-      when (enableTrace nextMachineState && not (debuggerActive nextMachineState)) $ do
-          let currentPC_after = rPC (mRegs nextMachineState) -- Get PC after execution
+      when (_enableTrace nextMachineState && not (_debuggerActive nextMachineState)) $ do
+          let currentPC_after = _rPC (_mRegs nextMachineState) -- Get PC after execution
           disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
           putOutput "" -- Use console output instead of direct print
           putOutput (fst disassembled) -- Use console output instead of direct print
-          let regOutput = logRegisters (mRegs nextMachineState) -- Capture register output
+          let regOutput = logRegisters (_mRegs nextMachineState) -- Capture register output
           mapM_ putOutput regOutput -- Use console output instead of direct print
           -- Removed logging memory trace blocks here, as it's now handled by executeStepAndRender
 
 -- | Logs the current register values as a list of strings.
 logRegisters :: Registers -> [String]
 logRegisters reg =
-  let sr = rSR reg
+  let sr = _rSR reg
       formatBinary8 b = p1 ++ " " ++ p2
             where
               p1 =  [if testBit b i then '1' else '0' | i <- [7,6..4]]
               p2 =  [if testBit b i then '1' else '0' | i <- [3,2..0]]
   in [ "--------------------------------------------"
-     , "\x1b[35m\x1b[1mPC\x1b[0m\x1b[35m: $" ++ formatHex16 (rPC reg) ++ "\x1b[0m"
-     , "\x1b[33m\x1b[1mAC\x1b[0m\x1b[33m: $" ++ formatHex8 (rAC reg) ++ " [" ++ formatBinary8 (rAC reg) ++ "] ( " ++ show (rAC reg) ++ " )\x1b[0m"
-     , "\x1b[32m\x1b[1m X\x1b[0m\x1b[32m: $" ++ formatHex8 (rX reg) ++ " [\x1b[32m" ++ formatBinary8 (rX reg) ++ "\x1b[32m] ( " ++ show (rX reg) ++ " )\x1b[0m"
-     , "\x1b[32m\x1b[1m Y\x1b[0m\x1b[32m: $" ++ formatHex8 (rY reg) ++ " [\x1b[32m" ++ formatBinary8 (rY reg) ++ "\x1b[32m] ( " ++ show (rY reg) ++ " )\x1b[0m"
-     , "\x1b[35m\x1b[1mSP\x1b[0m\x1b[35m: $" ++ formatHex8 (rSP reg) ++ "\x1b[0m"
-     , "\x1b[35m\x1b[1mSR\x1b[0m\x1b[35m: $" ++ formatHex8 (rSR reg) ++ formatStatusFlags sr ++ "\n        *NV-B DIZC*\x1b[0m"
+     , "\x1b[35m\x1b[1mPC\x1b[0m\x1b[35m: $" ++ formatHex16 (_rPC reg) ++ "\x1b[0m"
+     , "\x1b[33m\x1b[1mAC\x1b[0m\x1b[33m: $" ++ formatHex8 (_rAC reg) ++ " [" ++ formatBinary8 (_rAC reg) ++ "] ( " ++ show (_rAC reg) ++ " )\x1b[0m"
+     , "\x1b[32m\x1b[1m X\x1b[0m\x1b[32m: $" ++ formatHex8 (_rX reg) ++ " [\x1b[32m" ++ formatBinary8 (_rX reg) ++ "\x1b[32m] ( " ++ show (_rX reg) ++ " )\x1b[0m"
+     , "\x1b[32m\x1b[1m Y\x1b[0m\x1b[32m: $" ++ formatHex8 (_rY reg) ++ " [\x1b[32m" ++ formatBinary8 (_rY reg) ++ "\x1b[32m] ( " ++ show (_rY reg) ++ " )\x1b[0m"
+     , "\x1b[35m\x1b[1mSP\x1b[0m\x1b[35m: $" ++ formatHex8 (_rSP reg) ++ "\x1b[0m"
+     , "\x1b[35m\x1b[1mSR\x1b[0m\x1b[35m: $" ++ formatHex8 (_rSR reg) ++ formatStatusFlags sr ++ "\n        *NV-B DIZC*\x1b[0m"
      ]
 
 formatStatusFlags :: Word8 -> String

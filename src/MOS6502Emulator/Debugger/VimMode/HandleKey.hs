@@ -6,7 +6,7 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Numeric (showHex)
 
-import MOS6502Emulator.Core(Machine(..), FDX,  mRegs, mConsoleState) -- Removed parseHexWord, parseHexByte, getRegisters
+import MOS6502Emulator.Core(Machine(..), FDX,  _mRegs, _mConsoleState) -- Removed parseHexWord, parseHexByte, getRegisters
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), parseCount) -- Ensure DebuggerAction and DebuggerMode are imported from here
 import MOS6502Emulator.Registers(Registers(..))
 import MOS6502Emulator.Debugger.VimMode.Core ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), OperatorType(..), VisualType(..), ObjectModifier(..), TextObjectType(..), CommandState(..))
@@ -36,31 +36,31 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         -- Handle newline for help scrolling or as a no-op
         (Nothing, '\n') -> do
           machine <- get -- Get the current machine state
-          let currentConsoleState = mConsoleState machine
-          let helpTextLines = helpLines currentConsoleState
-          let helpTextScrollPos = helpScrollPos currentConsoleState
+          let currentConsoleState = _mConsoleState machine
+          let helpTextLines = _helpLines currentConsoleState
+          let helpTextScrollPos = _helpScrollPos currentConsoleState
           let availableContentHeight = termHeight - 2 -- Space for two columns and status line
 
           if not (null helpTextLines) then do
             let newScrollPos = helpTextScrollPos + availableContentHeight
             if newScrollPos >= length helpTextLines then do
               -- Reached end of help, clear help state
-              modify (\m -> m { mConsoleState = (mConsoleState m) {
-                                  outputLines = outputLines (mConsoleState m) ++ helpTextLines, -- Add help to output
-                                  helpLines = [],
-                                  helpScrollPos = 0
+              modify (\m -> m { _mConsoleState = (_mConsoleState m) {
+                                  _outputLines = _outputLines (_mConsoleState m) ++ helpTextLines, -- Add help to output
+                                  _helpLines = [],
+                                  _helpScrollPos = 0
                                 }
                               })
               machineAfterModify <- get -- Get the updated machine state
-              let updatedConsoleState = mConsoleState machineAfterModify
-              let updatedDebuggerMode = debuggerMode machineAfterModify
+              let updatedConsoleState = _mConsoleState machineAfterModify
+              let updatedDebuggerMode = _debuggerMode machineAfterModify
               return (NoAction, [], vimState { vsCount = Nothing, vsMessage = "" }, updatedConsoleState, updatedDebuggerMode )
             else do
               -- Scroll to next page of help
-              modify (\m -> m { mConsoleState = (mConsoleState m) { helpScrollPos = newScrollPos } })
+              modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpScrollPos = newScrollPos } })
               machineAfterModify <- get -- Get the updated machine state
-              let updatedConsoleState = mConsoleState machineAfterModify
-              let updatedDebuggerMode = debuggerMode machineAfterModify
+              let updatedConsoleState = _mConsoleState machineAfterModify
+              let updatedDebuggerMode = _debuggerMode machineAfterModify
               return (NoAction, [], vimState { vsCount = Nothing, vsMessage = "" }, updatedConsoleState, updatedDebuggerMode )
           else do
             -- No help being displayed, act as no-op
@@ -139,7 +139,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
               let motion = GotoAddressMotion newPos
               return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
             Nothing -> do
-              let newPos = rPC (mRegs machine)
+              let newPos = _rPC (_mRegs machine)
               let motion = GotoPC
               return (NoAction, [""], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
         
@@ -147,7 +147,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
           nextKey <- liftIO getKey
           case nextKey of
             'g' -> do
-              let newPos = rPC (mRegs machine)
+              let newPos = _rPC (_mRegs machine)
               let motion = GotoPC
               return (NoAction, ["Goto PC"], vimState { vsCursor = newPos, vsViewStart = newPos, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
             _ -> return (NoAction, ["Invalid g command"], vimState { vsCount = Nothing }, debuggerConsoleState, initialDebuggerMode)
@@ -346,7 +346,7 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
                                           'l' -> Just $ NextByte count'
                                           'w' -> Just $ WordForward count'
                                           'b' -> Just $ WordBackward count'
-                                          'G' -> Just $ GotoAddressMotion $ fromIntegral $ fromMaybe (fromIntegral $ rPC (mRegs machine)) (vsCount vimState)
+                                          'G' -> Just $ GotoAddressMotion $ fromIntegral $ fromMaybe (fromIntegral $ _rPC (_mRegs machine)) (vsCount vimState)
                                           'g' -> Just GotoPC
                                           'H' -> Just TopOfPage
                                           'M' -> Just MiddlePage

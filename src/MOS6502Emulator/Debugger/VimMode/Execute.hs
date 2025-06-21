@@ -24,7 +24,7 @@ import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..
 import qualified MOS6502Emulator.Debugger.VimMode.Core as VM
 import MOS6502Emulator.Core (FDX, fetchByteMem, writeByteMem) 
 import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo(..), disassembleInstructions, opcodeMap, formatHex16)
-import MOS6502Emulator.Registers (rAC, rX, rY, rSP, rSR, rPC) -- Import for register setters
+import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rSP, _rSR, _rPC) -- Import for register setters
 import MOS6502Emulator.Machine
 import MOS6502Emulator.Debugger.Actions (logRegisters) -- Import executeStepAndRender and logging functions
 
@@ -43,19 +43,19 @@ executeVimCommand cmd = do
     VFill start end bytes -> handleFill (map formatHex16 [start, end] ++ map (printf "%02X") bytes) ""
     VSetReg8 regChar val ->
         let regSetter = case regChar of
-                          'A' -> (\r v -> r { rAC = v })
-                          'X' -> (\r v -> r { rX = v })
-                          'Y' -> (\r v -> r { rY = v })
-                          'S' -> (\r v -> r { rSP = v })
-                          'P' -> (\r v -> r { rSR = v })
+                          'A' -> (\r v -> r { _rAC = v })
+                          'X' -> (\r v -> r { _rX = v })
+                          'Y' -> (\r v -> r { _rY = v })
+                          'S' -> (\r v -> r { _rSP = v })
+                          'P' -> (\r v -> r { _rSR = v })
                           _   -> const
         in handleSetReg8 regSetter (printf "%02X" val) [regChar] ""
     VSetPC addr -> handleSetPC (formatHex16 addr) ""
     VQuit -> return (QuitEmulator, [])
     VExit -> return (ExitDebugger, [])
     VTrace -> do
-      let newTraceState = not (enableTrace machine)
-      put (machine { enableTrace = newTraceState })
+      let newTraceState = not (_enableTrace machine)
+      put (machine { _enableTrace = newTraceState })
       let output = ["Tracing " ++ if newTraceState then "enabled." else "disabled."]
       return (NoAction, output)
     VUnknown cmdStr -> return (NoAction, ["Unknown command: " ++ cmdStr])
@@ -91,13 +91,13 @@ executeAction action currentPos vimState = do
           return (currentPos, ["Toggled bit " ++ show bit ++ " at $" ++ showHex currentPos ""])
     
     AddBreakpoint -> do
-      let newBreakpoints = currentPos : breakpoints machine
-      put (machine { breakpoints = newBreakpoints })
+      let newBreakpoints = currentPos : _breakpoints machine
+      put (machine { _breakpoints = newBreakpoints })
       return (currentPos, ["Breakpoint added at $" ++ showHex currentPos ""])
     
     RemoveBreakpoint -> do
-      let newBreakpoints = filter (/= currentPos) (breakpoints machine)
-      put (machine { breakpoints = newBreakpoints })
+      let newBreakpoints = filter (/= currentPos) (_breakpoints machine)
+      put (machine { _breakpoints = newBreakpoints })
       return (currentPos, ["Breakpoint removed at $" ++ showHex currentPos ""])
     
     Delete motion -> do
@@ -140,8 +140,8 @@ executeAction action currentPos vimState = do
           return (currentPos, ["Pasted " ++ show (length bytes) ++ " bytes at $" ++ showHex pastePos ""])
     
     ExecuteToHere -> do
-      let newBreakpoints = currentPos : breakpoints machine
-      put (machine { breakpoints = newBreakpoints })
+      let newBreakpoints = currentPos : _breakpoints machine
+      put (machine { _breakpoints = newBreakpoints })
       return (currentPos, ["Temporary breakpoint added at $" ++ showHex currentPos "", "Continuing execution"])
     
     ColonCommand vimCmd -> do
@@ -182,7 +182,7 @@ executeMotion motion currentPos vimState = do
     PrevByte n -> return $ max 0 (currentPos - fromIntegral n)
     
     GotoAddressMotion addr -> return $ min maxAddr addr
-    GotoPC -> return $ rPC (mRegs machine)
+    GotoPC -> return $ _rPC (_mRegs machine)
     
     WordForward n -> executeMotion (NextInstruction n) currentPos vimState
     WordBackward n -> executeMotion (PrevInstruction n) currentPos vimState

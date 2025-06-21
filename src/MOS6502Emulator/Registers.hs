@@ -17,12 +17,12 @@ import Data.Maybe ( catMaybes )
 -- | Represents the MOS 6502 CPU registers.
 -- http://www.masswerk.at/6502/6502_instruction_set.html
 data Registers = Registers
-  { rPC :: Word16 -- ^ Program Counter
-  , rAC :: Word8  -- ^ Accumulator
-  , rX  :: Word8  -- ^ X register
-  , rY  :: Word8  -- ^ Y register
-  , rSR :: Word8  -- ^ Status register [NV-BDIZC]
-  , rSP :: Word8  -- ^ Stack pointer
+  { _rPC :: Word16 -- ^ Program Counter
+  , _rAC :: Word8  -- ^ Accumulator
+  , _rX  :: Word8  -- ^ X register
+  , _rY  :: Word8  -- ^ Y register
+  , _rSR :: Word8  -- ^ Status register [NV-BDIZC]
+  , _rSP :: Word8  -- ^ Stack pointer
   } deriving (Read, Show, Eq, Ord)
 
 -- | Represents the individual flags in the Status Register.
@@ -39,12 +39,12 @@ data SRFlag = Carry      -- ^ bit 0
 -- | Constructs the registers with initial values (PC=0, AC=0, X=0, Y=0, SR=0, SP=0xff).
 mkRegisters :: Registers
 mkRegisters = Registers
-  { rPC = 0x00
-  , rAC = 0x00
-  , rX  = 0x00
-  , rY  = 0x00
-  , rSR = 0x00
-  , rSP = 0xff
+  { _rPC = 0x00
+  , _rAC = 0x00
+  , _rX  = 0x00
+  , _rY  = 0x00
+  , _rSR = 0x00
+  , _rSP = 0xff
   }
 
 -- | A list of all status register flags.
@@ -54,7 +54,7 @@ allSRFlags = [Carry .. Negative]
 -- | Looks up the value of a particular flag by name.
 -- Returns `Just flag` if the flag is set, `Nothing` otherwise.
 lookupSRFlag :: Registers -> SRFlag -> Maybe SRFlag
-lookupSRFlag (Registers { rSR = sr }) f
+lookupSRFlag (Registers { _rSR = sr }) f
   | testBit sr (fromEnum f) = Just f
   | otherwise               = Nothing
 
@@ -66,8 +66,8 @@ getSRFlags rs =
 
 -- | Applies a bit transformation function at the specified status register bit.
 atSRFlag :: (Word8 -> Int -> Word8) -> Registers -> SRFlag -> Registers
-atSRFlag f rs@(Registers { rSR = sr }) flag =
-  rs { rSR = f sr (fromEnum flag) }
+atSRFlag f rs@(Registers { _rSR = sr }) flag =
+  rs { _rSR = f sr (fromEnum flag) }
 
 -- | Clears a specific status register flag.
 clearSRFlag :: Registers -> SRFlag -> Registers
@@ -86,12 +86,12 @@ complementSRFlag = atSRFlag complementBit
 
 -- | Applies a function at every bit in the status register.
 atSRFlags :: (Word8 -> Int -> Word8) -> Registers -> Registers
-atSRFlags f rs@(Registers { rSR = sr }) =
-  rs { rSR = foldl f sr (map fromEnum allSRFlags) }
+atSRFlags f rs@(Registers { _rSR = sr }) =
+  rs { _rSR = foldl f sr (map fromEnum allSRFlags) }
 
 -- | Clears all the bits in the status register.
 clearSRFlags :: Registers -> Registers
-clearSRFlags rs = rs { rSR = 0 }
+clearSRFlags rs = rs { _rSR = 0 }
 
 -- | Sets every bit in the status register.
 setSRFlags :: Registers -> Registers

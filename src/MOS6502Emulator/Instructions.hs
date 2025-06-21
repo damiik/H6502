@@ -1,15 +1,19 @@
 -- | Defines the 6502 instruction set and their execution logic within the emulator.
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 module MOS6502Emulator.Instructions where
 
 import qualified MOS6502Emulator.Memory as Mem
-import MOS6502Emulator.Registers
+import MOS6502Emulator.Registers hiding (_rPC, _rAC, _rX, _rY, _rSR, _rSP) -- Hide old record accessors
 import MOS6502Emulator.Core
+import Control.Lens -- Import Control.Lens
+import qualified MOS6502Emulator.Lenses as L -- Import all lenses qualified
 
 import Control.Applicative ( (<$>) )
 import Control.Monad ( when )
-import Control.Monad.State ( modify, modify') -- Import get and modify
+import Control.Monad.State ( MonadState, modify, modify', gets ) -- Import MonadState, modify, modify', and gets
 import Control.Monad.IO.Class (liftIO) -- Import liftIO
 
 import Data.Word
@@ -22,54 +26,56 @@ import MOS6502Emulator.DissAssembler (disassembleInstruction, formatHex16, forma
 
 
 -- | Gets a specific register value from the machine state.
-getReg :: (Registers -> a) -> FDX a
-getReg f = f <$> getRegisters
+getReg :: MonadState Machine m => Getter Registers a -> m a
+getReg l = gets (view (L.mRegs . l))
 
 -- | Sets the Program Counter (PC) register.
--- setPC is a function that takes a Word16 and returns an action within the FDX monad. The () indicates the action doesn't produce a meaningful result value, but it performs some effect (like modifying state).
--- modify' works inside any monad m that is also an instance of MonadState managing state s. It takes a function (s -> s) that transforms the state. It returns an action m () within that specific monad m
--- within the body of setPC, the specific type of modify' becomes (Machine -> Machine) -> FDX ().
 setPC :: Word16 -> FDX ()
-setPC !pc = modify' $ \m -> m { mRegs = (mRegs m) { rPC = pc } } --new value for *mRegs* field is created by taking the original registers (mRegs m) and updating their *rPC* field
+setPC !pc = modify' (L.mRegs . L.rPC .~ pc)
+
 -- | Sets the Accumulator (AC) register.
 setAC :: Word8 -> FDX ()
-setAC !ac = modify' $ \m -> m { mRegs = (mRegs m) { rAC = ac } }
+setAC !ac = modify' (L.mRegs . L.rAC .~ ac)
+
 -- | Sets the X index register.
 setX :: Word8 -> FDX ()
-setX !x = modify' $ \m -> m { mRegs = (mRegs m) { rX = x } }
+setX !x = modify' (L.mRegs . L.rX .~ x)
+
 -- | Sets the Y index register.
 setY :: Word8 -> FDX ()
-setY !y = modify' $ \m -> m { mRegs = (mRegs m) { rY = y } }
+setY !y = modify' (L.mRegs . L.rY .~ y)
+
 -- | Sets the Status Register (SR).
 setSR :: Word8 -> FDX ()
-setSR !sr = modify' $ \m -> m { mRegs = (mRegs m) { rSR = sr } }
+setSR !sr = modify' (L.mRegs . L.rSR .~ sr)
+
 -- | Sets the Stack Pointer (SP) register.
 setSP :: Word8 -> FDX ()
-setSP !sp = modify' $ \m -> m { mRegs = (mRegs m) { rSP = sp } }
+setSP !sp = modify' (L.mRegs . L.rSP .~ sp)
 
 -- | Executes the ADC (Add with Carry) instruction.
 addAC :: AddressMode -> FDX ()
 addAC mode = do
   b <- fetchOperand mode
-  ac <- getReg rAC
+  ac_val <- getReg L.rAC
   c <- isFlagSet Carry
-  let result =  (fromIntegral ac) + (fromIntegral b) + (if c then 1 else 0) :: Word16
+  let result =  (fromIntegral ac_val) + (fromIntegral b) + (if c then 1 else 0) :: Word16
   setFlag Carry (result > 0xFF) -- 9-bit overflow
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   setFlag Negative (testBit result 7)
-  setFlag Overflow (not (testBit (ac `xor` b) 7) && testBit (ac `xor` (fromIntegral result)) 7) -- Overflow logic: (A^b7) && ~(ac^b7)
+  setFlag Overflow (not (testBit (ac_val `xor` b) 7) && testBit (ac_val `xor` (fromIntegral result)) 7) -- Overflow logic: (A^b7) && ~(ac^b7)
   setAC (fromIntegral result)
 
 -- | Executes the SBC (Subtract with Borrow) instruction.
 sbc :: AddressMode -> FDX ()
-sbc mode = modifyOperand Accumulator $ \ac -> do
+sbc mode = modifyOperand Accumulator $ \ac_val -> do
   b <- fetchOperand mode
   c <- isFlagSet Carry
-  let result = (fromIntegral ac) - (fromIntegral b) - (if c then 0 else 1) :: Word16
-  setFlag Carry (result > 0xFF) -- 9-bit overflow
-  setFlag Zero ((result .&. 0xFF) == 0)
+  let result = (fromIntegral ac_val) - (fromIntegral b) - (if c then 0 else 1) :: Word16
+  setFlag Carry (result < 0x00 || result > 0xFF) -- Carry is set if no borrow occurs (result >= 0)
+  setFlag Zero (result .&. 0xFF == 0)
   setFlag Negative (testBit result 7)
-  setFlag Overflow (testBit (ac `xor` b) 7 && testBit (ac `xor` (fromIntegral result)) 7) -- Overflow logic: (A^b7) && (ac^b7)
+  setFlag Overflow (testBit (ac_val `xor` b) 7 && testBit (ac_val `xor` (fromIntegral result)) 7) -- Overflow logic: (A^b7) && (ac^b7)
   setAC (fromIntegral result)
   return $! fromIntegral result
 
@@ -77,9 +83,9 @@ sbc mode = modifyOperand Accumulator $ \ac -> do
 andAC :: AddressMode -> FDX ()
 andAC mode = do
   b <- fetchOperand mode
-  modifyOperand Accumulator $ \ac -> do
-    let result = ac .&. b
-    setFlag Zero ((result .&. 0xFF) == 0)
+  modifyOperand Accumulator $ \ac_val -> do
+    let result = ac_val .&. b
+    setFlag Zero (result == 0)
     setFlag Negative (testBit result 7)
     return result
 
@@ -88,7 +94,7 @@ asl :: AddressMode -> FDX ()
 asl mode = modifyOperand mode $ \b -> do
   setFlag Carry (testBit b 7)
   let result = shiftL b 1
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   setFlag Negative (testBit result 7)
   return result
 
@@ -98,7 +104,7 @@ lsr mode = modifyOperand mode $ \b -> do
   setFlag Carry (testBit b 0)
   setFlag Negative False
   let result = shiftR b 1
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   return result
 
 -- | Executes the DEC (Decrement Memory) instruction.
@@ -106,25 +112,25 @@ dec :: AddressMode -> FDX ()
 dec mode = modifyOperand mode $ \b -> do
   let result = b - 1
   setFlag Negative (testBit result 7)
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   return result
 
 -- | Executes the EOR (Exclusive OR) instruction.
 eor :: AddressMode -> FDX ()
-eor mode = modifyOperand Accumulator $ \ac -> do
+eor mode = modifyOperand Accumulator $ \ac_val -> do
   b <- fetchOperand mode
-  let result = ac `xor` b
+  let result = ac_val `xor` b
   setFlag Negative (testBit result 7)
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result == 0)
   return result
 
 -- | Executes the ORA (Logical Inclusive OR) instruction.
 ora :: AddressMode -> FDX ()
-ora mode = modifyOperand Accumulator $ \ac -> do
+ora mode = modifyOperand Accumulator $ \ac_val -> do
   b <- fetchOperand mode
-  let result = ac .|. b
+  let result = ac_val .|. b
   setFlag Negative (testBit result 7)
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result == 0)
   return result
 
 -- | Executes the ROL (Rotate Left) instruction.
@@ -134,7 +140,7 @@ rol mode = modifyOperand mode $ \m -> do
   let outputCarry = testBit m 7
   let result = (m `shiftL` 1) .|. (if inputCarry then 0x01 else 0x00)
   setFlag Negative (testBit result 7)
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   setFlag Carry outputCarry
   return result
 
@@ -145,7 +151,7 @@ ror mode = modifyOperand mode $ \m -> do
   let outputCarry = testBit m 0
   let result = (m `shiftR` 1) .|. (if inputCarry then 0x80 else 0x00)
   setFlag Negative (testBit result 7)
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   setFlag Carry outputCarry
   return result
 
@@ -154,7 +160,7 @@ inc :: AddressMode -> FDX ()
 inc mode = modifyOperand mode $ \b -> do
   let result = b + 1
   setFlag Negative (testBit result 7)
-  setFlag Zero ((result .&. 0xFF) == 0)
+  setFlag Zero (result .&. 0xFF == 0)
   return result
 
 -- | Represents the types of JMP instructions.
@@ -184,7 +190,7 @@ jsr = do
   let targetAddress = mkWord aLsb aMsb
   liftIO $ putStrLn $ "Jsr address: " ++ (formatHex16 targetAddress)
 
-  currentPC <- getReg rPC
+  currentPC <- getReg L.rPC
 
   -- Return address is already PC+2 after two fetchAndIncPC calls but stored return address
   -- must be decremented because RTS will increment it: RTS -> pull PC, PC+1 -> PC
@@ -212,45 +218,45 @@ branchOn test = do
   b <- fetchAndIncPC
   liftIO $ putStrLn $ "***branchOn operand: " ++ (formatHex8 b)
   c  <- test
-  curPC <- getReg rPC
+  curPC <- getReg L.rPC
   let offset = fromIntegral b :: Int8 -- make it signed
   when c (setPC $ curPC + fromIntegral offset)
 
 -- | Pulls a byte from the stack, incrementing the stack pointer.
 pull :: FDX Word8
 pull = do
-  sp <- getReg rSP
+  sp_val <- getReg L.rSP
   let hi  = 0x0100 :: Word16
-      sp' = hi + toWord sp + 1
+      sp' = hi + toWord sp_val + 1
   b <- fetchByteMem sp'
-  setSP $! sp + 1
+  setSP (sp_val + 1)
   return b
 
 -- | Pushes a byte onto the stack, decrementing the stack pointer.
 pushByte :: Word8 -> FDX ()
 pushByte b = do
-  sp <- getReg rSP
+  sp_val <- getReg L.rSP
   let hi   = 0x0100 :: Word16
-      addr = hi + toWord sp
+      addr = hi + toWord sp_val
   writeByteMem addr b
-  setSP $! sp - 1
+  setSP (sp_val - 1)
 
 -- | Pushes the value of a register onto the stack.
-pushReg :: (Registers -> Word8) -> FDX ()
-pushReg s = do
-  r  <- getReg s
-  sp <- getReg rSP
+pushReg :: Getter Registers Word8 -> FDX ()
+pushReg l = do
+  r_val  <- getReg l
+  sp_val <- getReg L.rSP
   let hi   = 0x0100 :: Word16
-      addr = hi + toWord sp
-  writeByteMem addr r
-  setSP $! sp - 1
+      addr = hi + toWord sp_val
+  writeByteMem addr r_val
+  setSP (sp_val - 1)
 
 -- | Pushes the current Program Counter (PC) onto the stack (high byte then low byte).
 pushPC :: FDX ()
 pushPC = do
-  pc <- getReg rPC
-  let pcl  = fromIntegral (pc .&. 0x00FF)
-      pch  = fromIntegral (pc `shiftR` 8 .&. 0xFF) :: Word8 -- Correctly get high byte as Word8
+  pc_val <- getReg L.rPC
+  let pcl  = fromIntegral (pc_val .&. 0x00FF)
+      pch  = fromIntegral (pc_val `shiftR` 8 .&. 0xFF) :: Word8 -- Correctly get high byte as Word8
   pushByte pch -- Push high byte
   pushByte pcl -- Push low byte
 
@@ -263,19 +269,19 @@ pushWord w = do
   pushByte lowByte  -- Push low byte
 
 -- | Executes a Compare instruction (CMP, CPX, CPY).
-cmp :: (Registers -> Word8) -> AddressMode -> FDX ()
-cmp s mode = do
+cmp :: Getter Registers Word8 -> AddressMode -> FDX ()
+cmp l mode = do
   b <- fetchOperand mode
-  r <- getReg s
-  setFlag Carry (r >= b)
-  setFlag Zero  (r == b)
-  setFlag Negative (testBit (r - b) 7)
+  r_val <- getReg l
+  setFlag Carry (r_val >= b)
+  setFlag Zero (r_val == b)
+  setFlag Negative (testBit (r_val - b) 7)
 
 -- | Executes the BIT (Test Bits) instruction.
 testBits :: AddressMode -> FDX ()
 testBits mode = do
   b  <- fetchOperand mode
-  ac <- getReg rAC
+  ac <- getReg L.rAC
   let m7 = testBit b 7
       m6 = testBit b 6
   setFlag Negative m7
@@ -285,17 +291,18 @@ testBits mode = do
 -- | Checks if a specific Status Register flag is set.
 isFlagSet :: SRFlag -> FDX Bool
 isFlagSet f = do
-  rs <- getRegisters
-  return (isJust (lookupSRFlag rs f))
+  regs_val <- gets (view L.mRegs)
+  return (isJust (lookupSRFlag regs_val f))
 
 -- | Sets or clears a specific Status Register flag.
 setFlag :: SRFlag -> Bool -> FDX ()
 setFlag f b = do
-  rs <- getRegisters
-  setRegisters $! setFlagBit rs b
- where
- setFlagBit rs True  = setSRFlag rs f
- setFlagBit rs False = clearSRFlag rs f
+  modify' (L.mRegs . L.rSR %~ (\sr_val -> 
+    let sr_int = (fromIntegral sr_val :: Int)
+        result = if b 
+                then setBit sr_int (fromEnum f) 
+                else clearBit sr_int (fromEnum f)
+    in (fromIntegral result :: Word8)))
 
 -- fetchByteAtPC :: FDX Word8
 -- fetchByteAtPC = do
@@ -334,9 +341,13 @@ setFlag f b = do
 -- | Fetches the next byte from memory at PC, incrementing PC.
 fetchAndIncPC :: FDX Word8
 fetchAndIncPC = do
-  pc <- getReg rPC
-  b <- fetchByteMem pc
-  setPC (pc + 1)
+  pc_val <- getReg L.rPC
+  b <- fetchByteMem pc_val
+  setPC (pc_val + 1)
+  -- The instructionCount and cycleCount fields need to be updated.
+  -- Since they are now lenses, use the %~ operator for modification.
+  modify' (L.instructionCount +~ 1)
+  -- cycleCount will be handled by the specific instruction execution logic if applicable.
   return b
 
 -- | Fetches the next two bytes from memory at PC (little-endian), incrementing PC twice.
@@ -352,35 +363,35 @@ fetchOperand Immediate = fetchAndIncPC
 fetchOperand Zeropage  = fetchAndIncPC >>= fetchByteMem . toWord
 fetchOperand ZeropageX = do
   addrByte <- fetchAndIncPC
-  x <- getReg rX
+  x <- getReg L.rX
   fetchByteMem (toWord (addrByte + x))
 fetchOperand ZeropageY = do
   addrByte <- fetchAndIncPC
-  y <- getReg rY
+  y <- getReg L.rY
   fetchByteMem (toWord (addrByte + y))
 fetchOperand Absolute  = fetchWordAndIncPC >>= fetchByteMem
 fetchOperand AbsoluteX = do
   w <- fetchWordAndIncPC
-  x <- getReg rX
+  x <- getReg L.rX
   fetchByteMem (w + toWord x)
 fetchOperand AbsoluteY = do
   w <- fetchWordAndIncPC
-  y <- getReg rY
+  y <- getReg L.rY
   fetchByteMem (w + toWord y)
 fetchOperand IndirectX = do
   b    <- fetchAndIncPC
-  x    <- getReg rX
+  x <- getReg L.rX
   addr <- fetchWordMem (b + x)
   fetchByteMem addr
 fetchOperand IndirectY = do
   b    <- fetchAndIncPC
   addr <- fetchWordMem b
-  y    <- getReg rY
+  y <- getReg L.rY
   fetchByteMem (addr + toWord y)
-fetchOperand Accumulator = getReg rAC
-fetchOperand X           = getReg rX
-fetchOperand Y           = getReg rY
-fetchOperand SP          = getReg rSP
+fetchOperand Accumulator = getReg L.rAC
+fetchOperand X           = getReg L.rX
+fetchOperand Y           = getReg L.rY
+fetchOperand SP          = getReg L.rSP
 
 -- | Modifies the operand at the given addressing mode using the provided function.
 -- Takes an AddressMode (like Accumulator, Zeropage, Absolute, etc.) and a function.
@@ -400,7 +411,7 @@ modifyOperand Zeropage op = do
 
 modifyOperand ZeropageX op = do
   zpAddr <- fetchAndIncPC
-  x <- getReg rX
+  x <- getReg L.rX
   let addr = toWord (zpAddr + x)
   v <- fetchByteMem addr
   v' <- op v
@@ -408,7 +419,7 @@ modifyOperand ZeropageX op = do
 
 modifyOperand ZeropageY op = do
   zpAddr <- fetchAndIncPC
-  y <- getReg rY
+  y <- getReg L.rY
   let addr = toWord (zpAddr + y)
   v <- fetchByteMem addr
   v' <- op v
@@ -422,7 +433,7 @@ modifyOperand Absolute op = do
 
 modifyOperand AbsoluteX op = do
   base <- fetchWordAndIncPC
-  x <- getReg rX
+  x <- getReg L.rX
   let addr = base + toWord x
   v <- fetchByteMem addr
   v' <- op v
@@ -430,7 +441,7 @@ modifyOperand AbsoluteX op = do
 
 modifyOperand AbsoluteY op = do
   base <- fetchWordAndIncPC
-  y <- getReg rY
+  y <- getReg L.rY
   let addr = base + toWord y
   v <- fetchByteMem addr
   v' <- op v
@@ -438,7 +449,7 @@ modifyOperand AbsoluteY op = do
 
 modifyOperand IndirectX op = do
   zpAddr <- fetchAndIncPC
-  x <- getReg rX
+  x <- getReg L.rX
   addr <- fetchWordMem (zpAddr + x)
   v <- fetchByteMem addr
   v' <- op v
@@ -447,7 +458,7 @@ modifyOperand IndirectX op = do
 -- TODO: address incremented with carry
 modifyOperand IndirectY op = do
   zpAddr <- fetchAndIncPC
-  y <- getReg rY
+  y <- getReg L.rY
   base <- fetchWordMem zpAddr
   let addr = base + toWord y
   v <- fetchByteMem addr
@@ -458,21 +469,21 @@ modifyOperand IndirectY op = do
 -- for the accumulator, that's is up to the caller of
 -- modifyOperand
 modifyOperand Accumulator op = do
-  ac  <- getReg rAC
-  ac' <- op ac
-  setAC ac'
+  ac_val  <- getReg L.rAC
+  ac'_val <- op ac_val
+  setAC ac'_val
 modifyOperand X           op = do
-  x  <- getReg rX
-  x' <- op x
-  setX x'
+  x_val  <- getReg L.rX
+  x'_val <- op x_val
+  setX x'_val
 modifyOperand Y           op = do
-  y  <- getReg rY
-  y' <- op y
-  setY y'
+  y_val  <- getReg L.rY
+  y'_val <- op y_val
+  setY y'_val
 modifyOperand SP          op = do
-  sp  <- getReg rSP
-  sp' <- op sp
-  setSP sp'
+  sp_val  <- getReg L.rSP
+  sp'_val <- op sp_val
+  setSP sp'_val
 
 -- | Executes a single 6502 instruction based on the provided opcode.
 -- opcodes without WDC (Western Design Center) W65C02 Extensions
@@ -535,7 +546,7 @@ execute opc = do
     0x00 -> do
       _ <- fetchOperand Immediate -- BRK consumes one byte operand (not used)
       pushPC -- Push PC+2 (or PC+1 depending on implementation detail, but +2 is common)
-      pushReg rSR -- Push status register
+      pushReg L.rSR -- Push status register
       setFlag Interrupt True -- Set interrupt disable flag
       -- Load new PC from IRQ/BRK vector (0xFFFE/0xFFFF)
       ll <- fetchByteMem 0xFFFE
@@ -543,7 +554,7 @@ execute opc = do
       let pc = mkWord ll hh
       setPC pc
       -- Signal that the machine should halt
-      modify (\s -> s { halted = True })
+      modify (L.halted .~ True)
 
     -- Break on Overflow Clear
     0x50 -> branchOn (not <$> isFlagSet Overflow)    -- BVC, Break on Overflow Clear
@@ -574,22 +585,22 @@ execute opc = do
     -- N Z C I D V
     -- + + + - - -
     -- CMP, Compare Memory with Accumulator
-    0xC9 -> cmp rAC Immediate    -- CMP, Compare Memory with Accumulator    -- A - M
-    0xC5 -> cmp rAC Zeropage
-    0xD5 -> cmp rAC ZeropageX
-    0xCD -> cmp rAC Absolute
-    0xDD -> cmp rAC AbsoluteX
-    0xD9 -> cmp rAC AbsoluteY
-    0xC1 -> cmp rAC IndirectX
-    0xD1 -> cmp rAC IndirectY
+    0xC9 -> cmp L.rAC Immediate    -- CMP, Compare Memory with Accumulator    -- A - M
+    0xC5 -> cmp L.rAC Zeropage
+    0xD5 -> cmp L.rAC ZeropageX
+    0xCD -> cmp L.rAC Absolute
+    0xDD -> cmp L.rAC AbsoluteX
+    0xD9 -> cmp L.rAC AbsoluteY
+    0xC1 -> cmp L.rAC IndirectX
+    0xD1 -> cmp L.rAC IndirectY
     -- CPX, Compare Memory and Index X
-    0xE0 -> cmp rX Immediate    -- CPX, Compare Memory and Index X    -- X - M
-    0xE4 -> cmp rX Zeropage
-    0xEC -> cmp rX Absolute
+    0xE0 -> cmp L.rX Immediate    -- CPX, Compare Memory and Index X    -- X - M
+    0xE4 -> cmp L.rX Zeropage
+    0xEC -> cmp L.rX Absolute
     -- CPY, Compare Memory and Index Y
-    0xC0 -> cmp rY Immediate    -- CPY, Compare Memory and Index Y    -- Y - M
-    0xC4 -> cmp rY Zeropage
-    0xCC -> cmp rY Absolute
+    0xC0 -> cmp L.rY Immediate    -- CPY, Compare Memory and Index Y    -- Y - M
+    0xC4 -> cmp L.rY Zeropage
+    0xCC -> cmp L.rY Absolute
 
     -- N Z C I D V
     -- + + - - - -
@@ -691,9 +702,9 @@ execute opc = do
     0x11 -> ora IndirectY
 
     -- PHA, Push Accumulator on Stack
-    0x48 -> pushReg rAC    -- PHA, Push Accumulator on Stack    -- push A
+    0x48 -> pushReg L.rAC    -- PHA, Push Accumulator on Stack    -- push A
     -- PHP, Push Processor Status on Stack
-    0x08 -> pushReg rSR    -- PHP, Push Processor Status on Stack    -- push SR
+    0x08 -> pushReg L.rSR    -- PHP, Push Processor Status on Stack    -- push SR
 
     -- N Z C I D V
     -- + + - - - -

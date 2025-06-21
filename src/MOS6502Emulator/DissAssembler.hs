@@ -14,9 +14,11 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Numeric (showHex)
 import Control.Monad.State (gets) -- To get parts of the state
+import Control.Lens (view) -- Import view
 import Data.Bits (shiftL, (.|.), testBit) -- Import bitwise operators and testBit
 import Data.Int (Int16) -- Import Int16
-import MOS6502Emulator.Core (FDX, fetchByteMem, toWord, Machine(labelMap)) -- Import labelMap
+import MOS6502Emulator.Core (FDX, fetchByteMem, toWord, Machine(..)) -- Import full Machine
+import MOS6502Emulator.Lenses (labelMap) -- Import the labelMap lens
 import Assembly.Instructions6502 (Mnemonic(..), AddressingMode(..), instructionData, getModeSize)
 -- | Formats a Word8 as a two-character hexadecimal string, padding with a leading zero if necessary.
 formatHex8 :: Word8 -> String
@@ -50,7 +52,7 @@ disassembleInstruction pc = do
     case Map.lookup opcode opcodeMap of
         Nothing -> return ("Unknown opcode: $" ++ formatHex8 opcode, 1)
         Just info -> do
-            lblMap <- gets labelMap -- Get the labelMap from the Machine state
+            lblMap <- gets _labelMap -- Get the labelMap from the Machine state
             operands <- fetchOperands pc (size info)
             let bytes = opcode : operands
             let byteString = unwords $ map formatHex8 bytes
@@ -130,8 +132,7 @@ mkWord lo hi = toWord lo .|. (toWord hi `shiftL` 8)
 disassembleInstructions :: Word16 -> Int -> FDX ([String], Word16) -- Return (disassembled lines, address after last instruction)
 disassembleInstructions currentPC 0 = return ([], currentPC)
 disassembleInstructions currentPC remaining = do
-    machine <- gets id -- Get the entire Machine state
-    let lblMap = labelMap machine
+    lblMap <- gets (view labelMap) -- Get the labelMap from the Machine state using the lens
     
     -- Disassemble the current instruction
     (disassembled, instLen) <- disassembleInstruction currentPC
