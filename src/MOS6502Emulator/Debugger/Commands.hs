@@ -14,7 +14,8 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (put, get, modify)
 import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Word (Word16, Word8)
-import Data.List (stripPrefix, cycle, take)
+import Data.List (cycle, delete, sort)
+import Control.Lens
 
 import MOS6502Emulator.Core (FDX, fetchByteMem, _halted, _enableTrace, _breakpoints, _memoryTraceBlocks, _debugLogPath, _traceMemoryStart, _traceMemoryEnd, _lastDisassembledAddr) -- Explicitly import what's needed from Core
 import MOS6502Emulator.Machine (Machine(..), setPC_) -- Import Machine type
@@ -27,6 +28,7 @@ import MOS6502Emulator.Debugger.VimMode.Core (vimModeHelp)
 import MOS6502Emulator.Debugger.Actions (executeStepAndRender, logRegisters, logMemoryRange) -- Import the new unified step function and logging functions
 
 import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte,  getRegisters) -- Import from Debugger.Utils
+import MOS6502Emulator.Lenses
 
 -- | Handles breakpoint commands in the debugger.
 handleBreak :: [String] -> String -> FDX (DebuggerAction, [String])
@@ -39,16 +41,14 @@ handleBreak args lastCommand = do
     [addrStr] -> do -- Add or remove breakpoint
       case parseHexWord addrStr of
         Just addr -> do
-          let currentBreakpoints = _breakpoints machine
-          if addr `elem` currentBreakpoints
+          isSet <- use (breakpoints . to (elem addr))
+          if isSet
             then do
-              let newBreakpoints = filter (/= addr) currentBreakpoints
-              put (machine { _breakpoints = newBreakpoints })
+              breakpoints %= delete addr -- Remove the breakpoint  
               let output = ["Breakpoint removed at $" ++ showHex addr ""]
               return (ContinueLoop lastCommand, output)
             else do
-              let newBreakpoints = addr : currentBreakpoints
-              put (machine { _breakpoints = newBreakpoints })
+              breakpoints %= sort . (addr:)  -- Update the breakpoints in the machine state
               let output = ["Breakpoint added at $" ++ showHex addr ""]
               return (ContinueLoop lastCommand, output)
         Nothing -> do

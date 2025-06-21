@@ -39,7 +39,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad (when)
 import Numeric (showHex, readHex) -- Import showHex and readHex
 import Data.Word (Word8, Word16)
-import Data.Bits (shiftL)
 import qualified Data.Map.Strict as Map -- Added for labelMap
 import System.IO (readFile) -- For reading the symbol file
 import Control.Exception (try, IOException) -- For error handling
@@ -47,12 +46,10 @@ import Control.Lens -- Import Control.Lens
 import MOS6502Emulator.Lenses -- Import our custom lenses
 import qualified MOS6502Emulator.Lenses as L -- Import all lenses qualified
 
-import MOS6502Emulator.Instructions (execute)
-import MOS6502Emulator.Memory (Memory)
+import MOS6502Emulator.Instructions (execute, setSP)
 import qualified MOS6502Emulator.Memory as Mem
-import MOS6502Emulator.Registers (Registers, _rPC, _rAC, _rSP, _rSR, _rX, _rY ) -- Import rPC
+import MOS6502Emulator.Registers (_rPC) -- Import rPC
 import MOS6502Emulator.Core
-import MOS6502Emulator.Debugger.VimMode.Core (VimState) -- Import VimState type
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..)) -- Import DebuggerAction
 import MOS6502Emulator.DissAssembler
 
@@ -101,24 +98,26 @@ setPC_ :: Word16 -> FDX ()
 setPC_ val = modify' (L.mRegs . L.rPC .~ val)
 
 -- | Sets the Accumulator register.
-setAC_ :: Word8 -> FDX ()
-setAC_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rAC = val } }
+setAC_ :: MonadState Machine m => Word8 -> m ()
+setAC_ val = mRegs . rAC .= val
 
 -- | Sets the X register.
-setX_ :: Word8 -> FDX ()
-setX_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rX = val } }
+setX_ :: MonadState Machine m => Word8 -> m ()
+setX_ val = mRegs . rX .= val
 
 -- | Sets the Y register.
-setY_ :: Word8 -> FDX ()
-setY_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rY = val } }
+setY_ :: MonadState Machine m => Word8 -> m ()
+setY_ val = mRegs . rY .= val
 
 -- | Sets the Status Register.
-setSR_ :: Word8 -> FDX ()
-setSR_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rSR = val } }
+setSR_ :: MonadState Machine m => Word8 -> m ()
+setSR_ val = mRegs . rSR .= val
+
 
 -- | Sets the Stack Pointer register.
-setSP_ :: Word8 -> FDX ()
-setSP_ val = modify' $ \m -> m { _mRegs = (_mRegs m) { _rSP = val } }
+setSP_ :: MonadState Machine m => Word8 -> m () 
+setSP_ val = mRegs . rSP .= val
+-- | Fetches a byte from memory at the specified address.
 
 -- | Writes a byte to the provided address in memory.
 -- This is a direct state modification function, distinct from instruction-based writes.
