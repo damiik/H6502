@@ -1,6 +1,7 @@
 module MOS6502Emulator.Debugger.Core
   ( DebuggerMode(..)
   , DebuggerAction(..)
+  , DebuggerCommand(..)
   , DebuggerConsoleState(..)
   , initialConsoleState
   , parseCount
@@ -15,6 +16,24 @@ data DebuggerMode = CommandMode | VimMode | VimCommandMode deriving (Show, Eq)
 
 -- | Data type to represent actions the debugger can take.
 data DebuggerAction = ContinueLoop String | ExecuteStep String | ExitDebugger | QuitEmulator | NoAction | SwitchToVimMode | SwitchToCommandMode | SwitchToVimCommandMode deriving (Show, Eq)
+
+-- | Algebraic Data Type for debugger commands
+data DebuggerCommand
+  = Step
+  | Break (Maybe Word16)
+  | MemTrace (Maybe (Word16, Word16, Maybe String))
+  | Fill Word16 Word16 [Word8]
+  | SetReg8 String Word8
+  | SetPC Word16
+  | Disassemble (Maybe Word16)
+  | Regs
+  | Trace
+  | Goto Word16
+  | Quit
+  | Exit
+  | Unknown String
+  deriving (Show, Eq)
+
 
 -- | Represents the state of the debugger console.
 data DebuggerConsoleState = DebuggerConsoleState
@@ -45,3 +64,5 @@ parseCount :: String -> Maybe Int
 parseCount s = if all isDigit s && not (null s) 
                then Just (read s) 
                else Nothing
+
+

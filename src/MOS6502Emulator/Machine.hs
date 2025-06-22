@@ -78,7 +78,7 @@ loadSymbolFile filePath = do
             liftIO $ putStrLn "Symbol file read successfully. Parsing..." -- Debug message
             let ls = lines fileContent
             let parsedLabels = foldr parseLine Map.empty ls
-            modify' $ \m -> m { _labelMap = parsedLabels }
+            L.labelMap .= parsedLabels
             liftIO $ putStrLn $ "Parsed " ++ show (Map.size parsedLabels) ++ " labels." -- Debug message
   where
     -- | Parses a single line from the symbol file into an address-label pair.
@@ -95,34 +95,34 @@ loadSymbolFile filePath = do
 
 -- | Sets the Program Counter register.
 setPC_ :: Word16 -> FDX ()
-setPC_ val = modify' (L.mRegs . L.rPC .~ val)
+setPC_ val = L.mRegs . L.rPC .= val
 
 -- | Sets the Accumulator register.
-setAC_ :: MonadState Machine m => Word8 -> m ()
-setAC_ val = mRegs . rAC .= val
+setAC_ :: Word8 -> FDX ()
+setAC_ val = L.mRegs . L.rAC .= val
 
 -- | Sets the X register.
-setX_ :: MonadState Machine m => Word8 -> m ()
-setX_ val = mRegs . rX .= val
+setX_ :: Word8 -> FDX ()
+setX_ val = L.mRegs . L.rX .= val
 
 -- | Sets the Y register.
-setY_ :: MonadState Machine m => Word8 -> m ()
-setY_ val = mRegs . rY .= val
+setY_ :: Word8 -> FDX ()
+setY_ val = L.mRegs . L.rY .= val
 
 -- | Sets the Status Register.
-setSR_ :: MonadState Machine m => Word8 -> m ()
-setSR_ val = mRegs . rSR .= val
+setSR_ :: Word8 -> FDX ()
+setSR_ val = L.mRegs . L.rSR .= val
 
 
 -- | Sets the Stack Pointer register.
-setSP_ :: MonadState Machine m => Word8 -> m () 
-setSP_ val = mRegs . rSP .= val
+setSP_ :: Word8 -> FDX () 
+setSP_ val = L.mRegs . L.rSP .= val
 -- | Fetches a byte from memory at the specified address.
 
 -- | Writes a byte to the provided address in memory.
 -- This is a direct state modification function, distinct from instruction-based writes.
 writeByteMem_ :: Word16 -> Word8 -> FDX ()
-writeByteMem_ addr b = modify' $ \m -> m { _mMem = Mem.writeBytePure addr b (_mMem m) }
+writeByteMem_ addr b = L.mMem %= Mem.writeBytePure addr b
 
 -- | Performs a single fetch-decode-execute cycle of the 6502 emulator.
 -- Returns `True` if emulation should continue, `False` if halted.
@@ -139,10 +139,11 @@ fdxSingleCycle = do
     let currentPC = pc -- Store PC before incrementing
     b <- fetchByteMem pc -- Fetch opcode byte at PC
     setPC_ (pc + 1)   -- Move PC to next byte (like a real 6502)
-    modify' (\s -> s { _instructionCount = _instructionCount s + 1 })
+    L.instructionCount %= (+ 1)
     execute b
     when (_enableTrace machineState) $ do
       disassembled <- disassembleInstruction currentPC -- Use the stored PC
       liftIO $ putStrLn ""
       liftIO $ putStrLn (fst disassembled)
+    L.lastDisassembledAddr .= currentPC -- Update last disassembled address using lens
     gets (not . _halted)

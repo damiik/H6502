@@ -9,6 +9,8 @@ import qualified Data.Map as Map
 import Numeric (showHex)
 import System.IO (hFlush, stdout, stdin, hSetEcho, hReady, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
 import Data.List (stripPrefix) -- Added for stripPrefix
+import Control.Lens -- Import Control.Lens
+import MOS6502Emulator.Lenses -- Import our custom lenses
 
 import Control.Monad.State (get, put, MonadIO (liftIO), modify) -- Added modify
 import Control.Monad.Trans.State (runStateT)
@@ -91,17 +93,17 @@ handleAddressVim vimState = do
     's' -> do
       putString "Store Current PC (key):" -- Changed to putString
       keyChar <- liftIO getKey
-      machine <- get
-      let currentPC = _rPC (_mRegs machine)
-      put (machine { _storedAddresses = Map.insert keyChar currentPC (_storedAddresses machine) })
+      currentPC <- use (mRegs . rPC) -- Use lens to get PC
+      storedAddresses %= Map.insert keyChar currentPC -- Use lens to update storedAddresses
       return (NoAction, ["Stored Addresses (s: store, g: goto): " ++ [key], "Stored PC $" ++ showHex currentPC "" ++ " at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "Stored PC at '" ++ [keyChar] ++ "'" })
     'g' -> do
       putString "Goto Stored Address (key):" -- Changed to putString
       keyChar <- liftIO getKey
-      machine <- get
-      case Map.lookup keyChar (_storedAddresses machine) of
+      -- Use lens to lookup stored address
+      maybeAddr <- use (storedAddresses . to (Map.lookup keyChar))
+      case maybeAddr of
         Just addr -> do
-          put (machine { _mRegs = (_mRegs machine) { _rPC = addr } })
+          mRegs . rPC .= addr -- Use lens to set PC
           (disassembledOutput, _) <- disassembleInstructions addr 1
           return (NoAction, ["Stored Addresses (s: store, g: goto): " ++ [key], "PC set to $" ++ showHex addr ""] ++ disassembledOutput, vimState { vsCursor = addr, vsViewStart = addr, vsMessage = "Moved to $" ++ showHex addr "" })
         Nothing -> return (NoAction, ["No address stored at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "No address stored at '" ++ [keyChar] ++ "'" })
@@ -194,13 +196,14 @@ interactiveLoopHelper = do
 
 interactiveLoopHelperInternal :: FDX DebuggerAction
 interactiveLoopHelperInternal = do
-  machine <- get
-  if _halted machine
+  haltedState <- use halted
+  if haltedState
     then return QuitEmulator
     else do
-      let currentVimState = _vimState machine
+      currentVimState <- use vimState
       key <- liftIO getKey
-      (action, output, newVimState, newConsoleState, newDebuggerMode) <- handleVimKey key machine currentVimState
+      currentMachine <- get -- Get machine state for handleVimKey
+      (action, output, newVimState, newConsoleState, newDebuggerMode) <- handleVimKey key currentMachine currentVimState
 
       -- Determine if helpLines should be cleared
       let shouldClearHelpNow =
@@ -213,20 +216,13 @@ interactiveLoopHelperInternal = do
             then newConsoleState { _helpLines = [], _helpScrollPos = 0 }
             else newConsoleState
  
-      -- Get the machine state *after* handleVimKey (which may have called handleCommand and modified global state)
-      machineAfterHandleKey <- get
+      -- Apply the specific components returned from handleVimKey to the global state using lenses
+      mConsoleState .= consoleStateToUse { _outputLines = _outputLines consoleStateToUse ++ output }
+      vimState .= newVimState
+      debuggerMode .= newDebuggerMode
     
-      -- Apply the specific components returned from handleVimKey to the latest machine state
-      let finalMachineState = machineAfterHandleKey {
-                _mConsoleState = consoleStateToUse { _outputLines = _outputLines consoleStateToUse ++ output },
-                _vimState = newVimState,
-                _debuggerMode = newDebuggerMode
-              }
-    
-      put finalMachineState -- Update the global state with the fully merged state
-    
-      -- Use the final state for rendering
-      let updatedMachine = finalMachineState
+      -- Use the current state for rendering
+      updatedMachine <- get
       if vsInCommandMode newVimState
         then updateVimCommandLine updatedMachine (vsCommandBuffer newVimState)
         else renderVimScreen updatedMachine newVimState
@@ -236,28 +232,21 @@ interactiveLoopHelperInternal = do
         ExecuteStep _ -> do
           -- Let the main runLoop handle the execution and rendering.
           -- Update vimState cursor for the next render.
-          machineAfterExecution <- get
-          -- Return the action and the *current* machine state (after potential execution)
+          -- machineAfterExecution <- get -- No longer needed, state is updated by lenses
           return action
         ExitDebugger -> return action
         QuitEmulator -> return action
         NoAction -> interactiveLoopHelperInternal
         SwitchToCommandMode -> do
-          -- Update the debuggerMode immediately to CommandMode
-          modify (\m -> m { _debuggerMode = CommandMode })
-          -- Get the updated machine state for rendering
-          updatedMachine <- get
-          -- Render the screen to show the mode change
+          debuggerMode .= CommandMode -- Update the debuggerMode immediately to CommandMode
+          updatedMachine <- get -- Get the updated machine state for rendering
           renderVimScreen updatedMachine newVimState
           return action
         SwitchToVimMode -> do
           return action
         SwitchToVimCommandMode -> do
-          -- Update the debuggerMode immediately
-          modify (\m -> m { _debuggerMode = VimCommandMode })
-          -- Get the updated machine state for rendering
-          updatedMachine <- get
-          -- Render the screen to show the mode change and prompt
+          debuggerMode .= VimCommandMode -- Update the debuggerMode immediately
+          updatedMachine <- get -- Get the updated machine state for rendering
           renderVimScreen updatedMachine newVimState
           interactiveLoopHelperInternal
 

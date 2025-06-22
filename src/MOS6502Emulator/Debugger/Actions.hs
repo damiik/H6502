@@ -12,6 +12,9 @@ import Control.Monad (when)
 import qualified System.Console.ANSI as ANSI
 import Data.Word (Word8, Word16) -- Added for Word8, Word16
 import Data.Bits (testBit) -- Added for testBit
+import Control.Lens -- Import Control.Lens
+import MOS6502Emulator.Lenses -- Import our custom lenses
+import qualified MOS6502Emulator.Lenses as L -- Import all lenses qualified
 
 import MOS6502Emulator.Core (FDX, fetchByteMem) -- Added fetchByteMem
 import MOS6502Emulator.Machine (fdxSingleCycle, Machine(..))
@@ -22,33 +25,48 @@ import MOS6502Emulator.Display (renderScreen, putOutput)
 -- | Executes a single instruction cycle, clears the screen, renders the updated screen, and handles post-instruction checks.
 executeStepAndRender :: FDX ()
 executeStepAndRender = do
-  continue <- fdxSingleCycle -- Execute one instruction
-  nextMachineState <- get -- Get state after instruction execution
-  let regOutput = logRegisters (_mRegs nextMachineState) -- Capture register output
+  _ <- fdxSingleCycle -- Execute one instruction
+  
+  -- Get the current machine state after the step
+  currentMachine <- get 
+
+  -- Capture register output (logRegisters expects Registers, use mRegs gives FDX Registers)
+  regs <- use mRegs
+  let regOutput = logRegisters regs 
+
+  -- Capture memory trace output (logMemoryRange returns FDX [String], so mapM over it)
+  memBlocks <- use memoryTraceBlocks
+  memTraceOutputList <- mapM (\(start, end, name) -> logMemoryRange start end name) memBlocks
+  let memTraceOutput = concat memTraceOutputList
+
   liftIO ANSI.clearScreen -- Aggressive clear after step
   liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
-  -- Render the screen after stepping, passing register output and memory trace output
-  memTraceOutput <- concat <$> mapM (\(start, end, name) -> logMemoryRange start end name) (_memoryTraceBlocks nextMachineState)
-  renderScreen nextMachineState (regOutput ++ memTraceOutput)
+  
+  -- Render the screen
+  renderScreen currentMachine (regOutput ++ memTraceOutput)
+  
   handlePostInstructionChecks -- Handle tracing and halting checks
 
 -- | Handles post-instruction checks: halting and tracing.
 -- This function should NOT re-enter the debugger loop or call runLoop.
 handlePostInstructionChecks :: FDX ()
 handlePostInstructionChecks = do
-  nextMachineState <- get -- Get the updated state after the instruction
-  if _halted nextMachineState
+  haltedState <- use halted
+  if haltedState
     then do
       liftIO $ putStrLn "\nMachine halted. Entering debugger."
-      modify (\m -> m { _debuggerActive = True }) -- Activate debugger
+      debuggerActive .= True -- Activate debugger
     else do
       -- Log registers if tracing is enabled and debugger is not active
-      when (_enableTrace nextMachineState && not (_debuggerActive nextMachineState)) $ do
-          let currentPC_after = _rPC (_mRegs nextMachineState) -- Get PC after execution
+      enableTraceState <- use enableTrace
+      debuggerActiveState <- use debuggerActive
+      when (enableTraceState && not debuggerActiveState) $ do
+          currentPC_after <- use (mRegs . rPC) -- Get PC after execution
           disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
           putOutput "" -- Use console output instead of direct print
           putOutput (fst disassembled) -- Use console output instead of direct print
-          let regOutput = logRegisters (_mRegs nextMachineState) -- Capture register output
+          regs <- use mRegs
+          let regOutput = logRegisters regs -- Capture register output
           mapM_ putOutput regOutput -- Use console output instead of direct print
           -- Removed logging memory trace blocks here, as it's now handled by executeStepAndRender
 

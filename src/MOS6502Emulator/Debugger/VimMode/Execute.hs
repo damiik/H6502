@@ -24,13 +24,14 @@ import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..
 import qualified MOS6502Emulator.Debugger.VimMode.Core as VM
 import MOS6502Emulator.Core (FDX, fetchByteMem, writeByteMem) 
 import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo(..), disassembleInstructions, opcodeMap, formatHex16)
+import Control.Lens
+import MOS6502Emulator.Lenses
 import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rSP, _rSR, _rPC) -- Import for register setters
 import MOS6502Emulator.Machine
 import MOS6502Emulator.Debugger.Actions (logRegisters) -- Import executeStepAndRender and logging functions
 
 executeVimCommand :: VimCommand -> FDX (DebuggerAction, [String])
 executeVimCommand cmd = do
-  machine <- get
   case cmd of
     VBreak addr -> handleBreak (maybe [] (\a -> [formatHex16 a]) addr) ""
     VWatch (Just (startAddr, endAddr)) -> handleMemTrace [formatHex16 startAddr, formatHex16 endAddr] ""
@@ -42,20 +43,20 @@ executeVimCommand cmd = do
     VDisas start end -> handleDisassemble (mapMaybe (fmap formatHex16) [start, end]) ""
     VFill start end bytes -> handleFill (map formatHex16 [start, end] ++ map (printf "%02X") bytes) ""
     VSetReg8 regChar val ->
-        let regSetter = case regChar of
-                          'A' -> (\r v -> r { _rAC = v })
-                          'X' -> (\r v -> r { _rX = v })
-                          'Y' -> (\r v -> r { _rY = v })
-                          'S' -> (\r v -> r { _rSP = v })
-                          'P' -> (\r v -> r { _rSR = v })
-                          _   -> const
-        in handleSetReg8 regSetter (printf "%02X" val) [regChar] ""
+        let regLens = case regChar of
+                          'A' -> mRegs . rAC
+                          'X' -> mRegs . rX
+                          'Y' -> mRegs . rY
+                          'S' -> mRegs . rSP
+                          'P' -> mRegs . rSR
+                          _   -> error "Invalid register character" -- Should not happen with proper parsing
+        in handleSetReg8 regLens (printf "%02X" val) [regChar] ""
     VSetPC addr -> handleSetPC (formatHex16 addr) ""
     VQuit -> return (QuitEmulator, [])
     VExit -> return (ExitDebugger, [])
     VTrace -> do
-      let newTraceState = not (_enableTrace machine)
-      put (machine { _enableTrace = newTraceState })
+      enableTrace %= not
+      newTraceState <- use enableTrace
       let output = ["Tracing " ++ if newTraceState then "enabled." else "disabled."]
       return (NoAction, output)
     VUnknown cmdStr -> return (NoAction, ["Unknown command: " ++ cmdStr])
@@ -63,7 +64,6 @@ executeVimCommand cmd = do
 -- Update executeAction to handle ColonCommand
 executeAction :: Action -> Word16 -> VimState -> FDX (Word16, [String])
 executeAction action currentPos vimState = do
-  machine <- get
   case action of
     Set newByte -> do
       writeByteMem currentPos newByte
@@ -91,13 +91,11 @@ executeAction action currentPos vimState = do
           return (currentPos, ["Toggled bit " ++ show bit ++ " at $" ++ showHex currentPos ""])
     
     AddBreakpoint -> do
-      let newBreakpoints = currentPos : _breakpoints machine
-      put (machine { _breakpoints = newBreakpoints })
+      breakpoints %= (currentPos :)
       return (currentPos, ["Breakpoint added at $" ++ showHex currentPos ""])
     
     RemoveBreakpoint -> do
-      let newBreakpoints = filter (/= currentPos) (_breakpoints machine)
-      put (machine { _breakpoints = newBreakpoints })
+      breakpoints %= filter (/= currentPos)
       return (currentPos, ["Breakpoint removed at $" ++ showHex currentPos ""])
     
     Delete motion -> do
@@ -128,6 +126,8 @@ executeAction action currentPos vimState = do
       let start = min currentPos endPos
       let end = max currentPos endPos
       bytes <- mapM fetchByteMem [start .. end]
+      -- The original code did not store yanked bytes in VimState.
+      -- If this needs to be a state update, the function signature needs to change.
       return (currentPos, ["Yanked " ++ show (length bytes) ++ " bytes from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
     
     Paste forward -> do
@@ -140,8 +140,7 @@ executeAction action currentPos vimState = do
           return (currentPos, ["Pasted " ++ show (length bytes) ++ " bytes at $" ++ showHex pastePos ""])
     
     ExecuteToHere -> do
-      let newBreakpoints = currentPos : _breakpoints machine
-      put (machine { _breakpoints = newBreakpoints })
+      breakpoints %= (currentPos :)
       return (currentPos, ["Temporary breakpoint added at $" ++ showHex currentPos "", "Continuing execution"])
     
     ColonCommand vimCmd -> do
@@ -155,7 +154,6 @@ executeAction action currentPos vimState = do
 -- | Execute a motion and return new cursor position
 executeMotion :: Motion -> Word16 -> VimState -> FDX Word16
 executeMotion motion currentPos vimState = do
-  machine <- get
   let maxAddr = 0xFFFF -- Maximum address for 6502
   case motion of
     NextInstruction n -> do
@@ -182,7 +180,7 @@ executeMotion motion currentPos vimState = do
     PrevByte n -> return $ max 0 (currentPos - fromIntegral n)
     
     GotoAddressMotion addr -> return $ min maxAddr addr
-    GotoPC -> return $ _rPC (_mRegs machine)
+    GotoPC -> use (mRegs . rPC)
     
     WordForward n -> executeMotion (NextInstruction n) currentPos vimState
     WordBackward n -> executeMotion (PrevInstruction n) currentPos vimState
@@ -214,7 +212,6 @@ executeMotion motion currentPos vimState = do
       return $ if forward then max 0 (newPos - 1) else min maxAddr (newPos + 1)
     
     RepeatFind forward -> do
-        machine <- get
         case vsLastFind vimState of
           Just (byte, _) -> findByteInMemory currentPos byte forward
           Nothing -> return currentPos
@@ -222,7 +219,6 @@ executeMotion motion currentPos vimState = do
     TextObject mod objType n -> do
         case vsViewMode vimState of
             CodeView -> do
-              currentMachine <- get
               let currentPC = vsCursor vimState
               case objType of
                 VM.Word -> do

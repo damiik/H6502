@@ -31,27 +31,27 @@ getReg l = gets (view (L.mRegs . l))
 
 -- | Sets the Program Counter (PC) register.
 setPC :: Word16 -> FDX ()
-setPC !pc = modify' (L.mRegs . L.rPC .~ pc)
+setPC !pc = L.mRegs . L.rPC .= pc
 
 -- | Sets the Accumulator (AC) register.
 setAC :: Word8 -> FDX ()
-setAC !ac = modify' (L.mRegs . L.rAC .~ ac)
+setAC !ac = L.mRegs . L.rAC .= ac
 
 -- | Sets the X index register.
 setX :: Word8 -> FDX ()
-setX !x = modify' (L.mRegs . L.rX .~ x)
+setX !x = L.mRegs . L.rX .= x
 
 -- | Sets the Y index register.
 setY :: Word8 -> FDX ()
-setY !y = modify' (L.mRegs . L.rY .~ y)
+setY !y = L.mRegs . L.rY .= y
 
 -- | Sets the Status Register (SR).
 setSR :: Word8 -> FDX ()
-setSR !sr = modify' (L.mRegs . L.rSR .~ sr)
+setSR !sr = L.mRegs . L.rSR .= sr
 
 -- | Sets the Stack Pointer (SP) register.
 setSP :: Word8 -> FDX ()
-setSP !sp = modify' (L.mRegs . L.rSP .~ sp)
+setSP !sp = L.mRegs . L.rSP .= sp
 
 -- | Executes the ADC (Add with Carry) instruction.
 addAC :: AddressMode -> FDX ()
@@ -297,12 +297,12 @@ isFlagSet f = do
 -- | Sets or clears a specific Status Register flag.
 setFlag :: SRFlag -> Bool -> FDX ()
 setFlag f b = do
-  modify' (L.mRegs . L.rSR %~ (\sr_val -> 
-    let sr_int = (fromIntegral sr_val :: Int)
-        result = if b 
-                then setBit sr_int (fromEnum f) 
-                else clearBit sr_int (fromEnum f)
-    in (fromIntegral result :: Word8)))
+  currentSR <- gets (view (L.mRegs . L.rSR))
+  let sr_int = fromIntegral currentSR :: Int
+      result = if b 
+               then setBit sr_int (fromEnum f) 
+               else clearBit sr_int (fromEnum f)
+  L.mRegs . L.rSR .= fromIntegral result
 
 -- fetchByteAtPC :: FDX Word8
 -- fetchByteAtPC = do
@@ -346,7 +346,7 @@ fetchAndIncPC = do
   setPC (pc_val + 1)
   -- The instructionCount and cycleCount fields need to be updated.
   -- Since they are now lenses, use the %~ operator for modification.
-  modify' (L.instructionCount +~ 1)
+  L.instructionCount += 1
   -- cycleCount will be handled by the specific instruction execution logic if applicable.
   return b
 

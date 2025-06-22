@@ -1,5 +1,7 @@
 module MOS6502Emulator.Debugger.VimMode.HandleKey ( handleVimNormalModeKey ) where
 import Control.Monad.State (get, modify, liftIO)
+import Control.Lens -- Import Control.Lens for lens operators
+import MOS6502Emulator.Lenses -- Import custom lenses
 import System.IO (stdin, hSetEcho)
 import Data.Char (isDigit)
 import qualified Data.Map as Map
@@ -45,23 +47,24 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
             let newScrollPos = helpTextScrollPos + availableContentHeight
             if newScrollPos >= length helpTextLines then do
               -- Reached end of help, clear help state
-              modify (\m -> m { _mConsoleState = (_mConsoleState m) {
-                                  _outputLines = _outputLines (_mConsoleState m) ++ helpTextLines, -- Add help to output
-                                  _helpLines = [],
-                                  _helpScrollPos = 0
-                                }
-                              })
+              let updatedConsoleState = currentConsoleState {
+                _outputLines = _outputLines currentConsoleState ++ helpTextLines, -- Add help to output
+                _helpLines = [],
+                _helpScrollPos = 0
+              }
+              modify (\m -> m { _mConsoleState = updatedConsoleState })
               machineAfterModify <- get -- Get the updated machine state
-              let updatedConsoleState = _mConsoleState machineAfterModify
+              let finalConsoleState = _mConsoleState machineAfterModify
               let updatedDebuggerMode = _debuggerMode machineAfterModify
-              return (NoAction, [], vimState { vsCount = Nothing, vsMessage = "" }, updatedConsoleState, updatedDebuggerMode )
+              return (NoAction, [], vimState { vsCount = Nothing, vsMessage = "" }, finalConsoleState, updatedDebuggerMode )
             else do
               -- Scroll to next page of help
-              modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpScrollPos = newScrollPos } })
+              let updatedConsoleState = currentConsoleState { _helpScrollPos = newScrollPos }
+              modify (\m -> m { _mConsoleState = updatedConsoleState })
               machineAfterModify <- get -- Get the updated machine state
-              let updatedConsoleState = _mConsoleState machineAfterModify
+              let finalConsoleState = _mConsoleState machineAfterModify
               let updatedDebuggerMode = _debuggerMode machineAfterModify
-              return (NoAction, [], vimState { vsCount = Nothing, vsMessage = "" }, updatedConsoleState, updatedDebuggerMode )
+              return (NoAction, [], vimState { vsCount = Nothing, vsMessage = "" }, finalConsoleState, updatedDebuggerMode )
           else do
             -- No help being displayed, act as no-op
             return (NoAction, [""], vimState { vsCount = Nothing, vsMessage = "" }, currentConsoleState, initialDebuggerMode )

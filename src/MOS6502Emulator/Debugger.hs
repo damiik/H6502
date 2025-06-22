@@ -13,6 +13,8 @@ import Data.Word (Word16)
 import Control.Exception (IOException, displayException, try, finally)
 import Text.Printf (printf)
 import System.IO (hFlush, stdout,  stdin, hSetEcho, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
+import Control.Lens
+import MOS6502Emulator.Lenses as L
 
 import MOS6502Emulator.Core
 import MOS6502Emulator.Machine
@@ -66,7 +68,7 @@ interactiveLoopHelperInternal = do
     else do
       let currentConsoleState = _mConsoleState machine
       let consoleStateWithPrompt = currentConsoleState { _inputBuffer = "> ", _cursorPosition = 2 }
-      modify (\m -> m { _mConsoleState = consoleStateWithPrompt }) -- Update machine's console state
+      L.mConsoleState .= consoleStateWithPrompt -- Update machine's console state
 
       -- Check if help is currently displayed and if Enter is pressed
       let helpTextLines = _helpLines (_mConsoleState machine)
@@ -79,17 +81,23 @@ interactiveLoopHelperInternal = do
           let newScrollPos = helpTextScrollPos + availableContentHeight
           if newScrollPos >= length helpTextLines then do
             -- Reached end of help, clear help state
-            modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpLines = [], _helpScrollPos = 0, _inputBuffer = "", _cursorPosition = 0 } })
+            L.mConsoleState . L.helpLines .= []
+            L.mConsoleState . L.helpScrollPos .= 0
+            L.mConsoleState . L.inputBuffer .= ""
+            L.mConsoleState . L.cursorPosition .= 0
           else do
             -- Scroll to next page of help
-            modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpScrollPos = newScrollPos, _inputBuffer = "", _cursorPosition = 0 } })
+            L.mConsoleState . L.helpScrollPos .= newScrollPos
+            L.mConsoleState . L.inputBuffer .= ""
+            L.mConsoleState . L.cursorPosition .= 0
 
           updatedMachine <- get -- Get the updated machine state
           renderScreen updatedMachine (take availableContentHeight $ drop newScrollPos helpTextLines) -- Re-render with new help scroll position
           interactiveLoopHelperInternal -- Continue the loop
         else do
           -- If help is displayed but not Enter, clear help and process as normal command
-          modify (\m -> m { _mConsoleState = (_mConsoleState m) { _helpLines = [], _helpScrollPos = 0 } })
+          L.mConsoleState . L.helpLines .= []
+          L.mConsoleState . L.helpScrollPos .= 0
           -- Prepend the consumed key to the input buffer for readCommandWithInitialInput.
           -- This ensures that if a key was pressed while help was active (and it wasn't Enter),
           -- it is correctly processed as the start of the next command, preventing a stall.
@@ -111,12 +119,17 @@ interactiveLoopHelperInternal = do
             ExecuteStep _  -> do
               renderScreen updatedMachine (_outputLines updatedConsoleState) -- Render the output from handleCommand immediately
               return action -- Let the main runLoop handle the execution and rendering
-            ExitDebugger   -> modify (\m -> m { _debuggerActive = False }) >> return action
-            QuitEmulator   -> modify (\m -> m { _halted = True }) >> return action
+            ExitDebugger   -> do
+              L.debuggerActive .= False
+              return action
+            QuitEmulator   -> do
+              L.halted .= True
+              return action
             SwitchToVimMode -> do
-              modify (\m -> m { _debuggerMode = VimMode }) >> return action
+              L.debuggerMode .= VimMode
+              return action
             SwitchToCommandMode -> do
-              modify (\m -> m { _debuggerMode = CommandMode })
+              L.debuggerMode .= CommandMode
               interactiveLoopHelperInternal
       else do
         -- No help being displayed, proceed with normal command input.
@@ -137,10 +150,15 @@ interactiveLoopHelperInternal = do
           ExecuteStep _  -> do
             renderScreen updatedMachine (_outputLines updatedConsoleState) -- Render the output from handleCommand immediately
             return action -- Let the main runLoop handle the execution and rendering
-          ExitDebugger   -> modify (\m -> m { _debuggerActive = False }) >> return action
-          QuitEmulator   -> modify (\m -> m { _halted = True }) >> return action
+          ExitDebugger   -> do
+            L.debuggerActive .= False
+            return action
+          QuitEmulator   -> do
+            L.halted .= True
+            return action
           SwitchToVimMode -> do
-            modify (\m -> m { _debuggerMode = VimMode }) >> return action
+            L.debuggerMode .= VimMode
+            return action
           SwitchToCommandMode -> interactiveLoopHelperInternal
 
 -- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.

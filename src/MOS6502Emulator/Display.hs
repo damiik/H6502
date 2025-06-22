@@ -17,7 +17,9 @@ import MOS6502Emulator.Machine (Machine(..))
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), DebuggerMode(..))
 import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rPC)
 import MOS6502Emulator.DissAssembler (disassembleInstruction)
-import Control.Monad.State (runStateT, modify)
+import Control.Monad.State (runStateT, modify, gets)
+import Control.Lens
+import MOS6502Emulator.Lenses as L
 import Control.Monad.IO.Class (liftIO)
 import System.IO (hFlush, stdout)
 import Data.List (findIndex)
@@ -187,10 +189,16 @@ disassembleLines count currentPC
 -- buffer for console output. This is crucial for preventing memory leaks
 -- caused by an ever-growing list of past outputs.
 putOutput :: String -> FDX ()
-putOutput s = modify (\m -> m { _mConsoleState = (_mConsoleState m) { _outputLines = take maxConsoleOutputLines (_outputLines (_mConsoleState m) ++ [s]) } })
+putOutput s = do
+  currentConsoleState <- gets _mConsoleState
+  let updatedOutputLines = take maxConsoleOutputLines (_outputLines currentConsoleState ++ [s])
+  L.mConsoleState . L.outputLines .= updatedOutputLines
 
 -- | Adds a string to the console output lines (without newline).
 -- Similar to `putOutput`, this function also caps the size of `outputLines`
 -- to prevent memory accumulation.
 putString :: String -> FDX ()
-putString s = modify (\m -> m { _mConsoleState = (_mConsoleState m) { _outputLines = take maxConsoleOutputLines (_outputLines (_mConsoleState m) ++ [s]) } })
+putString s = do
+  currentConsoleState <- gets _mConsoleState
+  let updatedOutputLines = take maxConsoleOutputLines (_outputLines currentConsoleState ++ [s])
+  L.mConsoleState . L.outputLines .= updatedOutputLines
