@@ -20,20 +20,13 @@ import MOS6502Emulator.Registers (Registers(..), _rPC)
 import MOS6502Emulator.Debugger.VimMode.Core
 import MOS6502Emulator.Debugger.VimMode.HandleKey (handleVimNormalModeKey) -- Changed import
 import MOS6502Emulator.Display(getKey, getInput, termHeight, termWidth, putOutput, putString, printTwoColumns, renderScreen) -- Updated import
-import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..)) -- New import, ensuring DebuggerAction is here
-import MOS6502Emulator.DissAssembler(disassembleInstructions, formatHex16, formatHex8, unwords)
-import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleSetPC, handleSetReg8, handleFill, handleDisassemble, handleCommand) -- Moved handle* imports
-import MOS6502Emulator.Debugger.Actions (executeStepAndRender, logRegisters, logMemoryRange) -- Import executeStepAndRender and logging functions
-import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, getRegisters) -- Import from Debugger.Utils
+import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), DebuggerCommand(..)) -- New import, ensuring DebuggerAction and DebuggerCommand are here
+import MOS6502Emulator.DissAssembler(disassembleInstructionsPure, formatHex16, formatHex8, unwords)
+import MOS6502Emulator.Debugger.Commands (handleCommandPure)
+import MOS6502Emulator.Debugger.Actions (executeStepAndRender, logRegisters) -- logMemoryRange is now handled by handleCommandPure
+import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, getRegisters, parseDebuggerCommand) -- Import parseDebuggerCommand
 import qualified System.Console.ANSI as ANSI
 import Control.Monad (void, unless) -- Added void and unless
-
--- | Parse a hex string to a byte value
--- parseHexByte :: String -> Maybe Word8
--- parseHexByte s = case readHex s of
---     [(n, "")] -> if n <= 0xFF then Just (fromIntegral n) else Nothing
---     _ -> Nothing
-
 
 
 -- | Handle breakpoint commands (similar to handleBreakVim from VimMode.hs)
@@ -41,6 +34,7 @@ handleBreakVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleBreakVim vimState = do
   putString "\nBreakpoints (a: add, d: delete):" -- Changed to putString
   key <- liftIO getKey
+  machine <- get
   case key of
     'a' -> do
       putString "Add Breakpoint (address):" -- Changed to putString
@@ -48,7 +42,9 @@ handleBreakVim vimState = do
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
       let args = words input
-      (action, output) <- handleBreak args ""
+      let maybeAddr = parseHexWord (head args)
+      let (newMachine, output, action) = handleCommandPure machine (Break maybeAddr)
+      put newMachine
       return (action, ["Breakpoints (a: add, d: delete): " ++ [key], "Add Breakpoint (address): " ++ input] ++ output, vimState { vsMessage = last output })
     'd' -> do
       putString "Delete Breakpoint (address):" -- Changed to putString
@@ -56,7 +52,9 @@ handleBreakVim vimState = do
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
       let args = words input
-      (action, output) <- handleBreak args ""
+      let maybeAddr = parseHexWord (head args)
+      let (newMachine, output, action) = handleCommandPure machine (Break maybeAddr)
+      put newMachine
       return (action, ["Breakpoints (a: add, d: delete): " ++ [key], "Delete Breakpoint (address): " ++ input] ++ output, vimState { vsMessage = last output })
     _ -> return (NoAction, ["Invalid Breakpoint command"], vimState { vsMessage = "Invalid Breakpoint command" })
 
@@ -65,6 +63,7 @@ handleMemTraceVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleMemTraceVim vimState = do
   putString "\nMemory Trace (a: add, d: delete):" -- Changed to putString
   key <- liftIO getKey
+  machine <- get
   case key of
     'a' -> do
       putString "Add Memory Trace Block (start end [name]): " -- Changed to putString
@@ -72,7 +71,16 @@ handleMemTraceVim vimState = do
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
       let args = words input
-      (action, output) <- handleMemTrace args ""
+      let maybeTraceInfo = case args of
+                             [startStr, endStr] -> case (parseHexWord startStr, parseHexWord endStr) of
+                                                     (Just start, Just end) -> Just (start, end, Nothing)
+                                                     _ -> Nothing
+                             [startStr, endStr, name] -> case (parseHexWord startStr, parseHexWord endStr) of
+                                                           (Just start, Just end) -> Just (start, end, Just name)
+                                                           _ -> Nothing
+                             _ -> Nothing
+      let (newMachine, output, action) = handleCommandPure machine (MemTrace maybeTraceInfo)
+      put newMachine
       return (action, ["Memory Trace (a: add, d: delete): " ++ [key], "Add Memory Trace Block (start end [name]): " ++ input] ++ output, vimState { vsMessage = last output })
     'd' -> do
       putString "Delete Memory Trace Block (start end [name]): " -- Changed to putString
@@ -80,7 +88,16 @@ handleMemTraceVim vimState = do
       input <- liftIO getInput
       liftIO $ hSetEcho stdin False
       let args = words input
-      (action, output) <- handleMemTrace args ""
+      let maybeTraceInfo = case args of
+                             [startStr, endStr] -> case (parseHexWord startStr, parseHexWord endStr) of
+                                                     (Just start, Just end) -> Just (start, end, Nothing)
+                                                     _ -> Nothing
+                             [startStr, endStr, name] -> case (parseHexWord startStr, parseHexWord endStr) of
+                                                           (Just start, Just end) -> Just (start, end, Just name)
+                                                           _ -> Nothing
+                             _ -> Nothing
+      let (newMachine, output, action) = handleCommandPure machine (MemTrace maybeTraceInfo)
+      put newMachine
       return (action, ["Memory Trace (a: add, d: delete): " ++ [key], "Delete Memory Trace Block (start end [name]): " ++ input] ++ output, vimState { vsMessage = last output })
     _ -> return (NoAction, ["Invalid Memory Trace command"], vimState { vsMessage = "Invalid Memory Trace command" })
 
@@ -89,6 +106,7 @@ handleAddressVim :: VimState -> FDX (DebuggerAction, [String], VimState)
 handleAddressVim vimState = do
   putString "\nStored Addresses (s: store, g: goto):" -- Changed to putString
   key <- liftIO getKey
+  machine <- get
   case key of
     's' -> do
       putString "Store Current PC (key):" -- Changed to putString
@@ -103,9 +121,9 @@ handleAddressVim vimState = do
       maybeAddr <- use (storedAddresses . to (Map.lookup keyChar))
       case maybeAddr of
         Just addr -> do
-          mRegs . rPC .= addr -- Use lens to set PC
-          (disassembledOutput, _) <- disassembleInstructions addr 1
-          return (NoAction, ["Stored Addresses (s: store, g: goto): " ++ [key], "PC set to $" ++ showHex addr ""] ++ disassembledOutput, vimState { vsCursor = addr, vsViewStart = addr, vsMessage = "Moved to $" ++ showHex addr "" })
+          let (newMachine, output, action) = handleCommandPure machine (Goto addr)
+          put newMachine
+          return (action, ["Stored Addresses (s: store, g: goto): " ++ [key], "PC set to $" ++ showHex addr ""] ++ output, vimState { vsCursor = addr, vsViewStart = addr, vsMessage = "Moved to $" ++ showHex addr "" })
         Nothing -> return (NoAction, ["No address stored at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "No address stored at '" ++ [keyChar] ++ "'" })
     _ -> return (NoAction, ["Invalid Stored Address command"], vimState { vsMessage = "Invalid Stored Address command" })
 
@@ -152,7 +170,9 @@ handleVimCommandModeKey key machine vimState = do
         -- No help being displayed, execute command
         liftIO $ hSetEcho stdin False -- Disable echo after command execution
         let commandToExecute = drop 1 currentCommandBuffer -- Remove leading ':'
-        (actionFromCommand, output) <- handleCommand commandToExecute
+        let parsedCommand = parseDebuggerCommand commandToExecute
+        let (newMachine, output, actionFromCommand) = handleCommandPure machine parsedCommand
+        put newMachine
         -- Get the machine state *after* handleCommand has potentially modified it
         machineAfterCommand <- get 
 

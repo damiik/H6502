@@ -22,7 +22,7 @@ import Data.Bits
 import Data.Maybe ( isJust )
 import Numeric (showHex) -- Import showHex for debugging output
 
-import MOS6502Emulator.DissAssembler (disassembleInstruction, formatHex16, formatHex8) -- Import disassembler
+import MOS6502Emulator.DissAssembler (disassembleInstructionPure, formatHex16, formatHex8) -- Import disassembler
 
 
 -- | Gets a specific register value from the machine state.
@@ -803,4 +803,4 @@ execute opc = do
     -- TODO: all unimplemented opc
     -- the correct thing would be to check
     -- their cycle counts
-    _ -> do return () -- Instruction size in bytes
+    _ -> return () -- Instruction size in bytes

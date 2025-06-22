@@ -16,7 +16,7 @@ import MOS6502Emulator.Core (FDX(..), unFDX)
 import MOS6502Emulator.Machine (Machine(..))
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState(..), DebuggerMode(..))
 import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rPC)
-import MOS6502Emulator.DissAssembler (disassembleInstruction)
+import MOS6502Emulator.DissAssembler (disassembleInstructionPure)
 import Control.Monad.State (runStateT, modify, gets)
 import Control.Lens
 import MOS6502Emulator.Lenses as L
@@ -125,7 +125,7 @@ renderScreen machine rightColumnContent = do
   let maxOutputLines = availableContentHeight
 
   let currentPC = _rPC (_mRegs machine)
-  ((disassembledLines, _), _) <- liftIO $ runStateT (unFDX $ disassembleLines availableContentHeight currentPC) machine
+  let (disassembledLines, _) = disassembleLinesPure availableContentHeight currentPC machine
   
   result <- liftIO $ try (printTwoColumns termWidth disassembledLines rightColumnContent) :: FDX (Either IOException ())
   case result of
@@ -173,15 +173,15 @@ renderScreen machine rightColumnContent = do
   liftIO ANSI.showCursor
   liftIO $ hFlush stdout
 
--- Helper function to disassemble a given number of lines and return them as a list of strings.
-disassembleLines :: Int -> Word16 -> FDX ([String], Word16) -- Return (disassembled lines, address after last instruction)
-disassembleLines count currentPC
-  | count <= 0 = return ([], currentPC)
-  | otherwise = do
-      (disassembled, instLen) <- disassembleInstruction currentPC
-      let nextPC = currentPC + fromIntegral instLen
-      (restOfLines, finalPC) <- disassembleLines (count - 1) nextPC
-      return (disassembled : restOfLines, finalPC)
+-- Helper function to disassemble a given number of lines and return them as a list of strings (pure version).
+disassembleLinesPure :: Int -> Word16 -> Machine -> ([String], Word16) -- Return (disassembled lines, address after last instruction)
+disassembleLinesPure count currentPC machine
+  | count <= 0 = ([], currentPC)
+  | otherwise =
+      let (disassembled, instLen) = disassembleInstructionPure currentPC machine
+          nextPC = currentPC + fromIntegral instLen
+          (restOfLines, finalPC) = disassembleLinesPure (count - 1) nextPC machine
+      in (disassembled : restOfLines, finalPC)
 
 -- | Adds a string to the console output lines.
 -- The `take maxConsoleOutputLines` ensures that the `outputLines` list

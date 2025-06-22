@@ -3,7 +3,7 @@ module MOS6502Emulator.Debugger.Actions
   ( executeStepAndRender
   , handlePostInstructionChecks
   , logRegisters -- Export logRegisters
-  , logMemoryRange -- Export logMemoryRange
+  , logMemoryRangePure -- Export logMemoryRangePure
   ) where
 
 import Control.Monad.State (get, modify)
@@ -16,10 +16,10 @@ import Control.Lens -- Import Control.Lens
 import MOS6502Emulator.Lenses -- Import our custom lenses
 import qualified MOS6502Emulator.Lenses as L -- Import all lenses qualified
 
-import MOS6502Emulator.Core (FDX, fetchByteMem) -- Added fetchByteMem
-import MOS6502Emulator.Machine (fdxSingleCycle, Machine(..))
+import MOS6502Emulator.Core (FDX, fetchByteMemPure, Machine(..)) -- Added fetchByteMemPure
+import MOS6502Emulator.Machine (fdxSingleCycle)
 import MOS6502Emulator.Registers (Registers(_rPC, _rAC, _rX, _rY, _rSP, _rSR)) -- Added all register fields
-import MOS6502Emulator.DissAssembler (disassembleInstruction, formatHex8, formatHex16) -- Added formatHex8, formatHex16
+import MOS6502Emulator.DissAssembler (disassembleInstructionPure, formatHex8, formatHex16) -- Added formatHex8, formatHex16
 import MOS6502Emulator.Display (renderScreen, putOutput)
 
 -- | Executes a single instruction cycle, clears the screen, renders the updated screen, and handles post-instruction checks.
@@ -36,7 +36,7 @@ executeStepAndRender = do
 
   -- Capture memory trace output (logMemoryRange returns FDX [String], so mapM over it)
   memBlocks <- use memoryTraceBlocks
-  memTraceOutputList <- mapM (\(start, end, name) -> logMemoryRange start end name) memBlocks
+  let memTraceOutputList = map (\(start, end, name) -> logMemoryRangePure start end name currentMachine) memBlocks
   let memTraceOutput = concat memTraceOutputList
 
   liftIO ANSI.clearScreen -- Aggressive clear after step
@@ -61,10 +61,11 @@ handlePostInstructionChecks = do
       enableTraceState <- use enableTrace
       debuggerActiveState <- use debuggerActive
       when (enableTraceState && not debuggerActiveState) $ do
+          currentMachine <- get
           currentPC_after <- use (mRegs . rPC) -- Get PC after execution
-          disassembled <- disassembleInstruction currentPC_after -- Use PC after execution
+          let (disassembled, _) = disassembleInstructionPure currentPC_after currentMachine -- Use PC after execution
           putOutput "" -- Use console output instead of direct print
-          putOutput (fst disassembled) -- Use console output instead of direct print
+          putOutput disassembled -- Use console output instead of direct print
           regs <- use mRegs
           let regOutput = logRegisters regs -- Capture register output
           mapM_ putOutput regOutput -- Use console output instead of direct print
@@ -92,11 +93,11 @@ formatStatusFlags sr =
   let getFlagBit r b = if testBit r b then '*' else ' '
   in [' ', getFlagBit sr 7, 'N', ' ', getFlagBit sr 6, 'V', ' ', '-', '-', getFlagBit sr 4, 'B', ' ', getFlagBit sr 3, 'D', ' ', getFlagBit sr 2, 'I', ' ', getFlagBit sr 1, 'Z', ' ', getFlagBit sr 0, 'C']
 
--- | Logs the memory range as a list of strings.
-logMemoryRange :: Word16 -> Word16 -> Maybe String -> FDX [String]
-logMemoryRange start end name = do
-  bytes <- sequence [fetchByteMem addr | addr <- [start..end]]
-  return [
+-- | Logs the memory range as a list of strings (pure version).
+logMemoryRangePure :: Word16 -> Word16 -> Maybe String -> Machine -> [String]
+logMemoryRangePure start end name machine =
+  let bytes = [fetchByteMemPure addr machine | addr <- [start..end]]
+  in [
     (case name of
         Just n -> n ++ " [$" ++ formatHex16 start ++ " - $" ++ formatHex16 end ++ "] = "
         Nothing -> "MEM [$" ++ formatHex16 start ++ " - $" ++ formatHex16 end ++ "] = ") ++

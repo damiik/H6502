@@ -6,7 +6,7 @@ import Numeric (showHex)
 
 import MOS6502Emulator.Core(Machine(..), FDX, fetchByteMem, writeByteMem, _mRegs, _mConsoleState) -- Removed parseHexWord, parseHexByte, getRegisters
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), parseCount) -- Ensure DebuggerAction and DebuggerMode are imported from here
-import MOS6502Emulator.DissAssembler(disassembleInstruction)
+import MOS6502Emulator.DissAssembler(disassembleInstructionPure)
 import MOS6502Emulator.Debugger.VimMode.Core ( VimState(..), Motion(..), Action(..), ViewMode(..), RepeatableCommand(..), OperatorType(..), VisualType(..), ObjectModifier(..), TextObjectType(..), CommandState(..))
 import MOS6502Emulator.Debugger.VimMode.Execute (executeMotion, executeAction)
 import MOS6502Emulator.Debugger.Console(getKey, getInput, putString, termHeight)
@@ -79,10 +79,10 @@ handleVisualKey key vimState = do
         
         -- Show disassembly of selection
         'D' -> do
-            let disassembleAddr addr = do
-                    (instr, _) <- disassembleInstruction addr
-                    return $ "  " ++ showHex addr ": " ++ instr
-            output <- mapM disassembleAddr [minAddr..maxAddr]
+            let disassembleAddr addr =
+                    let (instr, _) = disassembleInstructionPure addr machine
+                    in "  " ++ showHex addr ": " ++ instr
+            let output = map disassembleAddr [minAddr..maxAddr]
             return (NoAction, "Disassembled selection:":output, vimState, currentConsoleState, currentDebuggerMode)
         
         _   -> return (NoAction, ["Key '" ++ [key] ++ "' not supported in visual mode"], vimState, currentConsoleState, currentDebuggerMode)

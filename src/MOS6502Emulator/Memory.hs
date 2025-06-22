@@ -1,6 +1,14 @@
 -- | Defines the memory model for the MOS 6502 emulator.
 {-# LANGUAGE FlexibleContexts #-}
-module MOS6502Emulator.Memory where
+module MOS6502Emulator.Memory (
+    Memory
+  , addressSize
+  , memory
+  , fetchByte
+  , writeByte
+  , fetchBytePure
+  , writeBytePure
+) where
 
 import Prelude hiding ( replicate, read )
 import Data.Vector.Unboxed.Mutable (MVector, replicate, read, write)
@@ -25,6 +33,10 @@ memory = replicate addressSize 0
 -- | Fetches a byte from memory at the given address.
 fetchByte :: MonadIO m => Word16 -> Memory -> m Word8
 fetchByte addr m = liftIO $ read m (fromIntegral addr)
+
+-- | Fetches a byte from memory at the given address in a pure context.
+fetchBytePure :: Word16 -> Memory -> Word8
+fetchBytePure addr m = unsafePerformIO $ read m (fromIntegral addr)
 
 -- | Writes a byte to memory at the given address.
 writeByte :: MonadIO m => Word16 -> Word8 -> Memory -> m ()

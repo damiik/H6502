@@ -17,13 +17,14 @@ import System.IO (hFlush, stdout, stdin, hSetEcho)
 import Data.Maybe (fromMaybe)
 import Text.Printf (printf)
 
-import MOS6502Emulator.Debugger.Commands (handleBreak, handleMemTrace, handleFill, handleSetReg8, handleSetPC, handleDisassemble) -- Explicit imports
+import MOS6502Emulator.Debugger.Commands (handleCommandPure)
+import qualified MOS6502Emulator.Debugger.Core as Debugger.Core -- Import DebuggerCommand constructors
 import MOS6502Emulator.Debugger.Utils (getRegisters, parseHexByte) -- For VRegs and getRegisters
 import MOS6502Emulator.Debugger.Console (getInput, termHeight)
 import MOS6502Emulator.Debugger.VimMode.Core(Action(..), Motion(..), ViewMode(..), VimState (..), VimCommand(..))
 import qualified MOS6502Emulator.Debugger.VimMode.Core as VM
-import MOS6502Emulator.Core (FDX, fetchByteMem, writeByteMem) 
-import MOS6502Emulator.DissAssembler (disassembleInstruction, InstructionInfo(..), disassembleInstructions, opcodeMap, formatHex16)
+import MOS6502Emulator.Core (FDX, fetchByteMem, writeByteMem, Machine(..), fetchByteMemPure) -- Import fetchByteMemPure
+import MOS6502Emulator.DissAssembler ( InstructionInfo(..), opcodeMap, formatHex16, disassembleInstructionPure, disassembleInstructionsPure)
 import Control.Lens
 import MOS6502Emulator.Lenses
 import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rSP, _rSR, _rPC) -- Import for register setters
@@ -32,34 +33,31 @@ import MOS6502Emulator.Debugger.Actions (logRegisters) -- Import executeStepAndR
 
 executeVimCommand :: VimCommand -> FDX (DebuggerAction, [String])
 executeVimCommand cmd = do
-  case cmd of
-    VBreak addr -> handleBreak (maybe [] (\a -> [formatHex16 a]) addr) ""
-    VWatch (Just (startAddr, endAddr)) -> handleMemTrace [formatHex16 startAddr, formatHex16 endAddr] ""
-    VWatch Nothing -> handleMemTrace [] "" -- List trace blocks
-    VStep count -> return (ExecuteStep (show (fromMaybe 1 count)), [])
-    VRegs -> do
-      regs <- getRegisters
-      return (NoAction, logRegisters regs)
-    VDisas start end -> handleDisassemble (mapMaybe (fmap formatHex16) [start, end]) ""
-    VFill start end bytes -> handleFill (map formatHex16 [start, end] ++ map (printf "%02X") bytes) ""
-    VSetReg8 regChar val ->
-        let regLens = case regChar of
-                          'A' -> mRegs . rAC
-                          'X' -> mRegs . rX
-                          'Y' -> mRegs . rY
-                          'S' -> mRegs . rSP
-                          'P' -> mRegs . rSR
-                          _   -> error "Invalid register character" -- Should not happen with proper parsing
-        in handleSetReg8 regLens (printf "%02X" val) [regChar] ""
-    VSetPC addr -> handleSetPC (formatHex16 addr) ""
-    VQuit -> return (QuitEmulator, [])
-    VExit -> return (ExitDebugger, [])
-    VTrace -> do
-      enableTrace %= not
-      newTraceState <- use enableTrace
-      let output = ["Tracing " ++ if newTraceState then "enabled." else "disabled."]
-      return (NoAction, output)
-    VUnknown cmdStr -> return (NoAction, ["Unknown command: " ++ cmdStr])
+  machine <- get
+  let (newMachine, output, dbgAction) = case cmd of
+        VBreak addr -> handleCommandPure machine (Debugger.Core.Break addr)
+        VWatch (Just (startAddr, endAddr)) -> handleCommandPure machine (Debugger.Core.MemTrace (Just (startAddr, endAddr, Nothing)))
+        VWatch Nothing -> handleCommandPure machine (Debugger.Core.MemTrace Nothing)
+        VStep count -> handleCommandPure machine Debugger.Core.Step -- The count is handled by the interactive loop, not directly by handleCommandPure
+        VRegs -> handleCommandPure machine Debugger.Core.Regs
+        VDisas start end -> handleCommandPure machine (Debugger.Core.Disassemble (fmap (\_ -> fromMaybe (view lastDisassembledAddr machine) start) start)) -- Pass the start address if available
+        VFill start end bytes -> handleCommandPure machine (Debugger.Core.Fill start end bytes)
+        VSetReg8 regChar val ->
+            let regName = case regChar of
+                            'A' -> "Accumulator"
+                            'X' -> "X Register"
+                            'Y' -> "Y Register"
+                            'S' -> "Stack Pointer"
+                            'P' -> "Status Register"
+                            _   -> error "Invalid register character"
+            in handleCommandPure machine (Debugger.Core.SetReg8 regName val)
+        VSetPC addr -> handleCommandPure machine (Debugger.Core.SetPC addr)
+        VQuit -> handleCommandPure machine Debugger.Core.Quit
+        VExit -> handleCommandPure machine Debugger.Core.Exit
+        VTrace -> handleCommandPure machine Debugger.Core.Trace
+        VUnknown cmdStr -> handleCommandPure machine (Debugger.Core.Unknown cmdStr)
+  put newMachine
+  return (dbgAction, output)
 
 -- Update executeAction to handle ColonCommand
 executeAction :: Action -> Word16 -> VimState -> FDX (Word16, [String])
@@ -157,20 +155,22 @@ executeMotion motion currentPos vimState = do
   let maxAddr = 0xFFFF -- Maximum address for 6502
   case motion of
     NextInstruction n -> do
+      machine <- get
       foldM (\pos _ -> do
           if pos >= maxAddr then return pos
           else do
-            (_, instLen) <- disassembleInstruction pos
+            let (_, instLen) = disassembleInstructionPure pos machine
             return (pos + fromIntegral instLen)
         ) currentPos [1..n]  
     PrevInstruction n -> do
+      machine <- get
       -- Search backward to find instruction boundaries
       let searchBack pos count = if count <= 0 || pos == 0
             then return pos
             else do
               -- Try addresses slightly before to find a valid instruction start
               let candidates = [pos - fromIntegral i | i <- [1..3]] -- Instructions are 1-3 bytes
-              validPos <- findValidInstructionStart candidates
+              validPos <- findValidInstructionStart candidates machine
               case validPos of
                 Just prevPos -> searchBack prevPos (count - 1)
                 Nothing -> return pos -- No valid instruction found, stay put
@@ -186,22 +186,24 @@ executeMotion motion currentPos vimState = do
     WordBackward n -> executeMotion (PrevInstruction n) currentPos vimState
     
     EndOfPage -> do
+      machine <- get
       let linesPerPage = termHeight - 3 -- Reserve space for status and input
       case vsViewMode vimState of
         CodeView -> do
           -- Disassemble forward to find the address after linesPerPage instructions
-          (_, finalAddr) <- disassembleInstructions currentPos linesPerPage
+          let (_, finalAddr) = disassembleInstructionsPure currentPos linesPerPage machine
           return $ max 0 (finalAddr - 1)
         _ -> return $ min maxAddr (currentPos + fromIntegral (linesPerPage * 16)) -- 16 bytes per line in MemoryView
     
     TopOfPage -> return $ vsViewStart vimState
     
     MiddlePage -> do
+      machine <- get
       let linesPerPage = termHeight - 3
       let halfPage = linesPerPage `div` 2
       case vsViewMode vimState of
         CodeView -> do
-          (_, finalAddr) <- disassembleInstructions (vsViewStart vimState) halfPage
+          let (_, finalAddr) = disassembleInstructionsPure (vsViewStart vimState) halfPage machine
           return $ max 0 (finalAddr - 1)
         _ -> return $ min maxAddr (vsViewStart vimState + fromIntegral (halfPage * 16))
     
@@ -219,27 +221,28 @@ executeMotion motion currentPos vimState = do
     TextObject mod objType n -> do
         case vsViewMode vimState of
             CodeView -> do
+              machine <- get
               let currentPC = vsCursor vimState
               case objType of
                 VM.Word -> do
-                  precedingInsts <- disassembleInstructionsFromBeginning currentPC opcodeMap
+                  precedingInsts <- disassembleInstructionsFromBeginning currentPC opcodeMap machine
                   let startOfCurrentInst = case reverse precedingInsts of
                                              ((addr, _, _):_) -> addr
                                              _ -> currentPC
 
-                  (_, endAddr) <- disassembleInstructions startOfCurrentInst n
+                  let (_, endAddr) = disassembleInstructionsPure startOfCurrentInst n machine
                   return (endAddr - 1)
                 VM.Line -> do
-                  precedingInsts <- disassembleInstructionsFromBeginning currentPC opcodeMap
+                  precedingInsts <- disassembleInstructionsFromBeginning currentPC opcodeMap machine
                   let startOfCurrentInst = case reverse precedingInsts of
                                              ((addr, _, _):_) -> addr
                                              _ -> currentPC
 
-                  (_, endAddr) <- disassembleInstructions startOfCurrentInst n
+                  let (_, endAddr) = disassembleInstructionsPure startOfCurrentInst n machine
                   return (endAddr - 1)
 
                 VM.Bracket -> do
-                  (instStr, _) <- disassembleInstruction currentPC
+                  let (instStr, _) = disassembleInstructionPure currentPC machine
                   let openBracketIndex = findIndex (`elem` "([") instStr
                   let closeBracketIndex = findIndex (`elem` ")]") instStr
                   case (openBracketIndex, closeBracketIndex) of
@@ -249,7 +252,7 @@ executeMotion motion currentPos vimState = do
                       in return endByte
                     _ -> return currentPC
                 VM.Quote -> do
-                  (instStr, _) <- disassembleInstruction currentPC
+                  let (instStr, _) = disassembleInstructionPure currentPC machine
                   let openQuoteIndex = findIndex (=='"') instStr
                   let closeQuoteIndex = findIndex (=='"') (drop (fromMaybe 0 openQuoteIndex + 1) instStr)
                   case (openQuoteIndex, fmap (+ (fromMaybe 0 openQuoteIndex + 1)) closeQuoteIndex) of
@@ -268,13 +271,13 @@ executeMotion motion currentPos vimState = do
     _ -> return currentPos
 
 -- Helper to find instruction start (needed for Word/Line)
-disassembleInstructionsFromBeginning :: Word16 -> Map Word8 InstructionInfo -> FDX [(Word16, String, Int)]
-disassembleInstructionsFromBeginning startAddr opMap = go startAddr []
+disassembleInstructionsFromBeginning :: Word16 -> Map Word8 InstructionInfo -> Machine -> FDX [(Word16, String, Int)]
+disassembleInstructionsFromBeginning startAddr opMap machine = go startAddr []
   where
     go addr acc
       | addr > 0xFFFF = return $ reverse acc
       | otherwise = do
-          byte <- fetchByteMem addr
+          let byte = fetchByteMemPure addr machine
           case Map.lookup byte opMap of
             Just instInfo -> do
               let nextAddr = addr + fromIntegral (size instInfo)
@@ -283,13 +286,13 @@ disassembleInstructionsFromBeginning startAddr opMap = go startAddr []
 
 
 -- | Find the first valid instruction start among candidate addresses
-findValidInstructionStart :: [Word16] -> FDX (Maybe Word16)
-findValidInstructionStart [] = return Nothing
-findValidInstructionStart (addr:rest) = do
-  opcode <- fetchByteMem addr
+findValidInstructionStart :: [Word16] -> Machine -> FDX (Maybe Word16)
+findValidInstructionStart [] _ = return Nothing
+findValidInstructionStart (addr:rest) machine = do
+  let opcode = fetchByteMemPure addr machine
   case Map.lookup opcode (opcodeMap :: Map Word8 InstructionInfo) of -- Assume opcodeMap from DissAssembler.hs
     Just _ -> return (Just addr)
-    Nothing -> findValidInstructionStart rest
+    Nothing -> findValidInstructionStart rest machine
 
 -- | Find a byte in memory starting from position
 findByteInMemory :: Word16 -> Word8 -> Bool -> FDX Word16

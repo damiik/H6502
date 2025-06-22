@@ -51,7 +51,7 @@ import qualified MOS6502Emulator.Memory as Mem
 import MOS6502Emulator.Registers (_rPC) -- Import rPC
 import MOS6502Emulator.Core
 import MOS6502Emulator.Debugger.Core (DebuggerAction(..)) -- Import DebuggerAction
-import MOS6502Emulator.DissAssembler
+import MOS6502Emulator.DissAssembler (disassembleInstructionPure)
 
 
 -- runMachine :: FDX a -> Machine -> IO (a, Machine)
@@ -94,35 +94,34 @@ loadSymbolFile filePath = do
 
 
 -- | Sets the Program Counter register.
-setPC_ :: Word16 -> FDX ()
-setPC_ val = L.mRegs . L.rPC .= val
+setPC_ :: Word16 -> Machine -> Machine
+setPC_ val machine = machine & L.mRegs . L.rPC .~ val
 
 -- | Sets the Accumulator register.
-setAC_ :: Word8 -> FDX ()
-setAC_ val = L.mRegs . L.rAC .= val
+setAC_ :: Word8 -> Machine -> Machine
+setAC_ val machine = machine & L.mRegs . L.rAC .~ val
 
 -- | Sets the X register.
-setX_ :: Word8 -> FDX ()
-setX_ val = L.mRegs . L.rX .= val
+setX_ :: Word8 -> Machine -> Machine
+setX_ val machine = machine & L.mRegs . L.rX .~ val
 
 -- | Sets the Y register.
-setY_ :: Word8 -> FDX ()
-setY_ val = L.mRegs . L.rY .= val
+setY_ :: Word8 -> Machine -> Machine
+setY_ val machine = machine & L.mRegs . L.rY .~ val
 
 -- | Sets the Status Register.
-setSR_ :: Word8 -> FDX ()
-setSR_ val = L.mRegs . L.rSR .= val
+setSR_ :: Word8 -> Machine -> Machine
+setSR_ val machine = machine & L.mRegs . L.rSR .~ val
 
 
 -- | Sets the Stack Pointer register.
-setSP_ :: Word8 -> FDX () 
-setSP_ val = L.mRegs . L.rSP .= val
--- | Fetches a byte from memory at the specified address.
+setSP_ :: Word8 -> Machine -> Machine
+setSP_ val machine = machine & L.mRegs . L.rSP .~ val
 
 -- | Writes a byte to the provided address in memory.
 -- This is a direct state modification function, distinct from instruction-based writes.
-writeByteMem_ :: Word16 -> Word8 -> FDX ()
-writeByteMem_ addr b = L.mMem %= Mem.writeBytePure addr b
+writeByteMem_ :: Word16 -> Word8 -> Machine -> Machine
+writeByteMem_ addr b machine = machine & L.mMem %~ Mem.writeBytePure addr b
 
 -- | Performs a single fetch-decode-execute cycle of the 6502 emulator.
 -- Returns `True` if emulation should continue, `False` if halted.
@@ -138,12 +137,12 @@ fdxSingleCycle = do
     -- pc <- getRegisters >>= return . rPC  -- Get current PC
     let currentPC = pc -- Store PC before incrementing
     b <- fetchByteMem pc -- Fetch opcode byte at PC
-    setPC_ (pc + 1)   -- Move PC to next byte (like a real 6502)
+    _ <- modify' (setPC_ (pc + 1))   -- Move PC to next byte (like a real 6502)
     L.instructionCount %= (+ 1)
     execute b
     when (_enableTrace machineState) $ do
-      disassembled <- disassembleInstruction currentPC -- Use the stored PC
+      let (disassembled, _) = disassembleInstructionPure currentPC machineState -- Use the stored PC and pass machineState
       liftIO $ putStrLn ""
-      liftIO $ putStrLn (fst disassembled)
+      liftIO $ putStrLn disassembled
     L.lastDisassembledAddr .= currentPC -- Update last disassembled address using lens
     gets (not . _halted)

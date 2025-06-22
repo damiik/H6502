@@ -6,7 +6,7 @@ module MOS6502Emulator.Debugger
   , interactiveLoopHelper -- Exporting for CommandMode
   ) where
 import Numeric ( readHex)
-import Control.Monad.State (put, get, modify, runStateT)
+import Control.Monad.State (put, get, runStateT) -- Removed modify
 import Control.Monad.IO.Class (liftIO)
 import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Word (Word16)
@@ -16,12 +16,13 @@ import System.IO (hFlush, stdout,  stdin, hSetEcho, hSetBuffering, BufferMode(No
 import Control.Lens
 import MOS6502Emulator.Lenses as L
 
-import MOS6502Emulator.Core
+import MOS6502Emulator.Core (FDX, Machine(..), unFDX) -- Explicitly import what's needed from Core
 import MOS6502Emulator.Machine
-import MOS6502Emulator.Debugger.Core ( DebuggerConsoleState(..), DebuggerAction(..)) -- Import from Debugger.Core
-import MOS6502Emulator.Debugger.Commands
-import MOS6502Emulator.Debugger.Utils() -- Removed logRegisters
-import MOS6502Emulator.Display (renderScreen, putOutput, getKey, termHeight) -- Import from Display
+import MOS6502Emulator.Debugger.Core ( DebuggerConsoleState(..), DebuggerAction(..), DebuggerCommand(..), parseCount, DebuggerMode(..)) -- Consolidated imports and added DebuggerMode
+import MOS6502Emulator.Debugger.Commands (handleCommandPure)
+import MOS6502Emulator.Debugger.Utils (parseDebuggerCommand, parseHexWord) -- Import parseDebuggerCommand and parseHexWord
+import MOS6502Emulator.Display (renderScreen, putOutput, getKey, termHeight) -- Corrected typo
+import MOS6502Emulator.Debugger.VimMode.Core (vimModeHelp) -- Re-added as it is used in handleHelpPure in Commands.hs
 -- | Helper to read a command line, optionally leaving the newline in the buffer.
 -- This function now accepts an `initialInput` string, which is useful when a key
 -- has already been consumed (e.g., by `getKey` for help scrolling) but needs
@@ -104,21 +105,16 @@ interactiveLoopHelperInternal = do
           let initialInput = [key]
           -- Now proceed with command input, passing the initial input
           (commandToExecute, consumeNewline) <- readCommandWithInitialInput initialInput
-          (action, output) <- handleCommand commandToExecute
-          machineAfterCommand <- get
-          let updatedConsoleState = (_mConsoleState machineAfterCommand) { _outputLines = _outputLines (_mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, _inputBuffer = "", _cursorPosition = 0, _lastCommand = commandToExecute }
-          let updatedMachine = machineAfterCommand { _mConsoleState = updatedConsoleState }
-          put updatedMachine
+          let parsedCommand = parseDebuggerCommand commandToExecute
+          let (newMachineState, output, action) = handleCommandPure machine parsedCommand
+          put newMachineState
+          let updatedConsoleState = (view L.mConsoleState newMachineState) { _outputLines = (view L.outputLines (view L.mConsoleState newMachineState)) ++ ["> " ++ commandToExecute] ++ output, _inputBuffer = "", _cursorPosition = 0, _lastCommand = commandToExecute }
+          L.mConsoleState .= updatedConsoleState
+          renderScreen newMachineState (_outputLines updatedConsoleState) -- Always render after state update
           case action of
-            ContinueLoop _ -> do
-              renderScreen updatedMachine (_outputLines updatedConsoleState)
-              interactiveLoopHelperInternal
-            NoAction -> do
-              renderScreen updatedMachine (_outputLines updatedConsoleState)
-              interactiveLoopHelperInternal
-            ExecuteStep _  -> do
-              renderScreen updatedMachine (_outputLines updatedConsoleState) -- Render the output from handleCommand immediately
-              return action -- Let the main runLoop handle the execution and rendering
+            ContinueLoop _ -> interactiveLoopHelperInternal
+            NoAction -> interactiveLoopHelperInternal
+            ExecuteStep _  -> return action -- Let the main runLoop handle the execution and rendering
             ExitDebugger   -> do
               L.debuggerActive .= False
               return action
@@ -131,25 +127,23 @@ interactiveLoopHelperInternal = do
             SwitchToCommandMode -> do
               L.debuggerMode .= CommandMode
               interactiveLoopHelperInternal
+            SwitchToVimCommandMode -> do -- Handle the new case
+              L.debuggerMode .= VimCommandMode
+              interactiveLoopHelperInternal
       else do
         -- No help being displayed, proceed with normal command input.
         -- In this case, there's no pre-consumed key, so we pass an empty initial input.
         (commandToExecute, consumeNewline) <- readCommandWithInitialInput ""
-        (action, output) <- handleCommand commandToExecute
-        machineAfterCommand <- get
-        let updatedConsoleState = (_mConsoleState machineAfterCommand) { _outputLines = _outputLines (_mConsoleState machineAfterCommand) ++ ["> " ++ commandToExecute] ++ output, _inputBuffer = "", _cursorPosition = 0, _lastCommand = commandToExecute }
-        let updatedMachine = machineAfterCommand { _mConsoleState = updatedConsoleState }
-        put updatedMachine
+        let parsedCommand = parseDebuggerCommand commandToExecute
+        let (newMachineState, output, action) = handleCommandPure machine parsedCommand
+        put newMachineState
+        let updatedConsoleState = (view L.mConsoleState newMachineState) { _outputLines = (view L.outputLines (view L.mConsoleState newMachineState)) ++ ["> " ++ commandToExecute] ++ output, _inputBuffer = "", _cursorPosition = 0, _lastCommand = commandToExecute }
+        L.mConsoleState .= updatedConsoleState
+        renderScreen newMachineState (_outputLines updatedConsoleState) -- Always render after state update
         case action of
-          ContinueLoop _ -> do
-            renderScreen updatedMachine (_outputLines updatedConsoleState)
-            interactiveLoopHelperInternal
-          NoAction -> do
-            renderScreen updatedMachine (_outputLines updatedConsoleState)
-            interactiveLoopHelperInternal
-          ExecuteStep _  -> do
-            renderScreen updatedMachine (_outputLines updatedConsoleState) -- Render the output from handleCommand immediately
-            return action -- Let the main runLoop handle the execution and rendering
+          ContinueLoop _ -> interactiveLoopHelperInternal
+          NoAction -> interactiveLoopHelperInternal
+          ExecuteStep _  -> return action -- Let the main runLoop handle the execution and rendering
           ExitDebugger   -> do
             L.debuggerActive .= False
             return action
@@ -160,6 +154,9 @@ interactiveLoopHelperInternal = do
             L.debuggerMode .= VimMode
             return action
           SwitchToCommandMode -> interactiveLoopHelperInternal
+          SwitchToVimCommandMode -> do -- Handle the new case
+            L.debuggerMode .= VimCommandMode
+            interactiveLoopHelperInternal
 
 -- | Saves the current debugger state (breakpoints and memory trace blocks) to a file.
 saveDebuggerState :: Machine -> FDX () -- Changed to FDX
@@ -209,7 +206,7 @@ loadDebuggerState filePath = do
     parseBlock :: [String] -> [(Word16, Word16, Maybe String)]
     parseBlock [] = []
     parseBlock (startStr:endStr:rest) =
-        case (parseHexWord startStr, parseHexWord endStr) of
+        case (MOS6502Emulator.Debugger.Utils.parseHexWord startStr, MOS6502Emulator.Debugger.Utils.parseHexWord endStr) of
             (Just startAddr, Just endAddr) ->
                 let name = if null rest then Nothing else Just (unwords rest)
                 in [(startAddr, endAddr, name)]

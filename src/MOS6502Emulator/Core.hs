@@ -4,7 +4,7 @@
 {-# LANGUAGE DeriveTraversable#-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module MOS6502Emulator.Core (Machine (..), FDX (..), getRegisters, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, mkWord, toWord, parseHexByte, parseHexWord, DebuggerMode (..), AddressMode (..)) where
+module MOS6502Emulator.Core (Machine (..), FDX (..), getRegisters, setRegisters, getMemory, setMemory, fetchByteMem, fetchWordMem, writeByteMem, fetchByteMemPure, fetchWordMemPure, writeByteMemPure, mkWord, toWord, parseHexByte, parseHexWord, DebuggerMode (..), AddressMode (..)) where
 
 import Control.Monad.Trans.State (StateT)
 import Control.Monad.State(MonadState, get, put)
@@ -18,6 +18,7 @@ import qualified MOS6502Emulator.Memory as Mem
 import MOS6502Emulator.Debugger.VimMode.Core (VimState) -- Import VimState type
 import MOS6502Emulator.Debugger.Core (DebuggerConsoleState, initialConsoleState, DebuggerMode(..), DebuggerAction(..)) -- Import from new Types module
 import Numeric (readHex)
+import Control.Lens (view)
 
 -- | Represents the addressing modes of the 6502.
 data AddressMode =
@@ -123,6 +124,24 @@ writeByteMem :: Word16 -> Word8 -> FDX ()
 writeByteMem addr b = do
   mem <- getMemory
   Mem.writeByte addr b mem
+
+-- | Fetches a byte from the provided address in memory (pure version).
+fetchByteMemPure :: Word16 -> Machine -> Word8
+fetchByteMemPure addr machine = Mem.fetchBytePure addr (_mMem machine)
+
+-- | Fetches a word (16 bits) located at an address
+-- stored in the zero page (pure version).
+fetchWordMemPure :: Word8 -> Machine -> Word16
+fetchWordMemPure addr machine =
+  let mem = _mMem machine
+      lo  = Mem.fetchBytePure (toWord addr) mem
+      hi  = Mem.fetchBytePure (toWord (addr+1)) mem
+  in mkWord lo hi
+
+-- | Writes a byte to the provided address in memory (pure version).
+writeByteMemPure :: Word16 -> Word8 -> Machine -> Machine
+writeByteMemPure addr b machine =
+  machine { _mMem = Mem.writeBytePure addr b (_mMem machine) }
 
 
 -- | Gets the current memory state.
