@@ -25,6 +25,7 @@ import Assembly.Core
 import Assembly.EDSLInstr
 import Assembly(Asm)
 import Assembly.Macros
+import C64
 
 -- | The BASIC loader sequence for C64.
 startSequence = [0x0c, 0x08, 0xb5, 0x07, 0x9e, 0x20, 0x32, 0x30, 0x36, 0x32, 0x00, 0x00, 0x00]
@@ -32,32 +33,33 @@ startSequence = [0x0c, 0x08, 0xb5, 0x07, 0x9e, 0x20, 0x32, 0x30, 0x36, 0x32, 0x0
 -- | Generates the "Hello, World!" program.
 helloWorld :: Asm ()
 helloWorld = do
-    org 0x0801 -- Set the starting address
-    db startSequence-- Initialization bytes
+    org 0x0801                     -- Set the starting address
+    db startSequence               -- Initialization bytes
 
-    lda# _BLACK  -- Clear the screen
-    sta $ AddrLit16 0xD020       -- Set background color
-    sta $ AddrLit16 0xD021       -- Set border color
+    lda# _BLACK                    -- Clear the screen
+    sta $ vicBorderColor           -- Set border color
+    sta $ vicBackgroundColor       -- Set background color
 
-    ldx# 0x00   -- Counter/index
-    lda $ X "text" -- Load the first character from the text
+    ldx# 0x00                      -- Counter/index
+    lda $ X "text"                 -- Load the first character from the text (set zero flag)
     while_ IsNonZero $ do
-        sta $ X (AddrLit16 0x0400) -- Write character to the screen (position 1024)
-        inx
-        lda $ X "text"
-    rts         -- Return to BASIC
+        sta $ X screenRam          -- Write character to the screen (position= 1024 + X index)
+        inx                        -- Increment X index
+        lda $ X "text"             -- Load next character (set zero flag)
 
-    l_ "text"
+    rts                            -- Return to BASIC
+
+    l_ "text"                      -- Define a label for the text
     stringC64 "HELLO WORLD FROM DARYO_PL"; db [0x00]  -- Text to display with null terminator
 
 
 ```
 
-# while_ macro example
+# *while_* macro example
 
-The `while_` macro used in example above creates a loop that continues until the condition is false. In this case, it checks if the accumulator is non-zero (`IsNonZero`), which allows the program to print characters until it reaches the null terminator, you can use also `doWhile_` macro, `if_` macro or your own defined macros with different predefined conditions.
+In example above the `while_` macro creates a loop that continues until the condition is false. In this case, it checks if the accumulator is non-zero (with predefined condition `IsNonZero`), which allows the program to print characters until it reaches the *null* terminator, you can use also other predefined macros like `doWhile_`, `if_` etc., or you can also define your own program control macros like that.
 
-`while_` example is one of powerful constructs that allows you to write loops in a more readable way, similar to high-level languages just using haskell *do block* syntax. It abstracts away the low-level details of setting up loop branch labels, making your assembly code cleaner and easier to understand. 
+`while_` example is one of powerful constructs that allows you to write loops in a more readable way, similar to high-level languages, just using haskell *do block* syntax. It abstracts away the low-level details of setting up loop branch labels, making your assembly code cleaner and easier to understand. 
 
 Definition of `while_` macro is as follows:
 
