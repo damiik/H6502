@@ -31,6 +31,7 @@ import MOS6502Emulator.Registers (_rAC, _rX, _rY, _rSP, _rSR, _rPC) -- Import fo
 import MOS6502Emulator.Machine
 import MOS6502Emulator.Debugger.Actions (logRegisters) -- Import executeStepAndRender and logging functions
 
+-- Force recompilation by adding a comment.
 executeVimCommand :: VimCommand -> FDX (DebuggerAction, [String])
 executeVimCommand cmd = do
   machine <- get

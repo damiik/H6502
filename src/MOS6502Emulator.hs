@@ -10,13 +10,15 @@ module MOS6502Emulator
   -- , instructionCount -- Export instructionCount
   ) where
 
-import Control.Monad.State (get, modify, put, runStateT) -- Import runStateT
-import Control.Monad (when, unless) -- Import the 'when', 'unless', and 'void' functions
+import Control.Monad.State (get, modify, put, runStateT)
+import Control.Monad (when, unless)
 import Control.Monad.IO.Class (liftIO)
-import Numeric (showHex) -- Removed readHex as it's not used here
-import System.IO (hSetEcho, hSetBuffering, BufferMode(NoBuffering), stdin, hReady) -- Import hReady and getChar
+import Numeric (showHex)
+import System.IO (hSetEcho, hSetBuffering, BufferMode(NoBuffering), stdin, hReady)
 import Data.Word ( Word8, Word16 )
-import qualified Data.Map.Strict as Map -- For Map.empty
+import qualified Data.Map.Strict as Map
+import Control.Lens
+import MOS6502Emulator.Lenses as L
 
 import MOS6502Emulator.Machine (loadSymbolFile, fdxSingleCycle)
 import MOS6502Emulator.Core (Machine(..), FDX(..), _instructionCount, _cycleCount, DebuggerMode(..))
@@ -24,12 +26,12 @@ import MOS6502Emulator.Memory
 import MOS6502Emulator.Registers
 import qualified MOS6502Emulator.Debugger as D
 import MOS6502Emulator.Debugger (saveDebuggerState, loadDebuggerState, DebuggerAction(..))
-import MOS6502Emulator.Debugger.Actions (executeStepAndRender) -- Import logMemoryRange from Actions
-import MOS6502Emulator.Debugger.Console (initialConsoleState) -- Only import initialConsoleState
-import MOS6502Emulator.Display (renderScreen) -- Import renderScreen from Display
+import MOS6502Emulator.Debugger.Actions (executeStepAndRender)
+import MOS6502Emulator.Debugger.Console (initialConsoleState)
+import MOS6502Emulator.Display (renderScreen)
 import MOS6502Emulator.Debugger.VimMode.Core (initialVimState, VimState(..))
 import qualified MOS6502Emulator.Debugger.VimMode.Enhanced as V
-import qualified System.Console.ANSI as ANSI -- Import for clearScreen and setCursorPosition
+import qualified System.Console.ANSI as ANSI
 
 -- | Initializes a new 6502 machine state
 -- | Initializes a new 6502 machine state
@@ -72,26 +74,23 @@ runLoop = do
 
           -- Handle the action returned by the debugger loop
           case action of
-            ContinueLoop _ -> runLoop -- Stay in the debugger loop
-            ExecuteStep _  -> do
+            ExecuteStepAction -> do
               executeStepAndRender -- Use the new unified function
               runLoop -- Continue the main runLoop (which will re-evaluate _debuggerActive)
-            ExitDebugger   -> do
+            ExitDebuggerAction -> do
               modify (\m -> m { _debuggerActive = False }) -- Exit debugger mode
               runLoop -- Continue the main runLoop
-            QuitEmulator   -> modify (\m -> m { _halted = True }) -- Halt the emulator
-            SwitchToCommandMode -> do
+            QuitEmulatorAction -> modify (\m -> m { _halted = True }) -- Halt the emulator
+            SetDebuggerModeAction _ -> do
               -- The mode is already updated in updatedMachineState, just continue loop
               runLoop
-            SwitchToVimMode -> do
-              -- The mode is already updated in updatedMachineState, just continue loop
-              machineAfterModeChange <- get -- Get the machine state after mode change
-              _ <- renderScreen machineAfterModeChange []-- Render the screen immediately
-              runLoop -- Continue the main runLoop
-            SwitchToVimCommandMode -> do
-              -- The mode is already updated in updatedMachineState, just continue loop
+            RenderScreenAction -> do
+              renderScreen updatedMachineState (view L.outputLines (view L.mConsoleState updatedMachineState))
               runLoop
-            NoAction       -> runLoop -- Simply continue the main runLoop
+            UpdateConsoleOutputAction _ _ -> do
+              -- Console output is already updated in updatedMachineState, just continue loop
+              runLoop
+            NoDebuggerAction -> runLoop -- Simply continue the main runLoop
         else do -- if not _debuggerActive machine
           machineBeforeStep <- get
           let currentPC = _rPC (_mRegs machineBeforeStep)

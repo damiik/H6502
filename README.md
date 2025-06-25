@@ -3,16 +3,16 @@ MOS6502 assembly encoded in Haskell EDSL for compile C64 programs in format of .
 
 
 # Usage (Ubuntu Linux):
-To use this library, you need to have GHC installed and set up. You can then create a Haskell file and import the necessary modules from the `Assembly` package.
-You can use the *brk* instruction to stop.
+To use this project, you need to have *GHC* and *stack* installed and set up. You can then create a Haskell file with C64 assembly in /C64 directory, set this file for assembling in *app/main.hs* file (now `C64/HorizontalBars.hs` is used as an example), then compile & run project using the following commands:
 
-* To compile & run the program in *VICE* emulator, just run the following commands in your terminal from your project directory (with extra `c64` directory for the result):
+
+* To compile & run the program in *VICE* emulator, just run the following commands in your terminal from your project directory (with  `./c64` directory for the result):
 
 ```bash
 stack run -- --output ./c64/result.prg && cd c64 && /usr/bin/x64sc result.prg && cd ..
 ```
 
-* To compile & debug the program in embeded emulator, you can use the following command:
+* To compile & debug the program in embeded emulator/debugger, you can use the following command:
 ```bash
 stack run -- --debug-address 4096 -s result.lab
 ```

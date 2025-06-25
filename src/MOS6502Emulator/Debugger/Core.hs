@@ -1,5 +1,7 @@
 module MOS6502Emulator.Debugger.Core
   ( DebuggerMode(..)
+  , DebuggerState(..)
+  , DebuggerInput(..)
   , DebuggerAction(..)
   , DebuggerCommand(..)
   , DebuggerConsoleState(..)
@@ -14,8 +16,30 @@ import Numeric (showHex)
 -- | Data type to represent the debugger mode
 data DebuggerMode = CommandMode | VimMode | VimCommandMode deriving (Show, Eq)
 
--- | Data type to represent actions the debugger can take.
-data DebuggerAction = ContinueLoop String | ExecuteStep String | ExitDebugger | QuitEmulator | NoAction | SwitchToVimMode | SwitchToCommandMode | SwitchToVimCommandMode deriving (Show, Eq)
+-- | Data type to represent the overall state of the debugger's control flow.
+data DebuggerState
+  = DebuggerWaitingForInput DebuggerMode -- Waiting for user command in a specific mode
+  | DebuggerDisplayingHelp DebuggerMode Int -- Displaying help, with current mode and scroll position
+  | DebuggerExitingLoop -- The debugger is exiting its interactive loop
+  | DebuggerQuittingEmulator -- The emulator is quitting entirely
+  deriving (Show, Eq)
+
+-- | Data type to represent user input or internal events for the debugger state machine.
+data DebuggerInput
+  = CommandInput String -- A full command string entered by the user
+  | KeyInput Char       -- A single key press (e.g., for help scrolling)
+  deriving (Show, Eq)
+
+-- | Data type to represent actions the debugger can take (side effects).
+data DebuggerAction
+  = ExecuteStepAction -- Signal to execute one CPU step
+  | ExitDebuggerAction -- Signal to exit the debugger loop
+  | QuitEmulatorAction -- Signal to quit the entire emulator
+  | RenderScreenAction -- Signal to re-render the screen
+  | UpdateConsoleOutputAction String [String] -- Signal to update console output with command and its result
+  | SetDebuggerModeAction DebuggerMode -- Signal to change the debugger mode
+  | NoDebuggerAction -- No specific action to perform
+  deriving (Show, Eq)
 
 -- | Algebraic Data Type for debugger commands
 data DebuggerCommand
@@ -64,5 +88,3 @@ parseCount :: String -> Maybe Int
 parseCount s = if all isDigit s && not (null s) 
                then Just (read s) 
                else Nothing
-
-

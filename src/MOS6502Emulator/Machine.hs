@@ -7,7 +7,7 @@
 -- | Defines the core types and state for the MOS 6502 emulator machine.
 module MOS6502Emulator.Machine
 ( Machine(..) -- Export Machine type and its constructors/fields
-, DebuggerAction(ContinueLoop, ExecuteStep, ExitDebugger, QuitEmulator, NoAction, SwitchToVimMode, SwitchToCommandMode) -- Export DebuggerAction constructors
+, DebuggerAction(ExecuteStepAction, ExitDebuggerAction, QuitEmulatorAction, RenderScreenAction, UpdateConsoleOutputAction, SetDebuggerModeAction, NoDebuggerAction) -- Export DebuggerAction constructors
 ,rPC -- Export rPC field from Registers (needed in VimMode via Machine)
 ,mRegs -- Export mRegs field from Machine
 ,pcHistory -- Export pcHistory field from Machine

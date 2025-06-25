@@ -7,26 +7,24 @@ module MOS6502Emulator.Debugger.VimMode.Enhanced (
 import Data.Word
 import qualified Data.Map as Map
 import Numeric (showHex)
-import System.IO (hFlush, stdout, stdin, hSetEcho, hReady, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
-import Data.List (stripPrefix) -- Added for stripPrefix
-import Control.Lens -- Import Control.Lens
-import MOS6502Emulator.Lenses -- Import our custom lenses
+import System.IO (hFlush, stdout, stdin, hSetEcho, hSetBuffering, BufferMode(NoBuffering, LineBuffering))
+import Control.Lens
+import MOS6502Emulator.Lenses
 
-import Control.Monad.State (get, put, MonadIO (liftIO), modify) -- Added modify
+import Control.Monad.State (get, put, MonadIO (liftIO))
 import Control.Monad.Trans.State (runStateT)
-import Control.Exception (finally) -- Import finally
-import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, unFDX, _mConsoleState) -- Removed getRegisters, parseHexWord
+import Control.Exception (finally)
+import MOS6502Emulator.Core (Machine(..), FDX, fetchByteMem, unFDX, _mConsoleState)
 import MOS6502Emulator.Registers (Registers(..), _rPC) 
 import MOS6502Emulator.Debugger.VimMode.Core
-import MOS6502Emulator.Debugger.VimMode.HandleKey (handleVimNormalModeKey) -- Changed import
-import MOS6502Emulator.Display(getKey, getInput, termHeight, termWidth, putOutput, putString, printTwoColumns, renderScreen) -- Updated import
-import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), DebuggerCommand(..)) -- New import, ensuring DebuggerAction and DebuggerCommand are here
-import MOS6502Emulator.DissAssembler(disassembleInstructionsPure, formatHex16, formatHex8, unwords)
+import MOS6502Emulator.Debugger.VimMode.HandleKey (handleVimNormalModeKey)
+import MOS6502Emulator.Display(getKey, getInput, termHeight, termWidth, putString, renderScreen)
+import MOS6502Emulator.Debugger.Core (DebuggerAction(..), DebuggerConsoleState(..), DebuggerMode(..), DebuggerCommand(..))
+import MOS6502Emulator.DissAssembler(formatHex16, formatHex8)
 import MOS6502Emulator.Debugger.Commands (handleCommandPure)
-import MOS6502Emulator.Debugger.Actions (executeStepAndRender, logRegisters) -- logMemoryRange is now handled by handleCommandPure
-import MOS6502Emulator.Debugger.Utils (parseHexWord, parseHexByte, getRegisters, parseDebuggerCommand) -- Import parseDebuggerCommand
+import MOS6502Emulator.Debugger.Actions (logRegisters)
+import MOS6502Emulator.Debugger.Utils (parseHexWord, getRegisters, parseDebuggerCommand)
 import qualified System.Console.ANSI as ANSI
-import Control.Monad (void, unless) -- Added void and unless
 
 
 -- | Handle breakpoint commands (similar to handleBreakVim from VimMode.hs)
@@ -56,7 +54,7 @@ handleBreakVim vimState = do
       let (newMachine, output, action) = handleCommandPure machine (Break maybeAddr)
       put newMachine
       return (action, ["Breakpoints (a: add, d: delete): " ++ [key], "Delete Breakpoint (address): " ++ input] ++ output, vimState { vsMessage = last output })
-    _ -> return (NoAction, ["Invalid Breakpoint command"], vimState { vsMessage = "Invalid Breakpoint command" })
+    _ -> return (NoDebuggerAction, ["Invalid Breakpoint command"], vimState { vsMessage = "Invalid Breakpoint command" })
 
 -- | Handle memory trace commands
 handleMemTraceVim :: VimState -> FDX (DebuggerAction, [String], VimState)
@@ -99,7 +97,7 @@ handleMemTraceVim vimState = do
       let (newMachine, output, action) = handleCommandPure machine (MemTrace maybeTraceInfo)
       put newMachine
       return (action, ["Memory Trace (a: add, d: delete): " ++ [key], "Delete Memory Trace Block (start end [name]): " ++ input] ++ output, vimState { vsMessage = last output })
-    _ -> return (NoAction, ["Invalid Memory Trace command"], vimState { vsMessage = "Invalid Memory Trace command" })
+    _ -> return (NoDebuggerAction, ["Invalid Memory Trace command"], vimState { vsMessage = "Invalid Memory Trace command" })
 
 -- | Handle stored address commands
 handleAddressVim :: VimState -> FDX (DebuggerAction, [String], VimState)
@@ -113,7 +111,7 @@ handleAddressVim vimState = do
       keyChar <- liftIO getKey
       currentPC <- use (mRegs . rPC) -- Use lens to get PC
       storedAddresses %= Map.insert keyChar currentPC -- Use lens to update storedAddresses
-      return (NoAction, ["Stored Addresses (s: store, g: goto): " ++ [key], "Stored PC $" ++ showHex currentPC "" ++ " at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "Stored PC at '" ++ [keyChar] ++ "'" })
+      return (NoDebuggerAction, ["Stored Addresses (s: store, g: goto): " ++ [key], "Stored PC $" ++ showHex currentPC "" ++ " at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "Stored PC at '" ++ [keyChar] ++ "'" })
     'g' -> do
       putString "Goto Stored Address (key):" -- Changed to putString
       keyChar <- liftIO getKey
@@ -124,8 +122,8 @@ handleAddressVim vimState = do
           let (newMachine, output, action) = handleCommandPure machine (Goto addr)
           put newMachine
           return (action, ["Stored Addresses (s: store, g: goto): " ++ [key], "PC set to $" ++ showHex addr ""] ++ output, vimState { vsCursor = addr, vsViewStart = addr, vsMessage = "Moved to $" ++ showHex addr "" })
-        Nothing -> return (NoAction, ["No address stored at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "No address stored at '" ++ [keyChar] ++ "'" })
-    _ -> return (NoAction, ["Invalid Stored Address command"], vimState { vsMessage = "Invalid Stored Address command" })
+        Nothing -> return (NoDebuggerAction, ["No address stored at key '" ++ [keyChar] ++ "'"], vimState { vsMessage = "No address stored at '" ++ [keyChar] ++ "'" })
+    _ -> return (NoDebuggerAction, ["Invalid Stored Address command"], vimState { vsMessage = "Invalid Stored Address command" })
 
 -- | Main dispatcher for Vim key presses.
 handleVimKey :: Char -> Machine -> VimState -> FDX (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode)
@@ -161,11 +159,11 @@ handleVimCommandModeKey key machine vimState = do
                                   _helpScrollPos = 0,
                                   _vimCommandInputBuffer = "", _inputBuffer = "" }
           let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
-          return (NoAction, [], newVimState, newConsoleState, VimMode)
+          return (NoDebuggerAction, [], newVimState, newConsoleState, VimMode)
         else do
           -- Scroll to next page of help
           let newConsoleState = currentConsoleState { _helpScrollPos = newScrollPos, _vimCommandInputBuffer = "", _inputBuffer = "" }
-          return (NoAction, [], vimState, newConsoleState, currentDebuggerMode)
+          return (NoDebuggerAction, [], vimState, newConsoleState, currentDebuggerMode)
       else do
         -- No help being displayed, execute command
         liftIO $ hSetEcho stdin False -- Disable echo after command execution
@@ -188,12 +186,17 @@ handleVimCommandModeKey key machine vimState = do
         then do
           let newCommandBuffer = init currentCommandBuffer
           let newConsoleState = currentConsoleState { _vimCommandInputBuffer = newCommandBuffer }
-          return (NoAction, [], vimState { vsCommandBuffer = newCommandBuffer }, newConsoleState, currentDebuggerMode)
+          return (NoDebuggerAction, [], vimState { vsCommandBuffer = newCommandBuffer }, newConsoleState, currentDebuggerMode)
         else do -- Only ':' is left, exit command mode
           let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
           let newConsoleState = currentConsoleState { _vimCommandInputBuffer = "", _inputBuffer = "" }
           let newDebuggerMode = VimMode -- Exit command mode, go back to VimMode
-          return (NoAction, [], newVimState, newConsoleState, newDebuggerMode)
+          return (NoDebuggerAction, [], newVimState, newConsoleState, newDebuggerMode)
+    '\x1b' -> do -- Escape key
+      let newVimState = vimState { vsInCommandMode = False, vsCommandBuffer = "" }
+      let newConsoleState = currentConsoleState { _vimCommandInputBuffer = "", _inputBuffer = "" }
+      let newDebuggerMode = VimMode -- Exit command mode, go back to VimMode
+      return (NoDebuggerAction, [], newVimState, newConsoleState, newDebuggerMode)
     _ -> do -- Any other character
       let newCommandBuffer = currentCommandBuffer ++ [key]
       let newConsoleState = currentConsoleState { _vimCommandInputBuffer = newCommandBuffer }
@@ -201,7 +204,7 @@ handleVimCommandModeKey key machine vimState = do
       -- but we are not modifying the machine state here, only returning new console state.
       -- So, we pass the current machine state to updateVimCommandLine.
       updateVimCommandLine machine newCommandBuffer
-      return (NoAction, [], vimState { vsCommandBuffer = newCommandBuffer }, newConsoleState, currentDebuggerMode)
+      return (NoDebuggerAction, [], vimState { vsCommandBuffer = newCommandBuffer }, newConsoleState, currentDebuggerMode)
 
 interactiveLoopHelper :: FDX (DebuggerAction, Machine) -- Changed signature to return Machine
 interactiveLoopHelper = do
@@ -218,7 +221,7 @@ interactiveLoopHelperInternal :: FDX DebuggerAction
 interactiveLoopHelperInternal = do
   haltedState <- use halted
   if haltedState
-    then return QuitEmulator
+    then return QuitEmulatorAction
     else do
       currentVimState <- use vimState
       key <- liftIO getKey
@@ -248,27 +251,26 @@ interactiveLoopHelperInternal = do
         else renderVimScreen updatedMachine newVimState
 
       case action of
-        ContinueLoop _ -> interactiveLoopHelperInternal
-        ExecuteStep _ -> do
+        ExecuteStepAction -> do
           -- Let the main runLoop handle the execution and rendering.
           -- Update vimState cursor for the next render.
-          -- machineAfterExecution <- get -- No longer needed, state is updated by lenses
           return action
-        ExitDebugger -> return action
-        QuitEmulator -> return action
-        NoAction -> interactiveLoopHelperInternal
-        SwitchToCommandMode -> do
+        ExitDebuggerAction -> return action
+        QuitEmulatorAction -> return action
+        NoDebuggerAction -> interactiveLoopHelperInternal
+        SetDebuggerModeAction CommandMode -> do
           debuggerMode .= CommandMode -- Update the debuggerMode immediately to CommandMode
           updatedMachine <- get -- Get the updated machine state for rendering
           renderVimScreen updatedMachine newVimState
           return action
-        SwitchToVimMode -> do
+        SetDebuggerModeAction VimMode -> do
           return action
-        SwitchToVimCommandMode -> do
+        SetDebuggerModeAction VimCommandMode -> do
           debuggerMode .= VimCommandMode -- Update the debuggerMode immediately
           updatedMachine <- get -- Get the updated machine state for rendering
           renderVimScreen updatedMachine newVimState
           interactiveLoopHelperInternal
+        _ -> interactiveLoopHelperInternal -- Catch-all for other actions that don't change the loop flow
 
 
 -- | Render screen with vim-specific cursor and status

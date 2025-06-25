@@ -26,9 +26,9 @@ handleVisualKey key vimState = do
     
     case key of
         -- Switch visual types
-        'v' -> return (NoAction, [], vimState { vsVisualType = CharVisual }, currentConsoleState, currentDebuggerMode)
-        'V' -> return (NoAction, [], vimState { vsVisualType = LineVisual }, currentConsoleState, currentDebuggerMode)
-        '\x1b' -> return (NoAction, [], vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)  -- Exit visual mode
+        'v' -> return (NoDebuggerAction, [], vimState { vsVisualType = CharVisual }, currentConsoleState, currentDebuggerMode)
+        'V' -> return (NoDebuggerAction, [], vimState { vsVisualType = LineVisual }, currentConsoleState, currentDebuggerMode)
+        '\x1b' -> return (NoDebuggerAction, [], vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)  -- Exit visual mode
         
         -- Operations
         'y' -> do
@@ -37,7 +37,7 @@ handleVisualKey key vimState = do
                         _ -> [minAddr..maxAddr]
             content <- mapM fetchByteMem bytes
             let newYank = Map.insert (vsRegister vimState) content (vsYankBuffer vimState)
-            return (NoAction, ["Yanked " ++ show (length content) ++ " bytes"],
+            return (NoDebuggerAction, ["Yanked " ++ show (length content) ++ " bytes"],
                     vimState { vsYankBuffer = newYank, vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)
                     
         'd' -> do
@@ -45,7 +45,7 @@ handleVisualKey key vimState = do
                         LineVisual -> [minAddr..maxAddr]
                         _ -> [minAddr..maxAddr]
             mapM_ (`writeByteMem` 0) bytes  -- Delete by writing 0s
-            return (NoAction, ["Deleted " ++ show (length bytes) ++ " bytes"],
+            return (NoDebuggerAction, ["Deleted " ++ show (length bytes) ++ " bytes"],
                     vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)
                     
         'c' -> do
@@ -59,23 +59,23 @@ handleVisualKey key vimState = do
                                 LineVisual -> [minAddr..maxAddr]
                                 _ -> [minAddr..maxAddr]
                     mapM_ (`writeByteMem` byte) bytes
-                    return (NoAction, ["Changed " ++ show (length bytes) ++ " bytes to " ++ hexStr],
+                    return (NoDebuggerAction, ["Changed " ++ show (length bytes) ++ " bytes to " ++ hexStr],
                             vimState { vsInVisualMode = False }, currentConsoleState, currentDebuggerMode)
-                Nothing -> return (NoAction, ["Invalid hex byte"], vimState, currentConsoleState, currentDebuggerMode)
+                Nothing -> return (NoDebuggerAction, ["Invalid hex byte"], vimState, currentConsoleState, currentDebuggerMode)
         
         -- Move cursor in visual mode
         'j' -> do
             newPos <- executeMotion (NextInstruction 1) (vsCursor vimState) vimState
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
+            return (NoDebuggerAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
         'k' -> do
             newPos <- executeMotion (PrevInstruction 1) (vsCursor vimState) vimState
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
+            return (NoDebuggerAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
         'h' -> do
             newPos <- executeMotion (PrevByte 1) (vsCursor vimState) vimState
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
+            return (NoDebuggerAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
         'l' -> do
             newPos <- executeMotion (NextByte 1) (vsCursor vimState) vimState
-            return (NoAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
+            return (NoDebuggerAction, [""], vimState { vsCursor = newPos, vsVisualEnd = newPos }, currentConsoleState, currentDebuggerMode)
         
         -- Show disassembly of selection
         'D' -> do
@@ -83,6 +83,6 @@ handleVisualKey key vimState = do
                     let (instr, _) = disassembleInstructionPure addr machine
                     in "  " ++ showHex addr ": " ++ instr
             let output = map disassembleAddr [minAddr..maxAddr]
-            return (NoAction, "Disassembled selection:":output, vimState, currentConsoleState, currentDebuggerMode)
+            return (NoDebuggerAction, "Disassembled selection:":output, vimState, currentConsoleState, currentDebuggerMode)
         
-        _   -> return (NoAction, ["Key '" ++ [key] ++ "' not supported in visual mode"], vimState, currentConsoleState, currentDebuggerMode)
+        _   -> return (NoDebuggerAction, ["Key '" ++ [key] ++ "' not supported in visual mode"], vimState, currentConsoleState, currentDebuggerMode)
