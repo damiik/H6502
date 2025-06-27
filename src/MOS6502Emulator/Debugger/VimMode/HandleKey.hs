@@ -61,11 +61,11 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
                             DeleteOp -> Delete motion
                             ChangeOp -> Change motion
                             YankOp   -> Yank motion
-              (newPos', output) <- executeAction action currentPos vimState
+              (dbgAction, newPos', output) <- executeAction action currentPos vimState
               let newYankBuffer = if op' == YankOp
                   then Map.insert (vsRegister vimState) (maybe [] id (Map.lookup '"' (vsYankBuffer vimState))) (vsYankBuffer vimState)
                   else vsYankBuffer vimState
-              return (NoDebuggerAction, output, vimState {vsCursor = newPos', vsCount = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action), vsOperator = Nothing}, debuggerConsoleState, initialDebuggerMode)
+              return (dbgAction, output, vimState {vsCursor = newPos', vsCount = Nothing, vsYankBuffer = newYankBuffer, vsLastChange = Just (RepeatAction action), vsOperator = Nothing}, debuggerConsoleState, initialDebuggerMode)
             -- Removed handleObjectMotion as it was only used by the problematic 'p' case.
             -- If text objects are to be implemented, they should be added with proper TextObjectType constructors.
 
@@ -109,8 +109,8 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
         
             '.' -> case vsLastChange vimState of
               Just (RepeatAction act) -> do
-                (newPos, output) <- executeAction act currentPos vimState
-                return (NoDebuggerAction, output, vimState { vsCursor = newPos, vsMessage = head output }, debuggerConsoleState, initialDebuggerMode)
+                (dbgAction, newPos, output) <- executeAction act currentPos vimState
+                return (dbgAction, output, vimState { vsCursor = newPos, vsMessage = head output }, debuggerConsoleState, initialDebuggerMode)
               Just (RepeatMotion mot) -> do
                 newPos <- executeMotion mot currentPos vimState
                 let newViewStart = if newPos >= vsViewStart vimState + fromIntegral (termHeight - 3) * 3
@@ -157,9 +157,9 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
             'B' -> handleAction AddBreakpoint
             '\r' -> do
               let action = ExecuteToHere
-              (newPos, output) <- executeAction action currentPos vimState
+              (dbgAction, newPos, output) <- executeAction action currentPos vimState
               renderScreen machine []
-              return (ExecuteStepAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
+              return (dbgAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
             'f' -> do
               putString "Find byte (hex): "
               liftIO $ hSetEcho stdin True
@@ -260,5 +260,5 @@ handleVimNormalModeKey key vimState debuggerConsoleState initialDebuggerMode = d
                     else vsViewStart vimState
               return (NoDebuggerAction, [""], vimState { vsCursor = newPos, vsViewStart = newViewStart, vsCount = Nothing, vsLastChange = Just (RepeatMotion motion) }, debuggerConsoleState, initialDebuggerMode)
             handleAction action = do
-              (newPos, output) <- executeAction action currentPos vimState
-              return (NoDebuggerAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)
+              (dbgAction, newPos, output) <- executeAction action currentPos vimState
+              return (dbgAction, output, vimState { vsCursor = newPos, vsCount = Nothing, vsMessage = head output, vsLastChange = Just (RepeatAction action) }, debuggerConsoleState, initialDebuggerMode)

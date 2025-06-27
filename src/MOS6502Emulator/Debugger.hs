@@ -24,6 +24,9 @@ import MOS6502Emulator.Debugger.Commands (handleCommandPure)
 import MOS6502Emulator.Debugger.Utils (parseDebuggerCommand, parseHexWord)
 import MOS6502Emulator.Display (renderScreen, putOutput, getKey, termHeight)
 import MOS6502Emulator.Debugger.Actions (logRegisters, logMemoryRangePure, handlePostInstructionChecks)
+import MOS6502Emulator.Debugger.VimMode.HandleKey (handleVimNormalModeKey) -- Import handleVimNormalModeKey
+import MOS6502Emulator.Debugger.VimMode.Core (VimState(..)) -- Import VimState for vsInCommandMode and vsCommandBuffer
+
 -- | Helper to read a command line, optionally leaving the newline in the buffer.
 -- This function now accepts an `initialInput` string, which is useful when a key
 -- has already been consumed (e.g., by `getKey` for help scrolling) but needs
@@ -73,14 +76,37 @@ nextState currentState machine input =
               (machineAfterCommand, outputLines, debuggerAction) = handleCommandPure machine parsedCommand
               -- Determine the next debugger state based on the actions
               nextDebuggerState = case debuggerAction of
+                    QuitEmulatorAction -> DebuggerQuittingEmulator
+                    ExitDebuggerAction -> DebuggerExitingLoop
+                    SetDebuggerModeAction newMode -> DebuggerWaitingForInput newMode
+                    _ -> if currentMode == VimCommandMode then DebuggerWaitingForInput VimMode else DebuggerWaitingForInput currentMode -- Always return to VimMode from VimCommandMode
+              actions = [UpdateConsoleOutputAction cmdStr outputLines, RenderScreenAction, debuggerAction]
+              -- If coming from VimCommandMode and returning to VimMode, clear the command buffer and inCommandMode flag
+              finalMachine = machineAfterCommand
+                             & L.vimState .~ (if currentMode == VimCommandMode && nextDebuggerState == DebuggerWaitingForInput VimMode
+                                              then (view L.vimState machineAfterCommand) { vsInCommandMode = False, vsCommandBuffer = "" }
+                                              else (view L.vimState machineAfterCommand))
+                             & L.debuggerMode .~ (case nextDebuggerState of DebuggerWaitingForInput newMode -> newMode; _ -> currentMode) -- Explicitly set debuggerMode
+          in (nextDebuggerState, finalMachine, actions)
+        KeyInput key -> -- This case is for help scrolling or direct key input in VimMode
+          case currentMode of
+            VimMode ->
+              -- This case should ideally not be reached if VimKeyProcessed is used
+              -- but as a fallback, it can indicate an unhandled key in VimMode
+              (currentState, machine, [NoDebuggerAction])
+            _ -> -- For CommandMode, if a single key is pressed, treat it as part of a command
+              let newConsoleState = (_mConsoleState machine) { _inputBuffer = _inputBuffer (_mConsoleState machine) ++ [key] }
+                  newMachine = machine & L.mConsoleState .~ newConsoleState
+              in (currentState, newMachine, [NoDebuggerAction])
+        VimKeyProcessed (debuggerAction, outputLines, vimState, consoleState, debuggerMode) ->
+          let nextDebuggerState = case debuggerAction of
                 QuitEmulatorAction -> DebuggerQuittingEmulator
                 ExitDebuggerAction -> DebuggerExitingLoop
                 SetDebuggerModeAction newMode -> DebuggerWaitingForInput newMode
-                _ -> DebuggerWaitingForInput currentMode -- Stay in current mode or transition based on command
-              actions = [UpdateConsoleOutputAction cmdStr outputLines, RenderScreenAction, debuggerAction]
-          in (nextDebuggerState, machineAfterCommand, actions)
-        KeyInput _ -> -- Should not happen in CommandMode waiting for input
-          (currentState, machine, [NoDebuggerAction])
+                _ -> DebuggerWaitingForInput VimMode -- Stay in VimMode
+              actions = [UpdateConsoleOutputAction "" outputLines, RenderScreenAction, debuggerAction] -- Command string is empty for single key
+              newMachine = machine & L.vimState .~ vimState & L.mConsoleState .~ consoleState & L.debuggerMode .~ debuggerMode
+          in (nextDebuggerState, newMachine, actions)
 
     DebuggerDisplayingHelp currentMode scrollPos ->
       case input of
@@ -118,13 +144,24 @@ interactiveLoopHelperInternal debuggerState = do
       L.mConsoleState .= consoleStateWithPrompt -- Update machine's console state
 
       -- Render the screen initially based on the current machine state
-      renderScreen machine (view L.outputLines (view L.mConsoleState machine))
+      -- renderScreen machine (view L.outputLines (view L.mConsoleState machine))
 
       (nextDebuggerState, finalMachineState, actions) <- case debuggerState of
         DebuggerWaitingForInput currentMode -> do
-          (commandToExecute, consumeNewline) <- readCommandWithInitialInput ""
-          let (newState, newMachine, newActions) = nextState debuggerState machine (CommandInput commandToExecute)
-          return (newState, newMachine, newActions)
+          (inputEvent, newMachineState) <- case currentMode of
+            VimMode -> do
+              key <- liftIO getKey
+              ((debuggerAction, outputLines, vimState, consoleState, debuggerMode), updatedMachine) <- liftIO $ runStateT (unFDX (handleVimNormalModeKey key (view L.vimState machine) (view L.mConsoleState machine) (view L.debuggerMode machine))) machine
+              return (VimKeyProcessed (debuggerAction, outputLines, vimState, consoleState, debuggerMode), updatedMachine)
+            _ -> do
+              (commandToExecute, _) <- readCommandWithInitialInput ""
+              return (CommandInput commandToExecute, machine) -- No machine state change for other modes here
+          
+          -- Apply the machine state change from VimMode key handling before calling nextState
+          put newMachineState
+          
+          let (newState, finalMachineAfterInput, newActions) = nextState debuggerState newMachineState inputEvent
+          return (newState, finalMachineAfterInput, newActions)
         DebuggerDisplayingHelp currentMode scrollPos -> do
           key <- liftIO getKey -- Read a single key
           let (newState, newMachine, newActions) = nextState debuggerState machine (KeyInput key)

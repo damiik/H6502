@@ -61,48 +61,48 @@ executeVimCommand cmd = do
   return (dbgAction, output)
 
 -- Update executeAction to handle ColonCommand
-executeAction :: Action -> Word16 -> VimState -> FDX (Word16, [String])
+executeAction :: Action -> Word16 -> VimState -> FDX (DebuggerAction, Word16, [String])
 executeAction action currentPos vimState = do
   case action of
     Set newByte -> do
       writeByteMem currentPos newByte
-      return (currentPos, ["Set $" ++ showHex currentPos "" ++ " = $" ++ showHex newByte ""])
+      return (NoDebuggerAction, currentPos, ["Set $" ++ showHex currentPos "" ++ " = $" ++ showHex newByte ""])
     
     Increment n -> do
       currentByte <- fetchByteMem currentPos
       let newByte = currentByte + fromIntegral n
       writeByteMem currentPos newByte
-      return (currentPos, ["Incremented $" ++ showHex currentPos "" ++ " by " ++ show n])
+      return (NoDebuggerAction, currentPos, ["Incremented $" ++ showHex currentPos "" ++ " by " ++ show n])
     
     Decrement n -> do
       currentByte <- fetchByteMem currentPos
       let newByte = currentByte - fromIntegral n
       writeByteMem currentPos newByte
-      return (currentPos, ["Decremented $" ++ showHex currentPos "" ++ " by " ++ show n])
+      return (NoDebuggerAction, currentPos, ["Decremented $" ++ showHex currentPos "" ++ " by " ++ show n])
     
     ToggleBit bit -> do
       if bit < 0 || bit > 7
-        then return (currentPos, ["Invalid bit number (0-7)"])
+        then return (NoDebuggerAction, currentPos, ["Invalid bit number (0-7)"])
         else do
           currentByte <- fetchByteMem currentPos
           let newByte = if testBit currentByte bit then clearBit currentByte bit else setBit currentByte bit
           writeByteMem currentPos newByte
-          return (currentPos, ["Toggled bit " ++ show bit ++ " at $" ++ showHex currentPos ""])
+          return (NoDebuggerAction, currentPos, ["Toggled bit " ++ show bit ++ " at $" ++ showHex currentPos ""])
     
     AddBreakpoint -> do
       breakpoints %= (currentPos :)
-      return (currentPos, ["Breakpoint added at $" ++ showHex currentPos ""])
+      return (NoDebuggerAction, currentPos, ["Breakpoint added at $" ++ showHex currentPos ""])
     
     RemoveBreakpoint -> do
       breakpoints %= filter (/= currentPos)
-      return (currentPos, ["Breakpoint removed at $" ++ showHex currentPos ""])
+      return (NoDebuggerAction, currentPos, ["Breakpoint removed at $" ++ showHex currentPos ""])
     
     Delete motion -> do
       endPos <- executeMotion motion currentPos vimState
       let start = min currentPos endPos
       let end = max currentPos endPos
       mapM_ (`writeByteMem` 0) [start .. end]
-      return (currentPos, ["Zeroed memory from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
+      return (NoDebuggerAction, currentPos, ["Zeroed memory from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
     
     Change motion -> do
       endPos <- executeMotion motion currentPos vimState
@@ -114,11 +114,11 @@ executeAction action currentPos vimState = do
       liftIO $ hSetEcho stdin False
       let byteValues = mapMaybe parseHexByte (words input)
       if null byteValues
-        then return (currentPos, ["No valid bytes provided"])
+        then return (NoDebuggerAction, currentPos, ["No valid bytes provided"])
         else do
           let fillBytes = take (fromIntegral (endPos - start + 1)) (cycle byteValues)
           mapM_ (uncurry writeByteMem) (zip [start .. endPos] fillBytes)
-          return (currentPos, ["Changed memory from $" ++ showHex start "" ++ " to $" ++ showHex endPos ""])
+          return (NoDebuggerAction, currentPos, ["Changed memory from $" ++ showHex start "" ++ " to $" ++ showHex endPos ""])
     
     Yank motion -> do
       endPos <- executeMotion motion currentPos vimState
@@ -127,28 +127,26 @@ executeAction action currentPos vimState = do
       bytes <- mapM fetchByteMem [start .. end]
       -- The original code did not store yanked bytes in VimState.
       -- If this needs to be a state update, the function signature needs to change.
-      return (currentPos, ["Yanked " ++ show (length bytes) ++ " bytes from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
+      return (NoDebuggerAction, currentPos, ["Yanked " ++ show (length bytes) ++ " bytes from $" ++ showHex start "" ++ " to $" ++ showHex end ""])
     
     Paste forward -> do
       let yankBuffer = Map.lookup (vsRegister vimState) (vsYankBuffer vimState)
       case yankBuffer of
-        Nothing -> return (currentPos, ["No data in yank buffer"])
+        Nothing -> return (NoDebuggerAction, currentPos, ["No data in yank buffer"])
         Just bytes -> do
           let pastePos = if forward then currentPos + 1 else currentPos
           mapM_ (\(offset, val) -> writeByteMem (pastePos + fromIntegral offset) val) (zip [0..] bytes)
-          return (currentPos, ["Pasted " ++ show (length bytes) ++ " bytes at $" ++ showHex pastePos ""])
+          return (NoDebuggerAction, currentPos, ["Pasted " ++ show (length bytes) ++ " bytes at $" ++ showHex pastePos ""])
     
     ExecuteToHere -> do
       breakpoints %= (currentPos :)
-      return (currentPos, ["Temporary breakpoint added at $" ++ showHex currentPos "", "Continuing execution"])
+      return (NoDebuggerAction, currentPos, ["Temporary breakpoint added at $" ++ showHex currentPos "", "Continuing execution"])
     
     ColonCommand vimCmd -> do
         (dbgAction, output) <- executeVimCommand vimCmd
-        -- Need to handle dbgAction potentially changing the debugger mode or state
-        -- For now, just pass it through or convert to NoAction if it means staying in VimMode
-        return (currentPos, output)
+        return (dbgAction, currentPos, output)
 
-    _ -> return (currentPos, ["Unknown action"])
+    _ -> return (NoDebuggerAction, currentPos, ["Unknown action"])
 
 -- | Execute a motion and return new cursor position
 executeMotion :: Motion -> Word16 -> VimState -> FDX Word16

@@ -13,6 +13,7 @@ import Data.Word (Word8, Word16) -- Import Word16
 import Data.Char (isDigit)
 import Data.Bits (testBit)
 import Numeric (showHex)
+import MOS6502Emulator.Debugger.VimMode.Core (VimState) -- Import VimState
 -- | Data type to represent the debugger mode
 data DebuggerMode = CommandMode | VimMode | VimCommandMode deriving (Show, Eq)
 
@@ -28,7 +29,8 @@ data DebuggerState
 data DebuggerInput
   = CommandInput String -- A full command string entered by the user
   | KeyInput Char       -- A single key press (e.g., for help scrolling)
-  deriving (Show, Eq)
+  | VimKeyProcessed (DebuggerAction, [String], VimState, DebuggerConsoleState, DebuggerMode) -- Result of processing a VimMode key
+  deriving (Show)
 
 -- | Data type to represent actions the debugger can take (side effects).
 data DebuggerAction
