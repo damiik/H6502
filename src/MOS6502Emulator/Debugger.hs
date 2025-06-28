@@ -79,6 +79,7 @@ nextState currentState machine input =
                     QuitEmulatorAction -> DebuggerQuittingEmulator
                     ExitDebuggerAction -> DebuggerExitingLoop
                     SetDebuggerModeAction newMode -> DebuggerWaitingForInput newMode
+
                     _ -> if currentMode == VimCommandMode then DebuggerWaitingForInput VimMode else DebuggerWaitingForInput currentMode -- Always return to VimMode from VimCommandMode
               actions = [UpdateConsoleOutputAction cmdStr outputLines, RenderScreenAction, debuggerAction]
               -- If coming from VimCommandMode and returning to VimMode, clear the command buffer and inCommandMode flag
@@ -186,19 +187,33 @@ executeDebuggerAction action = do
   machine <- get
   case action of
     ExecuteStepAction -> do
-      _ <- fdxSingleCycle -- Execute one instruction
-      currentMachine <- get
-      -- Capture register output (logRegisters expects Registers, use mRegs gives FDX Registers)
+      -- Execute the step
+      _ <- fdxSingleCycle
+      currentMachine <- get -- Get the machine *after* the cycle
+
+      -- Capture the output that should be displayed
       regs <- use L.mRegs
-      let regOutput = logRegisters regs
-      -- Capture memory trace output (logMemoryRange returns FDX [String], so mapM over it)
+      let regOutput = logRegisters regs -- Instruction string(s)
       memBlocks <- use L.memoryTraceBlocks
       let memTraceOutputList = map (\(start, end, name) -> logMemoryRangePure start end name currentMachine) memBlocks
-      let memTraceOutput = concat memTraceOutputList
-      liftIO ANSI.clearScreen -- Aggressive clear after step
-      liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
-      renderScreen currentMachine (regOutput ++ memTraceOutput)
-      handlePostInstructionChecks -- Handle tracing and halting checks
+      let memTraceOutput = concat memTraceOutputList -- Memory/register trace strings
+
+      -- Combine the outputs
+      let combinedOutputLines = regOutput ++ memTraceOutput
+
+      -- Update the console state's outputLines by replacing previous output.
+      -- This addresses the feedback about clearing the buffer for the "second column".
+      let consoleState = view L.mConsoleState currentMachine
+      let updatedConsoleState = consoleState {
+            _outputLines = combinedOutputLines, -- Replace, do not append
+            _inputBuffer = "",
+            _cursorPosition = 0,
+            _lastCommand = ""
+          }
+      L.mConsoleState .= updatedConsoleState
+
+      -- Perform post-instruction checks
+      handlePostInstructionChecks
     ExitDebuggerAction -> L.debuggerActive .= False
     QuitEmulatorAction -> L.halted .= True
     RenderScreenAction -> renderScreen machine (view L.outputLines (view L.mConsoleState machine))

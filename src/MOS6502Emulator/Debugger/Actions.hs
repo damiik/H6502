@@ -38,14 +38,19 @@ executeStepAndRender = do
   memBlocks <- use memoryTraceBlocks
   let memTraceOutputList = map (\(start, end, name) -> logMemoryRangePure start end name currentMachine) memBlocks
   let memTraceOutput = concat memTraceOutputList
-
   liftIO ANSI.clearScreen -- Aggressive clear after step
   liftIO $ ANSI.setCursorPosition 0 0 -- Reset cursor
-  
-  -- Render the screen
-  renderScreen currentMachine (regOutput ++ memTraceOutput)
-  
-  handlePostInstructionChecks -- Handle tracing and halting checks
+
+  -- Get disassembly lines
+  currentPC_after <- use (mRegs . rPC) -- Get PC after execution
+  let (disassembledLines, _) = disassembleInstructionPure currentPC_after currentMachine
+
+  -- Render the screen with disassembly, registers, and memory traces
+  -- Disassembly is placed at the top of the right column content.
+  renderScreen currentMachine (disassembledLines : regOutput ++ memTraceOutput)
+
+  -- Now, handlePostInstructionChecks only needs to manage halting and trace enable.
+  handlePostInstructionChecks
 
 -- | Handles post-instruction checks: halting and tracing.
 -- This function should NOT re-enter the debugger loop or call runLoop.
@@ -64,12 +69,8 @@ handlePostInstructionChecks = do
           currentMachine <- get
           currentPC_after <- use (mRegs . rPC) -- Get PC after execution
           let (disassembled, _) = disassembleInstructionPure currentPC_after currentMachine -- Use PC after execution
-          putOutput "" -- Use console output instead of direct print
-          putOutput disassembled -- Use console output instead of direct print
-          regs <- use mRegs
-          let regOutput = logRegisters regs -- Capture register output
-          mapM_ putOutput regOutput -- Use console output instead of direct print
-          -- Removed logging memory trace blocks here, as it's now handled by executeStepAndRender
+          -- Removed logging to putOutput here. Only state updates.
+          return ()
 
 -- | Logs the current register values as a list of strings.
 logRegisters :: Registers -> [String]
