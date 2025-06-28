@@ -31,7 +31,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifzThen block was executed
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the zero flag is set (ifnzThen)" $ do
       let testProgram = do
@@ -43,7 +43,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x00, indicating the ifnzThen block was skipped
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should not execute the block if the zero flag is not set (ifzThen)" $ do
       let testProgram = do
@@ -55,7 +55,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x01, indicating the ifzThen block was skipped
-      rAC (mRegs finalMachine) `shouldBe` 0x01
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
 
     it "should execute the block if the zero flag is not set (ifnzThen)" $ do
       let testProgram = do
@@ -67,7 +67,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifnzThen block was executed
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should execute the block if the equal flag is set (ifeqThen)" $ do
       let testProgram = do
@@ -80,7 +80,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifeqThen block was executed
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the equal flag is not set (ifeqThen)" $ do
       let testProgram = do
@@ -93,7 +93,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x10, indicating the ifeqThen block was skipped
-      rAC (mRegs finalMachine) `shouldBe` 0x10
+      _rAC (_mRegs finalMachine) `shouldBe` 0x10
 
     it "should execute the block if the equal flag is not set (ifneThen)" $ do
       let testProgram = do
@@ -106,7 +106,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifneThen block was executed
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the equal flag is set (ifneThen)" $ do
       let testProgram = do
@@ -119,7 +119,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x10, indicating the ifeqThen block was skipped
-      rAC (mRegs finalMachine) `shouldBe` 0x10
+      _rAC (_mRegs finalMachine) `shouldBe` 0x10
 
     it "should execute the block if the carry flag is set (ifcThen)" $ do
       let testProgram = do
@@ -131,7 +131,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifneThen block was executed
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the carry flag is not set (ifcThen)" $ do
       let testProgram = do
@@ -143,7 +143,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x00 (initial state), indicating the ifcThen block was skipped
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block if the carry flag is not set (ifncThen)" $ do
       let testProgram = do
@@ -155,7 +155,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0xFF, indicating the ifcThen block was executed
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should not execute the block if the carry flag is set (ifncThen)" $ do
       let testProgram = do
@@ -167,7 +167,7 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Run the test program starting at 0x0800
       -- Assert that the Accumulator contains 0x00 (initial state), indicating the ifncThen block was skipped
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block repeatedly while the zero flag is set (whileZ)" $ do
       let testProgram = do
@@ -185,9 +185,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
-      fetchByte 0xa0 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0xa0 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should not execute the block if the zero flag is not set initially (whileZ)" $ do
       let testProgram = do
@@ -204,9 +204,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter remained at its initial non-zero value
-      fetchByte 0xa0 (mMem finalMachine) `shouldReturn` 0x01
+      fetchByte 0xa0 (_mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the initial value (1)
-      rAC (mRegs finalMachine) `shouldBe` 0x01
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
 
     it "should execute the block at least once and loop while zero flag is set (doWhileZ)" $ do
       let testProgram = do
@@ -226,8 +226,8 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram -- Use the new debug helper
       -- Assert that the counter became 0 (from initial -1), then 1 and cmp #0 reset the Zero flag ending the loop.
       -- A doWhileZ with INC will loop until overflow wraps it to 0.
-      fetchByte 0xa0 (mMem finalMachine) `shouldReturn` 0x01 -- Use 0xa0 as defined in the test
-      rAC (mRegs finalMachine) `shouldBe` 0x01
+      fetchByte 0xa0 (_mMem finalMachine) `shouldReturn` 0x01 -- Use 0xa0 as defined in the test
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
 
     it "should execute the block exactly once if the zero flag is not set after the first iteration (doWhileZ)" $ do
       let testProgram = do
@@ -243,9 +243,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter was incremented once to 0x01
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x01)
-      rAC (mRegs finalMachine) `shouldBe` 0x01
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
 
     it "should execute the block repeatedly while the zero flag is not set (whileNz)" $ do
       let testProgram = do
@@ -260,9 +260,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should not execute the block if the zero flag is set initially (whileNz)" $ do
       let testProgram = do
@@ -277,9 +277,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter remained at its initial zero value
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the initial value (0)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop while zero flag is not set (doWhileNz)" $ do
       let testProgram = do
@@ -295,9 +295,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block repeatedly while the carry flag is not set (whileNc)" $ do
       let testProgram = do
@@ -314,8 +314,8 @@ spec = do
       -- The loop decrements until the value at 0x20 is 0.
       -- When 0x20 becomes 0, the condition block sets the Zero flag, then branches to set_carry, setting the Carry flag.
       -- The whileNc macro checks if Carry is *not* set. Since Carry is now set, the loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      -- rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      -- _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should not execute the block if the carry flag is set initially (whileNc)" $ do
       let testProgram = do
@@ -336,8 +336,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Initially Carry is set, so the loop should not execute.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
-      -- rAC (mRegs finalMachine) `shouldBe` 0x01
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x01
+      -- _rAC (_mRegs finalMachine) `shouldBe` 0x01
 
     it "should execute the block at least once and loop while carry flag is not set (doWhileNc)" $ do
       let testProgram = do
@@ -353,8 +353,8 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition: lda 0, cmp #0 sets Zero. Branch to set_carry_dw sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      -- rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      -- _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the carry flag is set after the first iteration (doWhileNc)" $ do
       let testProgram = do
@@ -370,8 +370,8 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      -- rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      -- _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block repeatedly while the negative flag is set (whileM)" $ do
       let testProgram = do
@@ -390,8 +390,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- The loop increments until the value at 0x20 becomes positive (less than 0x80).
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x7f -- After incrementing from 0x7F to 0x80, LDA 0x80 sets Neg. Loop exits.
-      rAC (mRegs finalMachine) `shouldBe` 0x7f
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x7f -- After incrementing from 0x7F to 0x80, LDA 0x80 sets Neg. Loop exits.
+      _rAC (_mRegs finalMachine) `shouldBe` 0x7f
 
     it "should not execute the block if the negative flag is not set initially (whileM)" $ do
       let testProgram = do
@@ -406,8 +406,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Initially Negative flag is not set, so the loop should not execute.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
-      rAC (mRegs finalMachine) `shouldBe` 0x01
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x01
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
 
     it "should execute the block at least once and loop while negative flag is set (doWhileM)" $ do
       let testProgram = do
@@ -426,8 +426,8 @@ spec = do
       -- Loop continues until value becomes 0x80. After incrementing from 0x7F to 0x80, LDA 0x80 sets Negative.
       -- Let's use a counter that starts negative and increments until it becomes positive.
       -- Starts at 0x81. Inc to 0x82 (Neg set). Loop. ... Inc to 0xFF (Neg set). Loop. Inc to 0x00 (Neg clear). Loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the negative flag is not set after the first iteration (doWhileM)" $ do
       let testProgram = do
@@ -459,8 +459,8 @@ spec = do
       (finalMachine', _) <- runAssemblyTest 0x0800 testProgram'
       -- Starts at 0x80. Block increments to 0x81. Condition: lda 0x81 sets Neg. Loop.
       -- Loop continues until value becomes 0x00 (after 0xFF). LDA 0x00 clears Neg. Loop exits.
-      fetchByte 0x20 (mMem finalMachine') `shouldReturn` 0x00
-      rAC (mRegs finalMachine') `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine') `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine') `shouldBe` 0x00
 
     it "should execute the block at least once and loop while zero flag is not set (doWhileNz)" $ do
       let testProgram = do
@@ -476,9 +476,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter reached 0, which stopped the loop
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the zero flag is set after the first iteration (doWhileNz)" $ do
       let testProgram = do
@@ -494,9 +494,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the counter was decremented once to 0x00
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0x00)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop while carry flag is set (doWhileC)" $ do
       let testProgram = do
@@ -512,8 +512,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition clears Carry. doWhileC checks *after*. Loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the carry flag is not set after the first iteration (doWhileC)" $ do
       let testProgram = do
@@ -530,8 +530,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition clears Carry. doWhileC checks *after*. Loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop while carry flag is not set (doWhileNc)" $ do
       let testProgram = do
@@ -547,8 +547,8 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition: lda 0, cmp #0 sets Zero. Branch to set_carry_dw sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      -- rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      -- _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the carry flag is set after the first iteration (doWhileNc)" $ do
       let testProgram = do
@@ -564,8 +564,8 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition sets Carry.
       -- doWhileNc checks condition *after* block. Carry is set, so loop exits after one iteration.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      -- rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      -- _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop while negative flag is set (doWhileM)" $ do
       let testProgram = do
@@ -582,8 +582,8 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x81. Block increments to 0x82. Condition: lda 0x82 sets Neg. Loop continues.
       -- Loop continues until value becomes 0x00 (after 0xFF). LDA 0x00 clears Neg. Loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the negative flag is not set after the first iteration (doWhileM)" $ do
       let testProgram = do
@@ -599,8 +599,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x01. Block increments to 0x02. Condition: LDA 0x02 clears Neg. doWhileM checks *after*. Loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x02
-      rAC (mRegs finalMachine) `shouldBe` 0x02
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x02
+      _rAC (_mRegs finalMachine) `shouldBe` 0x02
 
     it "should execute the block at least once and loop while positive flag is set (doWhileP)" $ do
       let testProgram = do
@@ -616,8 +616,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x01. Block increments. Loop continues until value becomes negative (>= 0x80).
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x80
-      rAC (mRegs finalMachine) `shouldBe` 0x80
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x80
+      _rAC (_mRegs finalMachine) `shouldBe` 0x80
 
     it "should execute the block exactly once if the positive flag is not set after the first iteration (doWhileP)" $ do
       let testProgram = do
@@ -633,8 +633,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 0x80. Block increments to 0x81. Condition: LDA 0x81 clears Pos. doWhileP checks *after*. Loop exits.
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x81
-      rAC (mRegs finalMachine) `shouldBe` 0x81
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x81
+      _rAC (_mRegs finalMachine) `shouldBe` 0x81
 
     it "should execute the block at least once and loop while overflow flag is set (doWhileO)" $ do
       let testProgram = do
@@ -656,9 +656,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- The value at 0x30 should become 0x80 after the first iteration, and 0xA0 after the second iteration.
-      fetchByte 0x30 (mMem finalMachine) `shouldReturn` 0x82
+      fetchByte 0x30 (_mMem finalMachine) `shouldReturn` 0x82
       -- The final LDA (0x30) should load 0xA0.
-      rAC (mRegs finalMachine) `shouldBe` 0x82
+      _rAC (_mRegs finalMachine) `shouldBe` 0x82
 
     it "should execute the block exactly once if the overflow flag is not set after the first iteration (doWhileO)" $ do
       let testProgram = do
@@ -673,8 +673,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block increments to 2. Condition clears Overflow. doWhileO checks *after*. Loop exits.
-      fetchByte 0x30 (mMem finalMachine) `shouldReturn` 0x02
-      rAC (mRegs finalMachine) `shouldBe` 0x02
+      fetchByte 0x30 (_mMem finalMachine) `shouldReturn` 0x02
+      _rAC (_mRegs finalMachine) `shouldBe` 0x02
 
     it "should execute the block repeatedly while the overflow flag is not set (doWhileNo)" $ do
       let testProgram = do
@@ -692,8 +692,8 @@ spec = do
       -- The condition checks the counter *after* decrementing.
       -- Starts with 3. Dec to 2. Condition clears V. Loop.
       -- Counter becomes 0. Condition sets V. Loop exits.
-      fetchByte 0x40 (mMem finalMachine) `shouldReturn` 0x00
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x40 (_mMem finalMachine) `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block exactly once if the overflow flag is set after the first iteration (doWhileNo)" $ do
       let testProgram = do
@@ -708,8 +708,8 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Starts with 1. Block decrements to 0. Condition sets Overflow. doWhileNo checks *after*. Loop exits.
-      fetchByte 0x40 (mMem finalMachine) `shouldReturn` 0x00
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x40 (_mMem finalMachine) `shouldReturn` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop while X is not zero (doWhileX)" $ do
       let testProgram = do
@@ -728,9 +728,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0x00)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop while Y is not zero (doWhileY)" $ do
       let testProgram = do
@@ -749,9 +749,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
       -- Assert that the Accumulator holds the final value (0x00)
-      rAC (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop until X is zero (doUntilX)" $ do
       let testProgram = do
@@ -772,9 +772,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x0100
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x00
-      fetchByte 0x21 (mMem finalMachine) `shouldReturn` 0x01
-      rX (mRegs finalMachine) `shouldBe` 0x00
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x00
+      fetchByte 0x21 (_mMem finalMachine) `shouldReturn` 0x01
+      _rX (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block at least once and loop until Y is zero (doUntilY)" $ do
       let testProgram = do
@@ -793,10 +793,10 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x00)
-      rAC (mRegs finalMachine) `shouldBe` 0x01
-      rY (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
+      _rY (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should execute the block repeatedly while X is not zero (whileX)" $ do
       let testProgram = do
@@ -815,10 +815,10 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x00)
-      rAC (mRegs finalMachine) `shouldBe` 0x01
-      rX (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
+      _rX (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should not execute the block if X is zero initially (whileX)" $ do
       let testProgram = do
@@ -845,9 +845,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the value at 0x20 remained 0xFF
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0xFF
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0xFF
       -- Assert that the Accumulator holds the final value (0xFF)
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should execute the block repeatedly while Y is not zero (whileY)" $ do
       let testProgram = do
@@ -866,10 +866,10 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the last value stored at 0x20 was 0x00
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0x01
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0x01
       -- Assert that the Accumulator holds the final value (0x00)
-      rAC (mRegs finalMachine) `shouldBe` 0x01
-      rY (mRegs finalMachine) `shouldBe` 0x00
+      _rAC (_mRegs finalMachine) `shouldBe` 0x01
+      _rY (_mRegs finalMachine) `shouldBe` 0x00
 
     it "should not execute the block if Y is zero initially (whileY)" $ do
       let testProgram = do
@@ -896,9 +896,9 @@ spec = do
 
       (finalMachine, _) <- runAssemblyTest 0x0800 testProgram
       -- Assert that the value at 0x20 remained 0xFF
-      fetchByte 0x20 (mMem finalMachine) `shouldReturn` 0xFF
+      fetchByte 0x20 (_mMem finalMachine) `shouldReturn` 0xFF
       -- Assert that the Accumulator holds the final value (0xFF)
-      rAC (mRegs finalMachine) `shouldBe` 0xFF
+      _rAC (_mRegs finalMachine) `shouldBe` 0xFF
 
     it "should iterate over a range and execute the block for each value (forEachRange)" $ do
       let testProgram = do
@@ -922,10 +922,10 @@ spec = do
       (finalMachine, _) <- runAssemblyTest 0x0900 testProgram
 
       -- Assert the values in memory locations 0x50 to 0x54
-      fetchByte 0x50 (mMem finalMachine) `shouldReturn` 0x00 -- X=0
-      fetchByte 0x51 (mMem finalMachine) `shouldReturn` 0x01 -- X=1
-      fetchByte 0x52 (mMem finalMachine) `shouldReturn` 0x02 -- X=2
-      fetchByte 0x53 (mMem finalMachine) `shouldReturn` 0x03 -- X=3
-      fetchByte 0x54 (mMem finalMachine) `shouldReturn` 0xff -- X=4 (excluded)
+      fetchByte 0x50 (_mMem finalMachine) `shouldReturn` 0x00 -- X=0
+      fetchByte 0x51 (_mMem finalMachine) `shouldReturn` 0x01 -- X=1
+      fetchByte 0x52 (_mMem finalMachine) `shouldReturn` 0x02 -- X=2
+      fetchByte 0x53 (_mMem finalMachine) `shouldReturn` 0x03 -- X=3
+      fetchByte 0x54 (_mMem finalMachine) `shouldReturn` 0xff -- X=4 (excluded)
       -- Assert the final value in the Accumulator
-      rAC (mRegs finalMachine) `shouldBe` 0x03
+      _rAC (_mRegs finalMachine) `shouldBe` 0x03

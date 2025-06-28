@@ -27,7 +27,7 @@ spec = do
 
         (finalMachine, _) <- runAssemblyTest 0x0100 asm
         -- Verify that the byte at listAddr is 0
-        byteAtListAddr <- fetchByte listAddr (mMem finalMachine)
+        byteAtListAddr <- fetchByte listAddr (_mMem finalMachine)
         byteAtListAddr `shouldBe` 0x00
 
     describe "createList" $ do
@@ -45,7 +45,7 @@ spec = do
           Nothing -> expectationFailure $ "Label '" ++ listLabel ++ "' not found in label map"
           Just listAddr -> do
             -- Verify that the byte at listAddr is 0
-            byteAtListAddr <- fetchByte listAddr (mMem finalMachine)
+            byteAtListAddr <- fetchByte listAddr (_mMem finalMachine)
             byteAtListAddr `shouldBe` 0x00
 
     describe "copyList" $ do
@@ -72,12 +72,12 @@ spec = do
 
         (finalMachine, _) <- runAssemblyTest 0x0100 asm
         -- Verify destination list length
-        dstListLength <- fetchByte dstListAddr (mMem finalMachine)
+        dstListLength <- fetchByte dstListAddr (_mMem finalMachine)
         dstListLength `shouldBe` fromIntegral (length sourceData)
 
         -- Verify destination list content
         let expectedBytes = fromIntegral (length sourceData) : sourceData
-        actualBytes <- mapM (\offset -> fetchByte (dstListAddr + fromIntegral offset) (mMem finalMachine)) [0..length sourceData]
+        actualBytes <- mapM (\offset -> fetchByte (dstListAddr + fromIntegral offset) (_mMem finalMachine)) [0..length sourceData]
         actualBytes `shouldBe` expectedBytes
 
     describe "createListFromString" $ do
@@ -109,8 +109,8 @@ spec = do
           Just listAddr -> do
             -- Verify that the byte at listAddr is 0
 
-            listLen <- fetchByte listAddr (mMem finalMachine)
-            actualBytes <- mapM (\offset -> fetchByte (listAddr + fromIntegral offset) (mMem finalMachine)) [0..length expectedBytes - 1]
+            listLen <- fetchByte listAddr (_mMem finalMachine)
+            actualBytes <- mapM (\offset -> fetchByte (listAddr + fromIntegral offset) (_mMem finalMachine)) [0..length expectedBytes - 1]
             actualBytes `shouldBe` expectedBytes
 
     describe "addToList" $ do
@@ -138,12 +138,12 @@ spec = do
 
         (finalMachine, _) <- runAssemblyTest 0x0100 asm
         -- Verify final list length
-        finalListLength <- fetchByte testListAddr (mMem finalMachine)
+        finalListLength <- fetchByte testListAddr (_mMem finalMachine)
         finalListLength `shouldBe` expectedLength
 
         -- Verify final list content
         -- Need to fetch bytes up to the new length
-        actualBytes <- mapM (\offset -> fetchByte (testListAddr + fromIntegral offset) (mMem finalMachine)) [0..expectedLength]
+        actualBytes <- mapM (\offset -> fetchByte (testListAddr + fromIntegral offset) (_mMem finalMachine)) [0..expectedLength]
         actualBytes `shouldBe` expectedBytes
 
     describe "iterateList" $ do
@@ -182,7 +182,7 @@ spec = do
 
         (finalMachine, _) <- runAssemblyTest 0x0100 asm
         -- Verify the sum stored at resultAddr
-        finalSum <- fetchByte resultAddr (mMem finalMachine)
+        finalSum <- fetchByte resultAddr (_mMem finalMachine)
         finalSum `shouldBe` fromIntegral (sum testData)
 
     describe "iterateWithIndexList" $ do
@@ -222,7 +222,7 @@ spec = do
         (finalMachine, _) <- runAssemblyDebugTest 0x0100 asm
         -- Verify the results stored in memory
         let expectedResults = fromIntegral (length testData)  : (zipWith (\val idx -> val + idx) testData [1..])
-        actualResults <- mapM (\idx -> fetchByte (resultBaseAddr + fromIntegral idx) (mMem finalMachine)) [0..length testData]
+        actualResults <- mapM (\idx -> fetchByte (resultBaseAddr + fromIntegral idx) (_mMem finalMachine)) [0..length testData]
         actualResults `shouldBe` map fromIntegral expectedResults
 
     describe "mapToNewList" $ do
